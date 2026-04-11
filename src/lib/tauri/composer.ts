@@ -1,6 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { GeneratedContent, Network, PostRecord } from "@/types/composer.types";
 
+/** Fire-and-forget: warm up the Python sidecar when Composer mounts. */
+export function warmupSidecar(): void {
+  invoke("warmup_sidecar").catch(() => {
+    // Intentionally silent — warmup failure is non-critical
+  });
+}
+
 export async function generateContent(
   brief: string,
   network: Network

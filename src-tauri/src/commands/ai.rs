@@ -69,6 +69,24 @@ pub async fn generate_content(
     })
 }
 
+/// Fire-and-forget sidecar warmup — called when Composer mounts.
+/// Validates Python + module availability so the first generation is faster.
+/// Never returns an error to the UI (failures are silent / logged to stderr).
+#[tauri::command]
+pub async fn warmup_sidecar() -> () {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct WarmupRequest {
+        action: &'static str,
+    }
+
+    let req = WarmupRequest { action: "warmup" };
+    if let Ok(json) = serde_json::to_string(&req) {
+        let _ = crate::sidecar::run_sidecar_raw(json, 15).await;
+    }
+}
+
 /// Save a generated post as draft in SQLite history.
 #[tauri::command]
 pub async fn save_draft(

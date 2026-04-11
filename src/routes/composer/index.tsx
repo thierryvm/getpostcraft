@@ -3,6 +3,7 @@ import { BriefForm } from "@/components/composer/BriefForm";
 import { ContentPreview } from "@/components/composer/ContentPreview";
 import { Badge } from "@/components/ui/badge";
 import { getActiveProvider } from "@/lib/tauri/settings";
+import { warmupSidecar } from "@/lib/tauri/composer";
 import type { ProviderInfo } from "@/types/settings.types";
 
 function ProviderBadge({ info }: { info: ProviderInfo | null }) {
@@ -23,6 +24,7 @@ export function ComposerPage() {
 
   useEffect(() => {
     getActiveProvider().then(setProviderInfo).catch(console.error);
+    warmupSidecar(); // fire-and-forget — pre-loads Python interpreter
   }, []);
 
   return (

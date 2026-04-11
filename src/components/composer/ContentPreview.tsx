@@ -1,4 +1,4 @@
-import { RefreshCw, Copy, Check, X, Plus } from "lucide-react";
+import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { useComposerStore } from "@/stores/composer.store";
 import { generateContent } from "@/lib/tauri/composer";
+import { renderPostImage } from "@/lib/tauri/media";
 import { NETWORK_META } from "@/types/composer.types";
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -105,12 +106,20 @@ export function ContentPreview() {
   const { result, network, brief, setResult, setIsLoading, setError } = useComposerStore();
   const navigate = useNavigate();
   const captionLimit = NETWORK_META[network].captionLimit;
+
   // Must be declared before any early return
   const [hashtags, setHashtags] = useState<string[]>([]);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [isRendering, setIsRendering] = useState(false);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
-  // Sync local hashtag state whenever a new result arrives
+  // Sync local hashtag state whenever a new result arrives; reset image
   useEffect(() => {
-    if (result) setHashtags(result.hashtags);
+    if (result) {
+      setHashtags(result.hashtags);
+      setImageUrl(null);
+      setRenderError(null);
+    }
   }, [result]);
 
   const handleRegenerate = async () => {
@@ -128,6 +137,21 @@ export function ContentPreview() {
     }
   };
 
+  const handleRenderImage = async () => {
+    if (!result) return;
+    setIsRendering(true);
+    setRenderError(null);
+    setImageUrl(null);
+    try {
+      const url = await renderPostImage(result.caption, hashtags);
+      setImageUrl(url);
+    } catch (err) {
+      setRenderError(String(err));
+    } finally {
+      setIsRendering(false);
+    }
+  };
+
   if (!result) {
     return (
       <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border">
@@ -137,6 +161,7 @@ export function ContentPreview() {
       </div>
     );
   }
+
   const captionLength = result.caption.length;
   const isOverLimit = captionLength > captionLimit;
   const hashtagsText = hashtags.map((t) => `#${t}`).join(" ");
@@ -172,12 +197,66 @@ export function ContentPreview() {
             <span className="text-sm font-medium text-foreground">
               Hashtags{" "}
               <span className="text-xs font-normal text-muted-foreground">
-                ({result.hashtags.length})
+                ({hashtags.length})
               </span>
             </span>
             <CopyButton text={hashtagsText} label="les hashtags" />
           </div>
           <EditableHashtags hashtags={hashtags} onChange={setHashtags} />
+        </div>
+
+        <Separator />
+
+        {/* Image preview */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-foreground">Visuel 1080×1080</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={handleRenderImage}
+                  disabled={isRendering}
+                >
+                  {isRendering ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ImageDown className="h-3.5 w-3.5" />
+                  )}
+                  {isRendering ? "Rendu en cours…" : "Générer l'image"}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Rendu PNG 1080×1080 via Playwright (nécessite Python + playwright)
+              </TooltipContent>
+            </Tooltip>
+          </div>
+
+          {renderError && (
+            <p className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">
+              {renderError}
+            </p>
+          )}
+
+          {imageUrl && (
+            <div className="rounded-lg overflow-hidden border border-border">
+              <img
+                src={imageUrl}
+                alt="Visuel post Instagram"
+                className="w-full aspect-square object-cover"
+              />
+            </div>
+          )}
+
+          {!imageUrl && !renderError && !isRendering && (
+            <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-border">
+              <p className="text-xs text-muted-foreground">
+                Clique sur "Générer l'image" pour créer le visuel
+              </p>
+            </div>
+          )}
         </div>
 
         <Separator />

@@ -49,6 +49,9 @@ pub fn run() {
             commands::ai::generate_content,
             commands::ai::save_draft,
             commands::ai::get_post_history,
+            commands::ai::warmup_sidecar,
+            // Media
+            commands::media::render_post_image,
             // Settings — BYOK
             commands::settings::save_ai_key,
             commands::settings::test_ai_key,
