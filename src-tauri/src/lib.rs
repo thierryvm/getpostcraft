@@ -53,6 +53,8 @@ pub fn run() {
             commands::ai::warmup_sidecar,
             // Media
             commands::media::render_post_image,
+            commands::media::render_code_image,
+            commands::media::render_terminal_image,
             // Settings — BYOK
             commands::settings::save_ai_key,
             commands::settings::test_ai_key,

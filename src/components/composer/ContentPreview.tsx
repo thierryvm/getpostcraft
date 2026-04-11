@@ -12,7 +12,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useComposerStore } from "@/stores/composer.store";
 import { generateContent, saveDraft } from "@/lib/tauri/composer";
 import type { CaptionVariant } from "@/lib/tauri/composer";
-import { renderPostImage } from "@/lib/tauri/media";
+import { renderPostImage, renderCodeImage, renderTerminalImage } from "@/lib/tauri/media";
 import { NETWORK_META } from "@/types/composer.types";
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -151,11 +151,21 @@ export function ContentPreview() {
   const captionLimit = NETWORK_META[network].captionLimit;
   const imageRef = useRef<HTMLDivElement>(null);
 
+  type VisualTemplate = "post" | "code" | "terminal";
+
   // Must be declared before any early return
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [template, setTemplate] = useState<VisualTemplate>("post");
+  // Code template inputs
+  const [code, setCode] = useState("");
+  const [language, setLanguage] = useState("bash");
+  const [filename, setFilename] = useState("");
+  // Terminal template inputs
+  const [termCommand, setTermCommand] = useState("");
+  const [termOutput, setTermOutput] = useState("");
 
   // Sync local hashtag state whenever a new result arrives; reset image
   useEffect(() => {
@@ -190,12 +200,21 @@ export function ContentPreview() {
   };
 
   const handleRenderImage = async () => {
-    if (!result) return;
     setIsRendering(true);
     setRenderError(null);
     setImageUrl(null);
     try {
-      const url = await renderPostImage(result.caption, hashtags);
+      let url: string;
+      if (template === "code") {
+        if (!code.trim()) { setRenderError("Colle du code d'abord."); setIsRendering(false); return; }
+        url = await renderCodeImage(code, language, filename || undefined);
+      } else if (template === "terminal") {
+        if (!termCommand.trim()) { setRenderError("Saisis une commande d'abord."); setIsRendering(false); return; }
+        url = await renderTerminalImage(termCommand, termOutput || undefined);
+      } else {
+        if (!result) { setRenderError("Génère du contenu d'abord."); setIsRendering(false); return; }
+        url = await renderPostImage(result.caption, hashtags);
+      }
       setImageUrl(url);
     } catch (err) {
       setRenderError(String(err));
@@ -281,32 +300,85 @@ export function ContentPreview() {
 
         <Separator />
 
-        {/* Image generation */}
+        {/* Visual generator */}
         <div ref={imageRef} className="flex flex-col gap-3">
+          {/* Header + generate button */}
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-foreground">Visuel 1080×1080</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 text-xs"
-                  onClick={handleRenderImage}
-                  disabled={isRendering}
-                >
-                  {isRendering ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <ImageDown className="h-3.5 w-3.5" />
-                  )}
-                  {isRendering ? "Rendu en cours…" : "Générer l'image"}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                Rendu PNG 1080×1080 via Playwright
-              </TooltipContent>
-            </Tooltip>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={handleRenderImage}
+              disabled={isRendering}
+            >
+              {isRendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />}
+              {isRendering ? "Rendu…" : "Générer"}
+            </Button>
           </div>
+
+          {/* Template selector */}
+          <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg w-fit">
+            {(["post", "code", "terminal"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => { setTemplate(t); setImageUrl(null); setRenderError(null); }}
+                className={`px-3 py-1 text-xs rounded-md transition-colors font-medium ${
+                  template === t
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {t === "post" ? "Post" : t === "code" ? "Code" : "Terminal"}
+              </button>
+            ))}
+          </div>
+
+          {/* Template-specific inputs */}
+          {template === "code" && (
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <input
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  placeholder="langage (ex: bash)"
+                  className="flex-1 bg-secondary/50 border border-border rounded-md px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+                />
+                <input
+                  value={filename}
+                  onChange={(e) => setFilename(e.target.value)}
+                  placeholder="nom fichier (optionnel)"
+                  className="flex-1 bg-secondary/50 border border-border rounded-md px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <textarea
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="Colle ton code ici…"
+                rows={6}
+                className="w-full bg-secondary/50 border border-border rounded-md px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground font-mono focus:outline-none focus:border-primary resize-none"
+              />
+            </div>
+          )}
+
+          {template === "terminal" && (
+            <div className="flex flex-col gap-2">
+              <input
+                value={termCommand}
+                onChange={(e) => setTermCommand(e.target.value)}
+                placeholder="commande (ex: grep -r 'error' /var/log)"
+                className="w-full bg-secondary/50 border border-border rounded-md px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground font-mono focus:outline-none focus:border-primary"
+              />
+              <textarea
+                value={termOutput}
+                onChange={(e) => setTermOutput(e.target.value)}
+                placeholder="output (optionnel)"
+                rows={4}
+                className="w-full bg-secondary/50 border border-border rounded-md px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground font-mono focus:outline-none focus:border-primary resize-none"
+              />
+            </div>
+          )}
 
           {renderError && (
             <p className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">
@@ -316,17 +388,11 @@ export function ContentPreview() {
 
           {imageUrl ? (
             <div className="rounded-lg overflow-hidden border border-border flex justify-center bg-[#0d1117]">
-              <img
-                src={imageUrl}
-                alt="Visuel post Instagram"
-                className="max-h-72 w-auto object-contain"
-              />
+              <img src={imageUrl} alt="Visuel post Instagram" className="max-h-72 w-auto object-contain" />
             </div>
           ) : !renderError && !isRendering ? (
-            <div className="flex h-16 items-center justify-center rounded-lg border border-dashed border-border">
-              <p className="text-xs text-muted-foreground">
-                Clique sur "Générer l'image" pour créer le visuel
-              </p>
+            <div className="flex h-12 items-center justify-center rounded-lg border border-dashed border-border">
+              <p className="text-xs text-muted-foreground">Clique sur "Générer" pour créer le visuel</p>
             </div>
           ) : null}
         </div>
