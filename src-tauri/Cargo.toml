@@ -28,4 +28,5 @@ tokio = { version = "1", features = ["process", "io-util", "time", "rt-multi-thr
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "chrono"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
+zip = "8.5.1"
 

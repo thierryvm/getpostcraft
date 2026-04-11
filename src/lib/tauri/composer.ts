@@ -44,3 +44,23 @@ export async function generateVariants(
 ): Promise<CaptionVariant[]> {
   return invoke<CaptionVariant[]>("generate_variants", { brief, network });
 }
+
+export interface CarouselSlide {
+  index: number;
+  total: number;
+  emoji: string;
+  title: string;
+  body: string;
+}
+
+export async function generateCarousel(
+  brief: string,
+  network: string,
+  slideCount: number
+): Promise<CarouselSlide[]> {
+  return invoke<CarouselSlide[]>("generate_carousel", {
+    brief,
+    network,
+    slide_count: slideCount,
+  });
+}

@@ -52,10 +52,13 @@ pub fn run() {
             commands::ai::get_post_history,
             commands::ai::scrape_url_for_brief,
             commands::ai::warmup_sidecar,
+            commands::ai::generate_carousel,
             // Media
             commands::media::render_post_image,
             commands::media::render_code_image,
             commands::media::render_terminal_image,
+            commands::media::render_carousel_slides,
+            commands::media::export_carousel_zip,
             // Settings — BYOK
             commands::settings::save_ai_key,
             commands::settings::test_ai_key,

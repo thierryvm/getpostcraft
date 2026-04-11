@@ -1,5 +1,6 @@
 use base64::Engine as _;
 use std::path::PathBuf;
+use crate::commands::ai::CarouselSlide;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -263,6 +264,60 @@ fn build_terminal_html(command: &str, output: Option<&str>) -> String {
     )
 }
 
+fn build_carousel_slide_html(slide: &CarouselSlide) -> String {
+    let dots: String = (1..=slide.total)
+        .map(|i| if i == slide.index {
+            r#"<div class="dot active"></div>"#.to_string()
+        } else {
+            r#"<div class="dot"></div>"#.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    let css = concat!(
+        "*{margin:0;padding:0;box-sizing:border-box}",
+        "body{width:1080px;height:1080px;background:#0d1117;",
+        "font-family:'Segoe UI',system-ui,-apple-system,sans-serif;",
+        "display:flex;flex-direction:column;align-items:center;",
+        "justify-content:center;padding:80px;position:relative}",
+        ".brand{position:absolute;top:40px;right:48px;font-size:22px;",
+        "color:#3ddc84;font-weight:700;letter-spacing:.04em}",
+        ".counter{position:absolute;top:40px;left:48px;font-size:22px;",
+        "color:#8b949e;font-weight:500}",
+        ".content{display:flex;flex-direction:column;align-items:center;",
+        "text-align:center;max-width:900px}",
+        ".emoji{font-size:104px;line-height:1;margin-bottom:48px}",
+        ".title{font-size:58px;font-weight:800;color:#fff;",
+        "line-height:1.15;margin-bottom:28px}",
+        ".accent{width:64px;height:5px;background:#3ddc84;",
+        "border-radius:3px;margin-bottom:36px}",
+        ".body{font-size:30px;color:#c9d1d9;line-height:1.6}",
+        ".dots{position:absolute;bottom:44px;left:50%;",
+        "transform:translateX(-50%);display:flex;gap:10px;align-items:center}",
+        ".dot{width:10px;height:10px;border-radius:50%;background:#30363d}",
+        ".dot.active{width:28px;height:10px;border-radius:5px;background:#3ddc84}",
+    );
+
+    let mut html = String::with_capacity(3500);
+    html.push_str(r#"<!DOCTYPE html><html><head><meta charset="UTF-8"><style>"#);
+    html.push_str(css);
+    html.push_str("</style></head><body>");
+    html.push_str(r#"<div class="brand">getpostcraft</div>"#);
+    html.push_str(&format!(r#"<div class="counter">{}/{}</div>"#, slide.index, slide.total));
+    html.push_str(r#"<div class="content">"#);
+    html.push_str(&format!(r#"<div class="emoji">{}</div>"#, html_escape(&slide.emoji)));
+    html.push_str(&format!(r#"<div class="title">{}</div>"#, html_escape(&slide.title)));
+    html.push_str(r#"<div class="accent"></div>"#);
+    html.push_str(&format!(
+        r#"<div class="body">{}</div>"#,
+        html_escape(&slide.body).replace('\n', "<br>"),
+    ));
+    html.push_str("</div>");
+    html.push_str(&format!(r#"<div class="dots">{}</div>"#, dots));
+    html.push_str("</body></html>");
+    html
+}
+
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
 /// Render caption + hashtags to 1080×1080 PNG. Returns base64 data URL.
@@ -291,4 +346,53 @@ pub async fn render_terminal_image(
     output: Option<String>,
 ) -> Result<String, String> {
     render_to_base64(&build_terminal_html(&command, output.as_deref())).await
+}
+
+/// Render each carousel slide to PNG. Returns Vec of base64 data URLs (same order as input).
+#[tauri::command]
+pub async fn render_carousel_slides(
+    slides: Vec<CarouselSlide>,
+) -> Result<Vec<String>, String> {
+    let mut images = Vec::with_capacity(slides.len());
+    for slide in &slides {
+        let data_url = render_to_base64(&build_carousel_slide_html(slide)).await?;
+        images.push(data_url);
+    }
+    Ok(images)
+}
+
+/// Pack base64 data-URL images into a ZIP and save it to the Downloads folder.
+/// Returns the absolute path to the created ZIP file.
+#[tauri::command]
+pub async fn export_carousel_zip(images: Vec<String>) -> Result<String, String> {
+    use std::io::Write as _;
+    use zip::write::SimpleFileOptions;
+
+    let downloads = dirs::download_dir()
+        .ok_or_else(|| "Impossible de trouver le dossier Téléchargements".to_string())?;
+
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let zip_path = downloads.join(format!("carousel_{timestamp}.zip"));
+
+    let file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+
+    for (i, data_url) in images.iter().enumerate() {
+        let b64 = data_url
+            .strip_prefix("data:image/png;base64,")
+            .ok_or_else(|| format!("Invalid data URL at index {i}"))?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| format!("Base64 decode error at index {i}: {e}"))?;
+
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored); // PNGs are already compressed
+
+        zip.start_file(format!("slide_{:02}.png", i + 1), options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(&bytes).map_err(|e| e.to_string())?;
+    }
+
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(zip_path.to_string_lossy().to_string())
 }

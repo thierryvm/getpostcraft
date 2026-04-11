@@ -24,3 +24,15 @@ export async function renderTerminalImage(
 ): Promise<string> {
   return invoke<string>("render_terminal_image", { command, output: output ?? null });
 }
+
+/** Render carousel slides → array of base64 PNG data URLs (same order as input). */
+export async function renderCarouselSlides(
+  slides: import("@/lib/tauri/composer").CarouselSlide[]
+): Promise<string[]> {
+  return invoke<string[]>("render_carousel_slides", { slides });
+}
+
+/** Pack rendered carousel images into a ZIP in Downloads. Returns the ZIP file path. */
+export async function exportCarouselZip(images: string[]): Promise<string> {
+  return invoke<string>("export_carousel_zip", { images });
+}

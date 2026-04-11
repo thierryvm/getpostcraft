@@ -30,6 +30,51 @@ class AIClient:
             return self._generate_anthropic(brief, system_prompt)
         return self._generate_openai_compat(brief, system_prompt)
 
+    def generate_carousel_slides(
+        self, brief: str, network: str, slide_count: int, system_prompt: str
+    ) -> list[dict]:
+        if self.provider == "anthropic":
+            return self._carousel_anthropic(brief, slide_count, system_prompt)
+        return self._carousel_openai_compat(brief, slide_count, system_prompt)
+
+    def _carousel_openai_compat(
+        self, brief: str, slide_count: int, system_prompt: str
+    ) -> list[dict]:
+        base_url = self.base_url or "https://openrouter.ai/api/v1"
+        api_key = self.api_key or "ollama"
+        headers: dict[str, str] = {}
+        if self.provider == "openrouter":
+            headers = {
+                "HTTP-Referer": "https://getpostcraft.app",
+                "X-Title": "Getpostcraft",
+            }
+        client = OpenAI(api_key=api_key, base_url=base_url, default_headers=headers)
+        response = client.chat.completions.create(
+            model=self.model,
+            max_tokens=2000,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": brief},
+            ],
+        )
+        raw = response.choices[0].message.content or ""
+        return _parse_carousel_response(raw, slide_count)
+
+    def _carousel_anthropic(
+        self, brief: str, slide_count: int, system_prompt: str
+    ) -> list[dict]:
+        if not self.api_key:
+            raise ValueError("Anthropic requires an API key")
+        client = anthropic.Anthropic(api_key=self.api_key)
+        message = client.messages.create(
+            model=self.model,
+            max_tokens=2000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": brief}],
+        )
+        raw = message.content[0].text
+        return _parse_carousel_response(raw, slide_count)
+
     # ── OpenRouter + Ollama (OpenAI-compatible) ────────────────────────────
 
     def _generate_openai_compat(self, brief: str, system_prompt: str) -> dict[str, Any]:
@@ -99,6 +144,27 @@ def _parse_json_response(text: str) -> dict[str, Any]:
     if "caption" not in data or "hashtags" not in data:
         raise ValueError(f"Unexpected response shape: {list(data.keys())}")
     return {"caption": str(data["caption"]), "hashtags": list(data["hashtags"])}
+
+
+def _parse_carousel_response(text: str, expected_count: int) -> list[dict]:
+    """Parse a JSON array of slide objects from model output."""
+    cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        data = json.loads(_escape_control_chars(cleaned))
+
+    if not isinstance(data, list):
+        raise ValueError(f"Expected JSON array, got {type(data).__name__}")
+
+    slides = []
+    for i, slide in enumerate(data[:expected_count]):
+        slides.append({
+            "emoji": str(slide.get("emoji", "💡")),
+            "title": str(slide.get("title", f"Slide {i + 1}")),
+            "body": str(slide.get("body", "")),
+        })
+    return slides
 
 
 _CTRL_ESCAPES: dict[str, str] = {

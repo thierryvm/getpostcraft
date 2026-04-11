@@ -1,4 +1,4 @@
-import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2 } from "lucide-react";
+import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,9 +10,9 @@ import {
 } from "@/components/ui/tooltip";
 import { useNavigate } from "@tanstack/react-router";
 import { useComposerStore } from "@/stores/composer.store";
-import { generateContent, saveDraft } from "@/lib/tauri/composer";
-import type { CaptionVariant } from "@/lib/tauri/composer";
-import { renderPostImage, renderCodeImage, renderTerminalImage } from "@/lib/tauri/media";
+import { generateContent, saveDraft, generateCarousel } from "@/lib/tauri/composer";
+import type { CaptionVariant, CarouselSlide } from "@/lib/tauri/composer";
+import { renderPostImage, renderCodeImage, renderTerminalImage, renderCarouselSlides, exportCarouselZip } from "@/lib/tauri/media";
 import { NETWORK_META } from "@/types/composer.types";
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -151,7 +151,7 @@ export function ContentPreview() {
   const captionLimit = NETWORK_META[network].captionLimit;
   const imageRef = useRef<HTMLDivElement>(null);
 
-  type VisualTemplate = "post" | "code" | "terminal";
+  type VisualTemplate = "post" | "code" | "terminal" | "carousel";
 
   // Must be declared before any early return
   const [hashtags, setHashtags] = useState<string[]>([]);
@@ -166,6 +166,15 @@ export function ContentPreview() {
   // Terminal template inputs
   const [termCommand, setTermCommand] = useState("");
   const [termOutput, setTermOutput] = useState("");
+  // Carousel state
+  const [slideCount, setSlideCount] = useState(5);
+  const [carouselSlides, setCarouselSlides] = useState<CarouselSlide[] | null>(null);
+  const [carouselImages, setCarouselImages] = useState<string[] | null>(null);
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const [isCarouselLoading, setIsCarouselLoading] = useState(false);
+  const [carouselError, setCarouselError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
 
   // Sync local hashtag state whenever a new result arrives; reset image
   useEffect(() => {
@@ -220,6 +229,41 @@ export function ContentPreview() {
       setRenderError(String(err));
     } finally {
       setIsRendering(false);
+    }
+  };
+
+  const handleGenerateCarousel = async () => {
+    if (!brief) return;
+    setIsCarouselLoading(true);
+    setCarouselError(null);
+    setCarouselSlides(null);
+    setCarouselImages(null);
+    setExportSuccess(null);
+    try {
+      const slides = await generateCarousel(brief, network, slideCount);
+      setCarouselSlides(slides);
+      setCarouselIndex(0);
+      const images = await renderCarouselSlides(slides);
+      setCarouselImages(images);
+    } catch (err) {
+      setCarouselError(String(err));
+    } finally {
+      setIsCarouselLoading(false);
+    }
+  };
+
+  const handleExportZip = async () => {
+    if (!carouselImages) return;
+    setIsExporting(true);
+    setExportSuccess(null);
+    try {
+      const zipPath = await exportCarouselZip(carouselImages);
+      const filename = zipPath.split(/[/\\]/).pop() ?? "carousel.zip";
+      setExportSuccess(`Enregistré dans Téléchargements : ${filename}`);
+    } catch (err) {
+      setCarouselError(String(err));
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -302,35 +346,44 @@ export function ContentPreview() {
 
         {/* Visual generator */}
         <div ref={imageRef} className="flex flex-col gap-3">
-          {/* Header + generate button */}
+          {/* Header + generate button (hidden for carousel which has its own) */}
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-foreground">Visuel 1080×1080</span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1.5 text-xs"
-              onClick={handleRenderImage}
-              disabled={isRendering}
-            >
-              {isRendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />}
-              {isRendering ? "Rendu…" : "Générer"}
-            </Button>
+            {template !== "carousel" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={handleRenderImage}
+                disabled={isRendering}
+              >
+                {isRendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />}
+                {isRendering ? "Rendu…" : "Générer"}
+              </Button>
+            )}
           </div>
 
           {/* Template selector */}
-          <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg w-fit">
-            {(["post", "code", "terminal"] as const).map((t) => (
+          <div className="flex flex-wrap gap-1 p-1 bg-secondary/50 rounded-lg w-fit">
+            {(["post", "code", "terminal", "carousel"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
-                onClick={() => { setTemplate(t); setImageUrl(null); setRenderError(null); }}
-                className={`px-3 py-1 text-xs rounded-md transition-colors font-medium ${
+                onClick={() => {
+                  setTemplate(t);
+                  setImageUrl(null);
+                  setRenderError(null);
+                  setCarouselError(null);
+                  setExportSuccess(null);
+                }}
+                className={`flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors font-medium ${
                   template === t
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {t === "post" ? "Post" : t === "code" ? "Code" : "Terminal"}
+                {t === "carousel" && <Layers className="h-3 w-3" />}
+                {t === "post" ? "Post" : t === "code" ? "Code" : t === "terminal" ? "Terminal" : "Carrousel"}
               </button>
             ))}
           </div>
@@ -380,21 +433,136 @@ export function ContentPreview() {
             </div>
           )}
 
-          {renderError && (
+          {/* Carousel template UI */}
+          {template === "carousel" && (
+            <div className="flex flex-col gap-3">
+              {/* Controls row */}
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-muted-foreground">Slides :</span>
+                <div className="flex gap-1">
+                  {[3, 5, 7, 10].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setSlideCount(n)}
+                      className={`px-2.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                        slideCount === n
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-secondary text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="ml-auto h-7 gap-1.5 text-xs"
+                  onClick={handleGenerateCarousel}
+                  disabled={isCarouselLoading || !brief}
+                >
+                  {isCarouselLoading
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Layers className="h-3.5 w-3.5" />}
+                  {isCarouselLoading
+                    ? (carouselSlides ? "Rendu…" : "Génération…")
+                    : "Générer"}
+                </Button>
+              </div>
+
+              {carouselError && (
+                <p className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">
+                  {carouselError}
+                </p>
+              )}
+
+              {/* Slide preview + navigation */}
+              {carouselImages && (
+                <>
+                  <div className="rounded-lg overflow-hidden border border-border flex justify-center bg-[#0d1117]">
+                    <img
+                      src={carouselImages[carouselIndex]}
+                      alt={`Slide ${carouselIndex + 1}`}
+                      className="max-h-64 w-auto object-contain"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 text-xs"
+                      onClick={() => setCarouselIndex((i) => Math.max(0, i - 1))}
+                      disabled={carouselIndex === 0}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Précédent
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      {carouselIndex + 1} / {carouselImages.length}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 text-xs"
+                      onClick={() => setCarouselIndex((i) => Math.min(carouselImages.length - 1, i + 1))}
+                      disabled={carouselIndex === carouselImages.length - 1}
+                    >
+                      Suivant
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    onClick={handleExportZip}
+                    disabled={isExporting}
+                  >
+                    {isExporting
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <Download className="h-3.5 w-3.5" />}
+                    {isExporting ? "Export…" : "Exporter ZIP"}
+                  </Button>
+                  {exportSuccess && (
+                    <p className="text-xs text-primary bg-primary/10 rounded-md px-3 py-2">
+                      {exportSuccess}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* Slide titles list (shown after AI generation, before render completes) */}
+              {carouselSlides && !carouselImages && !isCarouselLoading && (
+                <div className="flex flex-col gap-1">
+                  {carouselSlides.map((s) => (
+                    <div key={s.index} className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="text-sm">{s.emoji}</span>
+                      <span>{s.title}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {renderError && template !== "carousel" && (
             <p className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">
               {renderError}
             </p>
           )}
 
-          {imageUrl ? (
-            <div className="rounded-lg overflow-hidden border border-border flex justify-center bg-[#0d1117]">
-              <img src={imageUrl} alt="Visuel post Instagram" className="max-h-72 w-auto object-contain" />
-            </div>
-          ) : !renderError && !isRendering ? (
-            <div className="flex h-12 items-center justify-center rounded-lg border border-dashed border-border">
-              <p className="text-xs text-muted-foreground">Clique sur "Générer" pour créer le visuel</p>
-            </div>
-          ) : null}
+          {template !== "carousel" && (
+            imageUrl ? (
+              <div className="rounded-lg overflow-hidden border border-border flex justify-center bg-[#0d1117]">
+                <img src={imageUrl} alt="Visuel post Instagram" className="max-h-72 w-auto object-contain" />
+              </div>
+            ) : !renderError && !isRendering ? (
+              <div className="flex h-12 items-center justify-center rounded-lg border border-dashed border-border">
+                <p className="text-xs text-muted-foreground">Clique sur "Générer" pour créer le visuel</p>
+              </div>
+            ) : null
+          )}
         </div>
 
         <Separator />
