@@ -25,6 +25,9 @@ const composerRoute = createRoute({
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
+  validateSearch: (search: Record<string, unknown>) => ({
+    tab: (search.tab as string) ?? "ai",
+  }),
   component: SettingsPage,
 });
 

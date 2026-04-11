@@ -8,6 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useNavigate } from "@tanstack/react-router";
 import { useComposerStore } from "@/stores/composer.store";
 import { generateContent } from "@/lib/tauri/composer";
 import { NETWORK_META } from "@/types/composer.types";
@@ -102,6 +103,7 @@ function EditableHashtags({
 
 export function ContentPreview() {
   const { result, network, brief, setResult, setIsLoading, setError } = useComposerStore();
+  const navigate = useNavigate();
   const captionLimit = NETWORK_META[network].captionLimit;
   // Must be declared before any early return
   const [hashtags, setHashtags] = useState<string[]>([]);
@@ -185,12 +187,16 @@ export function ContentPreview() {
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="flex-1">
-                <Button variant="default" className="w-full" disabled>
+                <Button
+                  variant="default"
+                  className="w-full"
+                  onClick={() => navigate({ to: "/settings", search: { tab: "accounts" } })}
+                >
                   Publier sur Instagram
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent>Connexion compte requise</TooltipContent>
+            <TooltipContent>Connecter un compte Instagram</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>

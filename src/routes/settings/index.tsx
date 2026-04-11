@@ -1,8 +1,13 @@
+import { useSearch, useNavigate } from "@tanstack/react-router";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AiKeyForm } from "@/components/settings/AiKeyForm";
+import { AccountsForm } from "@/components/settings/AccountsForm";
 
 export function SettingsPage() {
+  const { tab } = useSearch({ from: "/settings" });
+  const navigate = useNavigate();
+
   return (
     <div className="p-6">
       <div className="mb-6">
@@ -12,10 +17,14 @@ export function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="ai" className="w-full max-w-2xl">
+      <Tabs
+        value={tab}
+        onValueChange={(v) => navigate({ to: "/settings", search: { tab: v } })}
+        className="w-full max-w-2xl"
+      >
         <TabsList>
           <TabsTrigger value="ai">Intelligence Artificielle</TabsTrigger>
-          <TabsTrigger value="accounts" disabled>Comptes (V2)</TabsTrigger>
+          <TabsTrigger value="accounts">Comptes</TabsTrigger>
           <TabsTrigger value="about" disabled>À propos</TabsTrigger>
         </TabsList>
 
@@ -31,6 +40,20 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent>
               <AiKeyForm />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="accounts" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Comptes sociaux</CardTitle>
+              <CardDescription>
+                Connecte tes comptes pour publier directement depuis Getpostcraft.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AccountsForm />
             </CardContent>
           </Card>
         </TabsContent>
