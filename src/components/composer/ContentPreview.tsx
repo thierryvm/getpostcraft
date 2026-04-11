@@ -249,11 +249,11 @@ export function ContentPreview() {
           )}
 
           {imageUrl ? (
-            <div className="rounded-lg overflow-hidden border border-border">
+            <div className="rounded-lg overflow-hidden border border-border flex justify-center bg-[#0d1117]">
               <img
                 src={imageUrl}
                 alt="Visuel post Instagram"
-                className="w-full aspect-square object-cover"
+                className="max-h-72 w-auto object-contain"
               />
             </div>
           ) : !renderError && !isRendering ? (
