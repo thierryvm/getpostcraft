@@ -1,5 +1,5 @@
 use serde::Serialize;
-use crate::state::AppState;
+use crate::{db::history::PostRecord, state::AppState};
 
 #[derive(Debug, Serialize)]
 pub struct GeneratedContent {
@@ -67,4 +67,24 @@ pub async fn generate_content(
         caption: data.caption,
         hashtags: data.hashtags,
     })
+}
+
+/// Save a generated post as draft in SQLite history.
+#[tauri::command]
+pub async fn save_draft(
+    state: tauri::State<'_, AppState>,
+    network: String,
+    caption: String,
+    hashtags: Vec<String>,
+) -> Result<i64, String> {
+    crate::db::history::insert_draft(&state.db, &network, &caption, &hashtags).await
+}
+
+/// Fetch recent post history from SQLite.
+#[tauri::command]
+pub async fn get_post_history(
+    state: tauri::State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<PostRecord>, String> {
+    crate::db::history::list_recent(&state.db, limit.unwrap_or(50)).await
 }
