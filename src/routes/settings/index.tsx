@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AiKeyForm } from "@/components/settings/AiKeyForm";
 import { AccountsForm } from "@/components/settings/AccountsForm";
+import { AboutSection } from "@/components/settings/AboutSection";
 
 export function SettingsPage() {
   const { tab } = useSearch({ from: "/settings" });
@@ -25,7 +26,7 @@ export function SettingsPage() {
         <TabsList>
           <TabsTrigger value="ai">Intelligence Artificielle</TabsTrigger>
           <TabsTrigger value="accounts">Comptes</TabsTrigger>
-          <TabsTrigger value="about" disabled>À propos</TabsTrigger>
+          <TabsTrigger value="about">À propos</TabsTrigger>
         </TabsList>
 
         <TabsContent value="ai" className="mt-4">
@@ -54,6 +55,16 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent>
               <AccountsForm />
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="about" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">À propos</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <AboutSection />
             </CardContent>
           </Card>
         </TabsContent>
