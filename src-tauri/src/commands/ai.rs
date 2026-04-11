@@ -151,6 +151,41 @@ pub async fn generate_variants(
     Ok(variants)
 }
 
+/// Scrape a URL and return extracted text suitable for use as a brief.
+#[tauri::command]
+pub async fn scrape_url_for_brief(url: String) -> Result<String, String> {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct ScrapeRequest {
+        action: &'static str,
+        url: String,
+        max_chars: u32,
+    }
+
+    let req = ScrapeRequest {
+        action: "scrape_url",
+        url,
+        max_chars: 3000,
+    };
+    let json = serde_json::to_string(&req).map_err(|e| e.to_string())?;
+    let stdout = crate::sidecar::run_sidecar_raw(json, 20).await?;
+
+    #[derive(serde::Deserialize)]
+    struct ScrapeData { text: String }
+    #[derive(serde::Deserialize)]
+    struct ScrapeResp { ok: bool, data: Option<ScrapeData>, error: Option<String> }
+
+    let resp: ScrapeResp = serde_json::from_str(&stdout)
+        .map_err(|e| format!("Parse scrape response: {e}"))?;
+
+    if resp.ok {
+        resp.data.map(|d| d.text).ok_or_else(|| "No text returned".to_string())
+    } else {
+        Err(resp.error.unwrap_or_else(|| "Scrape failed".to_string()))
+    }
+}
+
 /// Fire-and-forget sidecar warmup — called when Composer mounts.
 /// Validates Python + module availability so the first generation is faster.
 /// Never returns an error to the UI (failures are silent / logged to stderr).

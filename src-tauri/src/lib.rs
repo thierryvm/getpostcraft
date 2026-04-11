@@ -50,6 +50,7 @@ pub fn run() {
             commands::ai::generate_variants,
             commands::ai::save_draft,
             commands::ai::get_post_history,
+            commands::ai::scrape_url_for_brief,
             commands::ai::warmup_sidecar,
             // Media
             commands::media::render_post_image,

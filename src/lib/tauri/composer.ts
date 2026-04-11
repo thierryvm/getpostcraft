@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { GeneratedContent, Network, PostRecord } from "@/types/composer.types";
 
+/** Scrape a URL and return extracted text ready to use as a brief. */
+export async function scrapeUrlForBrief(url: string): Promise<string> {
+  return invoke<string>("scrape_url_for_brief", { url });
+}
+
 /** Fire-and-forget: warm up the Python sidecar when Composer mounts. */
 export function warmupSidecar(): void {
   invoke("warmup_sidecar").catch(() => {
