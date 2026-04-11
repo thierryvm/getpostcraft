@@ -26,3 +26,16 @@ export async function saveDraft(
 export async function getPostHistory(limit?: number): Promise<PostRecord[]> {
   return invoke<PostRecord[]>("get_post_history", { limit });
 }
+
+export interface CaptionVariant {
+  tone: "educational" | "casual" | "punchy";
+  caption: string;
+  hashtags: string[];
+}
+
+export async function generateVariants(
+  brief: string,
+  network: string
+): Promise<CaptionVariant[]> {
+  return invoke<CaptionVariant[]>("generate_variants", { brief, network });
+}

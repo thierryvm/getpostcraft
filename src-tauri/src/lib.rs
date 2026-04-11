@@ -47,6 +47,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // AI
             commands::ai::generate_content,
+            commands::ai::generate_variants,
             commands::ai::save_draft,
             commands::ai::get_post_history,
             commands::ai::warmup_sidecar,

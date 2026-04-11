@@ -1,6 +1,13 @@
 use serde::Serialize;
 use crate::{db::history::PostRecord, state::AppState};
 
+#[derive(Debug, Serialize, Clone)]
+pub struct CaptionVariant {
+    pub tone: String,
+    pub caption: String,
+    pub hashtags: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct GeneratedContent {
     pub caption: String,
@@ -67,6 +74,81 @@ pub async fn generate_content(
         caption: data.caption,
         hashtags: data.hashtags,
     })
+}
+
+/// Generate 3 caption variants in parallel (educational / casual / punchy).
+#[tauri::command]
+pub async fn generate_variants(
+    state: tauri::State<'_, AppState>,
+    brief: String,
+    network: String,
+) -> Result<Vec<CaptionVariant>, String> {
+    if brief.trim().len() < 10 {
+        return Err("Le brief doit contenir au moins 10 caractères.".to_string());
+    }
+
+    let (provider, model) = {
+        let active = state.active_provider.lock().map_err(|e| e.to_string())?;
+        (active.provider.clone(), active.model.clone())
+    };
+
+    let api_key: Option<String> = if provider == "ollama" {
+        None
+    } else {
+        let cached = state
+            .key_cache
+            .lock()
+            .ok()
+            .and_then(|c| c.get(&provider).cloned());
+        let key = cached
+            .or_else(|| crate::ai_keys::get_key(&provider).ok())
+            .ok_or_else(|| {
+                format!(
+                    "Aucune clé API pour « {provider} ». \
+                     Configure-la dans Paramètres → Intelligence Artificielle."
+                )
+            })?;
+        Some(key)
+    };
+
+    let base_url: Option<String> = match provider.as_str() {
+        "ollama" => Some("http://localhost:11434/v1".to_string()),
+        _ => None,
+    };
+
+    let make_req = |tone: &str| crate::sidecar::SidecarRequest {
+        action: "generate_content".to_string(),
+        provider: provider.clone(),
+        api_key: api_key.clone(),
+        model: model.clone(),
+        base_url: base_url.clone(),
+        brief: brief.clone(),
+        network: network.clone(),
+        system_prompt: crate::network_rules::get_variant_prompt(&network, tone),
+    };
+
+    // Run all 3 in parallel — each spawns its own Python process
+    let h_edu = tokio::task::spawn(crate::sidecar::call_sidecar(make_req("educational")));
+    let h_cas = tokio::task::spawn(crate::sidecar::call_sidecar(make_req("casual")));
+    let h_pun = tokio::task::spawn(crate::sidecar::call_sidecar(make_req("punchy")));
+
+    let raw = [
+        ("educational", h_edu.await.map_err(|e| e.to_string())?),
+        ("casual",      h_cas.await.map_err(|e| e.to_string())?),
+        ("punchy",      h_pun.await.map_err(|e| e.to_string())?),
+    ];
+    let mut variants = Vec::with_capacity(3);
+    for (tone, res) in raw {
+        match res {
+            Ok(data) => variants.push(CaptionVariant {
+                tone: tone.to_string(),
+                caption: data.caption,
+                hashtags: data.hashtags,
+            }),
+            Err(e) => return Err(format!("Erreur variante {tone}: {e}")),
+        }
+    }
+    Ok(variants)
 }
 
 /// Fire-and-forget sidecar warmup — called when Composer mounts.

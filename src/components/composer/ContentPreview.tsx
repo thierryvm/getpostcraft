@@ -10,7 +10,8 @@ import {
 } from "@/components/ui/tooltip";
 import { useNavigate } from "@tanstack/react-router";
 import { useComposerStore } from "@/stores/composer.store";
-import { generateContent } from "@/lib/tauri/composer";
+import { generateContent, saveDraft } from "@/lib/tauri/composer";
+import type { CaptionVariant } from "@/lib/tauri/composer";
 import { renderPostImage } from "@/lib/tauri/media";
 import { NETWORK_META } from "@/types/composer.types";
 
@@ -102,8 +103,50 @@ function EditableHashtags({
   );
 }
 
+const TONE_LABELS: Record<string, string> = {
+  educational: "Éducatif",
+  casual: "Casual",
+  punchy: "Percutant",
+};
+
+function VariantsPanel({
+  variants,
+  onSelect,
+}: {
+  variants: CaptionVariant[];
+  onSelect: (v: CaptionVariant) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-muted-foreground">
+        Choisis un ton — il sera chargé dans l'éditeur.
+      </p>
+      {variants.map((v) => (
+        <Card key={v.tone} className="cursor-pointer hover:border-primary transition-colors" onClick={() => onSelect(v)}>
+          <CardContent className="pt-4 pb-3 flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-primary uppercase tracking-wide">
+                {TONE_LABELS[v.tone] ?? v.tone}
+              </span>
+              <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={(e) => { e.stopPropagation(); onSelect(v); }}>
+                Choisir
+              </Button>
+            </div>
+            <p className="text-sm text-foreground line-clamp-3 whitespace-pre-line">{v.caption}</p>
+            <div className="flex flex-wrap gap-1">
+              {v.hashtags.slice(0, 5).map((t) => (
+                <span key={t} className="text-xs text-primary">#{t}</span>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 export function ContentPreview() {
-  const { result, network, brief, setResult, setIsLoading, setError } = useComposerStore();
+  const { result, variants, network, brief, setResult, setVariants, setIsLoading, setError } = useComposerStore();
   const navigate = useNavigate();
   const captionLimit = NETWORK_META[network].captionLimit;
   const imageRef = useRef<HTMLDivElement>(null);
@@ -138,6 +181,7 @@ export function ContentPreview() {
     try {
       const newResult = await generateContent(brief, network);
       setResult(newResult);
+      saveDraft(network, newResult.caption, newResult.hashtags).catch(() => {});
     } catch (err) {
       setError(String(err));
     } finally {
@@ -160,7 +204,13 @@ export function ContentPreview() {
     }
   };
 
-  if (!result) {
+  const handleSelectVariant = (v: CaptionVariant) => {
+    setResult({ caption: v.caption, hashtags: v.hashtags });
+    setVariants(null);
+    saveDraft(network, v.caption, v.hashtags).catch(() => {});
+  };
+
+  if (!result && !variants) {
     return (
       <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-border">
         <p className="text-sm text-muted-foreground">
@@ -170,7 +220,23 @@ export function ContentPreview() {
     );
   }
 
-  const captionLength = result.caption.length;
+  if (variants) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">3 variantes générées</CardTitle>
+        </CardHeader>
+        <Separator />
+        <CardContent className="pt-4">
+          <VariantsPanel variants={variants} onSelect={handleSelectVariant} />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // At this point result is guaranteed non-null (variants path returned above, null+null returned above)
+  const safeResult = result!;
+  const captionLength = safeResult.caption.length;
   const isOverLimit = captionLength > captionLimit;
   const hashtagsText = hashtags.map((t) => `#${t}`).join(" ");
 
@@ -189,11 +255,11 @@ export function ContentPreview() {
               <span className={`text-xs ${isOverLimit ? "text-destructive" : "text-muted-foreground"}`}>
                 {captionLength} / {captionLimit}
               </span>
-              <CopyButton text={result.caption} label="la caption" />
+              <CopyButton text={safeResult.caption} label="la caption" />
             </div>
           </div>
           <p className="text-sm text-foreground whitespace-pre-line leading-relaxed">
-            {result.caption}
+            {safeResult.caption}
           </p>
         </div>
 

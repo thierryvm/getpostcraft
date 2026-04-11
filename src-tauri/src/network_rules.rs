@@ -1,10 +1,22 @@
 /// Returns the system prompt for the given social network.
-/// The prompt is injected into every sidecar request — never exposed to renderer.
 pub fn get_system_prompt(network: &str) -> &'static str {
     match network {
         "linkedin" => LINKEDIN_PROMPT,
         _ => INSTAGRAM_PROMPT,
     }
+}
+
+/// Returns a tone-specific system prompt for caption variant generation.
+/// tone: "educational" | "casual" | "punchy"
+pub fn get_variant_prompt(network: &str, tone: &str) -> String {
+    let base = get_system_prompt(network);
+    let instruction = match tone {
+        "educational" => "TON : pédagogique et informatif. Explique clairement, donne des exemples concrets, valeur ajoutée maximale. Commence par 'Savais-tu que…' ou 'Astuce :' ou une question rhétorique.",
+        "casual"      => "TON : décontracté et humain. Parle comme à un ami dev. Anecdote personnelle bienvenue. Pas de jargon inutile.",
+        "punchy"      => "TON : percutant et direct. Hook choc en première ligne, phrases courtes, rythme rapide. Crée un sentiment d'urgence ou de curiosité.",
+        _             => "TON : neutre et professionnel.",
+    };
+    format!("{base}\n\nINSTRUCTION SUPPLÉMENTAIRE POUR CETTE VARIANTE :\n{instruction}")
 }
 
 const INSTAGRAM_PROMPT: &str = r#"Tu es un expert en création de contenu Instagram pour le compte @terminallearning (niche Linux/Terminal/DevOps).
