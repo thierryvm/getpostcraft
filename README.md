@@ -5,11 +5,28 @@
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-orange)](https://tauri.app)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org)
+[![CI](https://github.com/thierryvm/getpostcraft/actions/workflows/ci.yml/badge.svg)](https://github.com/thierryvm/getpostcraft/actions/workflows/ci.yml)
 
-## What it does
-
-Generate Instagram captions and hashtags from a brief using AI (OpenRouter, Anthropic, or local Ollama).
+Generate Instagram captions, hashtags, and 1080×1080 post visuals from a brief using AI.  
 Built for the [@terminallearning](https://instagram.com/terminallearning) account — Linux/Terminal/DevOps niche.
+
+---
+
+## Features
+
+| Feature | Status |
+|---------|--------|
+| Caption + hashtag generation (French, plain text) | ✅ |
+| BYOK key management — OpenRouter / Anthropic / Ollama | ✅ |
+| Editable hashtags + copy to clipboard | ✅ |
+| Visual post creation — HTML → PNG 1080×1080 via Playwright | ✅ |
+| Post history dashboard (SQLite) | ✅ |
+| Instagram OAuth publishing | 🔜 V1 |
+| Multi-network — LinkedIn, Twitter/X, TikTok | 🔜 V2 |
+| Scheduling / background publishing | 🔜 V2 |
+| SaaS / multi-user (Supabase) | 🔜 V3 |
+
+---
 
 ## Stack
 
@@ -20,34 +37,91 @@ Built for the [@terminallearning](https://instagram.com/terminallearning) accoun
 | Styling | Tailwind CSS v4 + shadcn/ui (new-york, dark) |
 | State | Zustand 5 + TanStack Router v1 |
 | Backend | Rust (Tauri commands) |
-| AI | Python sidecar (OpenAI SDK + Anthropic SDK) |
+| Database | SQLite via sqlx 0.8 (WAL mode) |
+| AI | Python sidecar — OpenRouter / Anthropic / Ollama |
+| Image render | Playwright Chromium (HTML → PNG) |
+
+---
 
 ## Getting started
 
+### Prerequisites
+
+- [Node.js](https://nodejs.org) ≥ 20
+- [Rust](https://rustup.rs) stable toolchain
+- [Python](https://python.org) ≥ 3.11
+- Tauri prerequisites for your OS — see [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/)
+
+### Install
+
 ```bash
+# Clone
+git clone https://github.com/thierryvm/getpostcraft.git
+cd getpostcraft
+
+# Frontend dependencies
 npm install
+
+# Python sidecar dependencies
 pip install -r sidecar/requirements.txt
+python -m playwright install chromium
+```
+
+### Run in development
+
+```bash
 npm run tauri dev
 ```
 
+### Build for production
+
+```bash
+npm run tauri build
+```
+
+---
+
 ## Configuration
 
-Go to **Settings → Intelligence Artificielle** and add an API key:
-- [OpenRouter](https://openrouter.ai) — recommended
-- Anthropic direct
-- Ollama (local, no key needed)
+Open **Settings → Intelligence Artificielle** and add an API key:
 
-Keys are stored in `%APPDATA%\getpostcraft\api_keys.json` — never leave the machine.
+| Provider | Key required | Notes |
+|----------|-------------|-------|
+| [OpenRouter](https://openrouter.ai) | Yes | Recommended — access to all major models |
+| Anthropic | Yes | Direct Claude API |
+| Ollama | No | Local models, no internet required |
 
-## V1 scope (Instagram)
+Keys are stored in `%APPDATA%\getpostcraft\api_keys.json` and never leave the machine.
 
-- [x] Caption + hashtag generation (French, plain text)
-- [x] BYOK key management — OpenRouter / Anthropic / Ollama
-- [x] Editable hashtags, copy to clipboard
-- [ ] Instagram OAuth publishing
-- [ ] Visual post creation (HTML to PNG)
-- [ ] Post history dashboard
+---
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming, commit conventions, and PR process.
+
+### Key commands
+
+```bash
+npm run typecheck                          # TypeScript check
+cd src-tauri && cargo check               # Rust compile check
+cd src-tauri && cargo clippy -- -D warnings  # Lint
+cd src-tauri && cargo fmt                 # Format
+```
+
+### Project structure
+
+```
+src/                  React + TypeScript frontend
+src-tauri/src/        Rust backend (Tauri commands)
+  commands/           IPC handlers (ai, media, settings)
+  db/                 SQLite pool + migrations
+sidecar/              Python AI + image render process
+docs/adr/             Architecture Decision Records
+```
+
+---
 
 ## License
 
-[BUSL-1.1](LICENSE) — personal use only until 2030-04-11, then MIT.
+[BUSL-1.1](LICENSE) — personal use only until **2030-04-11**, then MIT.  
+See [LICENSE](LICENSE) for the full terms.

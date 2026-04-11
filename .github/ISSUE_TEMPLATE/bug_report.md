@@ -1,23 +1,42 @@
 ---
 name: Bug report
-about: Something is broken
-labels: bug
+about: Something is broken or behaves unexpectedly
+labels: "bug"
+assignees: thierryvm
 ---
 
-**Describe the bug**
-A clear description of what is wrong.
+## Description
 
-**Steps to reproduce**
-1. Go to...
-2. Click...
-3. See error
+<!-- A clear, concise description of what is wrong. -->
 
-**Expected behavior**
-What should happen.
+## Steps to reproduce
 
-**Environment**
-- OS: Windows / macOS / Linux
-- App version:
-- Provider: OpenRouter / Anthropic / Ollama
+1.
+2.
+3.
 
-**Logs / screenshots**
+## Expected behavior
+
+<!-- What should happen. -->
+
+## Actual behavior
+
+<!-- What actually happens. Include error messages verbatim. -->
+
+## Environment
+
+| Field | Value |
+|-------|-------|
+| OS | Windows / macOS / Linux |
+| App version | (see About tab in Settings) |
+| AI provider | OpenRouter / Anthropic / Ollama |
+| Model | |
+
+## Logs / screenshots
+
+<!-- Paste relevant logs or attach screenshots.
+     Tauri logs: open DevTools (Ctrl+Shift+I) → Console tab. -->
+
+## Additional context
+
+<!-- Anything else that might be relevant. -->
