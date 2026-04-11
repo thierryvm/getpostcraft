@@ -165,11 +165,15 @@ pub async fn test_ai_key(provider: String) -> Result<KeyValidationResult, String
 }
 
 #[tauri::command]
-pub fn set_active_provider(
+pub async fn set_active_provider(
     state: tauri::State<'_, AppState>,
     provider: String,
     model: String,
 ) -> Result<(), String> {
+    // Persist to SQLite
+    crate::db::settings_db::set(&state.db, "active_provider", &provider).await?;
+    crate::db::settings_db::set(&state.db, "active_model", &model).await?;
+    // Update in-memory cache
     let mut active = state.active_provider.lock().map_err(|e| e.to_string())?;
     active.provider = provider;
     active.model = model;

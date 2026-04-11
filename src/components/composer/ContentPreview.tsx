@@ -1,4 +1,4 @@
-import { RefreshCw, Copy, Check, X, Plus } from "lucide-react";
+import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,8 +8,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useNavigate } from "@tanstack/react-router";
 import { useComposerStore } from "@/stores/composer.store";
 import { generateContent } from "@/lib/tauri/composer";
+import { renderPostImage } from "@/lib/tauri/media";
 import { NETWORK_META } from "@/types/composer.types";
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -102,14 +104,31 @@ function EditableHashtags({
 
 export function ContentPreview() {
   const { result, network, brief, setResult, setIsLoading, setError } = useComposerStore();
+  const navigate = useNavigate();
   const captionLimit = NETWORK_META[network].captionLimit;
+  const imageRef = useRef<HTMLDivElement>(null);
+
   // Must be declared before any early return
   const [hashtags, setHashtags] = useState<string[]>([]);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [isRendering, setIsRendering] = useState(false);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
-  // Sync local hashtag state whenever a new result arrives
+  // Sync local hashtag state whenever a new result arrives; reset image
   useEffect(() => {
-    if (result) setHashtags(result.hashtags);
+    if (result) {
+      setHashtags(result.hashtags);
+      setImageUrl(null);
+      setRenderError(null);
+    }
   }, [result]);
+
+  // Scroll image into view once it loads
+  useEffect(() => {
+    if (imageUrl && imageRef.current) {
+      imageRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [imageUrl]);
 
   const handleRegenerate = async () => {
     if (!brief) return;
@@ -126,26 +145,42 @@ export function ContentPreview() {
     }
   };
 
+  const handleRenderImage = async () => {
+    if (!result) return;
+    setIsRendering(true);
+    setRenderError(null);
+    setImageUrl(null);
+    try {
+      const url = await renderPostImage(result.caption, hashtags);
+      setImageUrl(url);
+    } catch (err) {
+      setRenderError(String(err));
+    } finally {
+      setIsRendering(false);
+    }
+  };
+
   if (!result) {
     return (
-      <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border">
+      <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-border">
         <p className="text-sm text-muted-foreground">
           Le contenu généré apparaîtra ici.
         </p>
       </div>
     );
   }
+
   const captionLength = result.caption.length;
   const isOverLimit = captionLength > captionLimit;
   const hashtagsText = hashtags.map((t) => `#${t}`).join(" ");
 
   return (
-    <Card className="flex flex-col gap-0 h-full">
+    <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Aperçu généré</CardTitle>
       </CardHeader>
       <Separator />
-      <CardContent className="flex flex-col gap-4 pt-4 flex-1 overflow-auto">
+      <CardContent className="flex flex-col gap-4 pt-4">
         {/* Caption */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
@@ -170,7 +205,7 @@ export function ContentPreview() {
             <span className="text-sm font-medium text-foreground">
               Hashtags{" "}
               <span className="text-xs font-normal text-muted-foreground">
-                ({result.hashtags.length})
+                ({hashtags.length})
               </span>
             </span>
             <CopyButton text={hashtagsText} label="les hashtags" />
@@ -180,17 +215,73 @@ export function ContentPreview() {
 
         <Separator />
 
+        {/* Image generation */}
+        <div ref={imageRef} className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-foreground">Visuel 1080×1080</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={handleRenderImage}
+                  disabled={isRendering}
+                >
+                  {isRendering ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ImageDown className="h-3.5 w-3.5" />
+                  )}
+                  {isRendering ? "Rendu en cours…" : "Générer l'image"}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Rendu PNG 1080×1080 via Playwright
+              </TooltipContent>
+            </Tooltip>
+          </div>
+
+          {renderError && (
+            <p className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">
+              {renderError}
+            </p>
+          )}
+
+          {imageUrl ? (
+            <div className="rounded-lg overflow-hidden border border-border flex justify-center bg-[#0d1117]">
+              <img
+                src={imageUrl}
+                alt="Visuel post Instagram"
+                className="max-h-72 w-auto object-contain"
+              />
+            </div>
+          ) : !renderError && !isRendering ? (
+            <div className="flex h-16 items-center justify-center rounded-lg border border-dashed border-border">
+              <p className="text-xs text-muted-foreground">
+                Clique sur "Générer l'image" pour créer le visuel
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        <Separator />
+
         {/* Actions */}
-        <div className="flex gap-2 mt-auto">
+        <div className="flex gap-2">
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="flex-1">
-                <Button variant="default" className="w-full" disabled>
+                <Button
+                  variant="default"
+                  className="w-full"
+                  onClick={() => navigate({ to: "/settings", search: { tab: "accounts" } })}
+                >
                   Publier sur Instagram
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent>Connexion compte requise</TooltipContent>
+            <TooltipContent>Connecter un compte Instagram</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>

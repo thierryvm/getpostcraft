@@ -38,6 +38,34 @@ def main() -> None:
             print(json.dumps({"ok": True, "data": data}), flush=True)
         except Exception as exc:  # noqa: BLE001
             _respond_error(str(exc))
+
+    elif action == "render_html":
+        try:
+            from render import render_html_to_png
+
+            path = render_html_to_png(
+                html=req["html"],
+                output_path=req["output_path"],
+                width=req.get("width", 1080),
+                height=req.get("height", 1080),
+            )
+            print(json.dumps({"ok": True, "data": {"path": path}}), flush=True)
+        except Exception as exc:  # noqa: BLE001
+            _respond_error(str(exc))
+
+    elif action == "warmup":
+        # Verify required modules are importable; used for pre-warming on Composer open.
+        missing = []
+        for mod in ("openai", "anthropic"):
+            try:
+                __import__(mod)
+            except ImportError:
+                missing.append(mod)
+        if missing:
+            _respond_error(f"Missing Python dependencies: {', '.join(missing)}")
+        else:
+            print(json.dumps({"ok": True, "data": {"status": "ready"}}), flush=True)
+
     else:
         _respond_error(f"Unknown action: {action}")
 

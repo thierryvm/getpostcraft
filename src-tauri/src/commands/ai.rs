@@ -1,5 +1,5 @@
 use serde::Serialize;
-use crate::state::AppState;
+use crate::{db::history::PostRecord, state::AppState};
 
 #[derive(Debug, Serialize)]
 pub struct GeneratedContent {
@@ -67,4 +67,42 @@ pub async fn generate_content(
         caption: data.caption,
         hashtags: data.hashtags,
     })
+}
+
+/// Fire-and-forget sidecar warmup — called when Composer mounts.
+/// Validates Python + module availability so the first generation is faster.
+/// Never returns an error to the UI (failures are silent / logged to stderr).
+#[tauri::command]
+pub async fn warmup_sidecar() -> () {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct WarmupRequest {
+        action: &'static str,
+    }
+
+    let req = WarmupRequest { action: "warmup" };
+    if let Ok(json) = serde_json::to_string(&req) {
+        let _ = crate::sidecar::run_sidecar_raw(json, 15).await;
+    }
+}
+
+/// Save a generated post as draft in SQLite history.
+#[tauri::command]
+pub async fn save_draft(
+    state: tauri::State<'_, AppState>,
+    network: String,
+    caption: String,
+    hashtags: Vec<String>,
+) -> Result<i64, String> {
+    crate::db::history::insert_draft(&state.db, &network, &caption, &hashtags).await
+}
+
+/// Fetch recent post history from SQLite.
+#[tauri::command]
+pub async fn get_post_history(
+    state: tauri::State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<PostRecord>, String> {
+    crate::db::history::list_recent(&state.db, limit.unwrap_or(50)).await
 }

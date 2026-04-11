@@ -28,3 +28,13 @@ export interface GeneratedContent {
   caption: string;
   hashtags: string[];
 }
+
+export interface PostRecord {
+  id: number;
+  network: Network;
+  caption: string;
+  hashtags: string[];
+  status: "draft" | "published" | "failed";
+  created_at: string;
+  published_at: string | null;
+}
