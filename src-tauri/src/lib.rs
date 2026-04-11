@@ -67,6 +67,10 @@ pub fn run() {
             // Settings — active provider
             commands::settings::set_active_provider,
             commands::settings::get_active_provider,
+            // Calendar
+            commands::calendar::get_calendar_posts,
+            commands::calendar::schedule_post,
+            commands::calendar::unschedule_post,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
