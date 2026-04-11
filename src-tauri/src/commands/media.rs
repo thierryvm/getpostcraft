@@ -1,6 +1,7 @@
+use base64::Engine as _;
 use std::path::PathBuf;
 
-/// Returns the directory where rendered images are stored.
+/// Returns a temp path for rendered images.
 fn renders_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -8,7 +9,6 @@ fn renders_dir() -> PathBuf {
         .join("renders")
 }
 
-/// Minimal HTML-entity escaping for injected user content.
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -16,7 +16,6 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Build the 1080×1080 Instagram post HTML template.
 fn build_post_html(caption: &str, hashtags: &[String]) -> String {
     let caption_escaped = html_escape(caption).replace('\n', "<br>");
     let hashtag_html: String = hashtags
@@ -104,9 +103,8 @@ fn build_post_html(caption: &str, hashtags: &[String]) -> String {
     )
 }
 
-/// Render the post (caption + hashtags) to a 1080×1080 PNG.
-/// Returns the absolute path to the generated file.
-/// The file persists in %APPDATA%/getpostcraft/renders/ until the user clears it.
+/// Render the post to a 1080×1080 PNG.
+/// Returns a `data:image/png;base64,...` string ready for use in an <img> src.
 #[tauri::command]
 pub async fn render_post_image(
     caption: String,
@@ -115,16 +113,18 @@ pub async fn render_post_image(
     let dir = renders_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create renders dir: {e}"))?;
 
-    let filename = format!(
-        "{}.png",
-        chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f")
-    );
+    let filename = format!("{}.png", chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f"));
     let output_path = dir.join(filename);
     let output_str = output_path.to_string_lossy().to_string();
 
     let html = build_post_html(&caption, &hashtags);
-
     crate::sidecar::call_render_sidecar(&html, &output_str, 1080, 1080).await?;
 
-    Ok(output_str)
+    // Read bytes and encode as base64 data URL — avoids asset protocol path issues
+    let bytes =
+        std::fs::read(&output_path).map_err(|e| format!("Read rendered PNG: {e}"))?;
+    let _ = std::fs::remove_file(&output_path); // clean up after reading
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:image/png;base64,{b64}"))
 }

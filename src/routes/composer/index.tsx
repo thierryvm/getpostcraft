@@ -30,18 +30,22 @@ export function ComposerPage() {
   return (
     <div className="flex h-full flex-col">
       {/* Top bar */}
-      <div className="flex items-center justify-between border-b border-border px-6 py-2">
+      <div className="flex items-center justify-between border-b border-border px-4 sm:px-6 py-2 shrink-0">
         <span className="text-sm font-medium text-foreground">Composer</span>
         <ProviderBadge info={providerInfo} />
       </div>
 
-      {/* Content */}
-      <div className="flex flex-1 flex-col md:flex-row gap-6 overflow-auto p-6">
-        <div className="w-full md:w-80 md:shrink-0">
-          <BriefForm />
-        </div>
-        <div className="flex-1 min-w-0">
-          <ContentPreview />
+      {/* Scrollable content — natural flow, mobile-first */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="flex flex-col lg:flex-row gap-6 p-4 sm:p-6">
+          {/* Brief panel — full width mobile, fixed sidebar desktop */}
+          <div className="w-full lg:w-80 lg:shrink-0">
+            <BriefForm />
+          </div>
+          {/* Preview panel — grows to fill on desktop, natural height on mobile */}
+          <div className="flex-1 min-w-0">
+            <ContentPreview />
+          </div>
         </div>
       </div>
     </div>

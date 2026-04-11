@@ -106,6 +106,7 @@ export function ContentPreview() {
   const { result, network, brief, setResult, setIsLoading, setError } = useComposerStore();
   const navigate = useNavigate();
   const captionLimit = NETWORK_META[network].captionLimit;
+  const imageRef = useRef<HTMLDivElement>(null);
 
   // Must be declared before any early return
   const [hashtags, setHashtags] = useState<string[]>([]);
@@ -121,6 +122,13 @@ export function ContentPreview() {
       setRenderError(null);
     }
   }, [result]);
+
+  // Scroll image into view once it loads
+  useEffect(() => {
+    if (imageUrl && imageRef.current) {
+      imageRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [imageUrl]);
 
   const handleRegenerate = async () => {
     if (!brief) return;
@@ -154,7 +162,7 @@ export function ContentPreview() {
 
   if (!result) {
     return (
-      <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border">
+      <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-border">
         <p className="text-sm text-muted-foreground">
           Le contenu généré apparaîtra ici.
         </p>
@@ -167,12 +175,12 @@ export function ContentPreview() {
   const hashtagsText = hashtags.map((t) => `#${t}`).join(" ");
 
   return (
-    <Card className="flex flex-col gap-0 h-full">
+    <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Aperçu généré</CardTitle>
       </CardHeader>
       <Separator />
-      <CardContent className="flex flex-col gap-4 pt-4 flex-1 overflow-auto">
+      <CardContent className="flex flex-col gap-4 pt-4">
         {/* Caption */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
@@ -207,8 +215,8 @@ export function ContentPreview() {
 
         <Separator />
 
-        {/* Image preview */}
-        <div className="flex flex-col gap-2">
+        {/* Image generation */}
+        <div ref={imageRef} className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-foreground">Visuel 1080×1080</span>
             <Tooltip>
@@ -229,7 +237,7 @@ export function ContentPreview() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                Rendu PNG 1080×1080 via Playwright (nécessite Python + playwright)
+                Rendu PNG 1080×1080 via Playwright
               </TooltipContent>
             </Tooltip>
           </div>
@@ -240,7 +248,7 @@ export function ContentPreview() {
             </p>
           )}
 
-          {imageUrl && (
+          {imageUrl ? (
             <div className="rounded-lg overflow-hidden border border-border">
               <img
                 src={imageUrl}
@@ -248,21 +256,19 @@ export function ContentPreview() {
                 className="w-full aspect-square object-cover"
               />
             </div>
-          )}
-
-          {!imageUrl && !renderError && !isRendering && (
-            <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-border">
+          ) : !renderError && !isRendering ? (
+            <div className="flex h-16 items-center justify-center rounded-lg border border-dashed border-border">
               <p className="text-xs text-muted-foreground">
                 Clique sur "Générer l'image" pour créer le visuel
               </p>
             </div>
-          )}
+          ) : null}
         </div>
 
         <Separator />
 
         {/* Actions */}
-        <div className="flex gap-2 mt-auto">
+        <div className="flex gap-2">
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="flex-1">
