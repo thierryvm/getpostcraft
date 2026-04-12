@@ -1,4 +1,4 @@
-import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers } from "lucide-react";
+import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers, Pencil } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { generateContent, saveDraft, generateCarousel } from "@/lib/tauri/compos
 import type { CaptionVariant, CarouselSlide } from "@/lib/tauri/composer";
 import { renderPostImage, renderCodeImage, renderTerminalImage, renderCarouselSlides, exportCarouselZip } from "@/lib/tauri/media";
 import { publishPost, publishLinkedinPost, updateDraftImage } from "@/lib/tauri/publisher";
+import { updatePostDraft } from "@/lib/tauri/calendar";
 import { NETWORK_META } from "@/types/composer.types";
 import { CaptionWithFold } from "@/components/shared/CaptionWithFold";
 
@@ -192,6 +193,9 @@ export function ContentPreview() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const [publishedInSession, setPublishedInSession] = useState(false);
+  // Inline caption editing
+  const [isEditingCaption, setIsEditingCaption] = useState(false);
+  const [editCaption, setEditCaption] = useState("");
 
   // Publish to the selected network
   const publishMutation = useMutation({
@@ -213,6 +217,7 @@ export function ContentPreview() {
       setImageUrl(null);
       setRenderError(null);
       setPublishedInSession(false);
+      setIsEditingCaption(false);
     }
   }, [result]);
 
@@ -361,16 +366,78 @@ export function ContentPreview() {
               <span className={`text-xs ${isOverLimit ? "text-destructive" : "text-muted-foreground"}`}>
                 {captionLength} / {captionLimit}
               </span>
-              <CopyButton text={safeResult.caption} label="la caption" />
+              {!isEditingCaption && (
+                <>
+                  <CopyButton text={safeResult.caption} label="la caption" />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => { setEditCaption(safeResult.caption); setIsEditingCaption(true); }}
+                      >
+                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Modifier</TooltipContent>
+                  </Tooltip>
+                </>
+              )}
+              {isEditingCaption && (
+                <div className="flex items-center gap-1">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => {
+                          const updated = { caption: editCaption, hashtags };
+                          setResult(updated);
+                          if (draftId !== null) {
+                            updatePostDraft(draftId, editCaption, hashtags).catch(() => {});
+                          }
+                        }}
+                      >
+                        <Check className="h-3.5 w-3.5 text-primary" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Confirmer</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setIsEditingCaption(false)}
+                      >
+                        <X className="h-3.5 w-3.5 text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Annuler</TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
             </div>
           </div>
-          <div className="max-h-48 overflow-y-auto rounded-md pr-1">
-            <CaptionWithFold
-              text={safeResult.caption}
-              foldLimit={foldLimit}
-              network={networkLabel}
+          {isEditingCaption ? (
+            <textarea
+              value={editCaption}
+              onChange={(e) => setEditCaption(e.target.value)}
+              rows={6}
+              className="w-full bg-secondary/50 border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary resize-none leading-relaxed"
             />
-          </div>
+          ) : (
+            <div className="max-h-48 overflow-y-auto rounded-md pr-1">
+              <CaptionWithFold
+                text={safeResult.caption}
+                foldLimit={foldLimit}
+                network={networkLabel}
+              />
+            </div>
+          )}
         </div>
 
         <Separator />
