@@ -19,9 +19,25 @@ def _deep_sanitize(obj: object) -> object:
     return obj
 
 
+def _write_line(payload: str) -> None:
+    """Write a JSON line to stdout using raw bytes when available.
+
+    In production stdout is a TextIOWrapper that exposes .buffer — writing
+    raw ASCII bytes bypasses the text-mode encoding layer entirely, preventing
+    any UnicodeEncodeError regardless of Windows code page.
+    In tests stdout is a StringIO (no .buffer) — fall back to a plain write.
+    """
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout.buffer.write((payload + "\n").encode("ascii"))
+        sys.stdout.buffer.flush()
+    else:
+        sys.stdout.write(payload + "\n")
+        sys.stdout.flush()
+
+
 def _respond_ok(data: object) -> None:
-    """Serialize and print a success response, sanitizing any stray surrogates."""
-    print(json.dumps({"ok": True, "data": _deep_sanitize(data)}), flush=True)
+    payload = json.dumps({"ok": True, "data": _deep_sanitize(data)}, ensure_ascii=True)
+    _write_line(payload)
 
 
 def main() -> None:
@@ -114,10 +130,9 @@ def main() -> None:
 
 
 def _respond_error(msg: str) -> None:
-    # Sanitize lone surrogates — they crash json.dumps and leave stdout empty,
-    # which Rust reads as "Expecting value: line 1 column 1 (char 0)".
-    safe_msg = msg.encode("utf-8", errors="replace").decode("utf-8")
-    print(json.dumps({"ok": False, "error": safe_msg}), flush=True)
+    safe_msg = "".join(ch for ch in msg if not (0xD800 <= ord(ch) <= 0xDFFF))
+    payload = json.dumps({"ok": False, "error": safe_msg}, ensure_ascii=True)
+    _write_line(payload)
 
 
 if __name__ == "__main__":

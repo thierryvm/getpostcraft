@@ -130,12 +130,13 @@ class AIClient:
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _sanitize_surrogates(s: str) -> str:
-    """Replace lone surrogates that some AI models produce (e.g. \\udc90).
+    """Remove lone surrogates that some AI models produce (e.g. \\udc90).
 
-    Lone surrogates are valid in Python str but cannot be encoded in UTF-8
-    or serialized by json.dumps, which causes silent sidecar crashes.
+    Lone surrogates (U+D800–U+DFFF) are valid in Python str but are rejected
+    by CPython's C JSON extension and cannot be encoded as UTF-8.
+    Pure char-filter avoids codec round-trip edge cases on Windows.
     """
-    return s.encode("utf-8", errors="replace").decode("utf-8")
+    return "".join(ch for ch in s if not (0xD800 <= ord(ch) <= 0xDFFF))
 
 
 def _parse_json_response(text: str) -> dict[str, Any]:
