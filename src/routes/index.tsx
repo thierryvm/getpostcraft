@@ -16,6 +16,8 @@ import {
 import { getPostHistory } from "@/lib/tauri/composer";
 import { deletePost, updatePostDraft } from "@/lib/tauri/calendar";
 import type { PostRecord } from "@/types/composer.types";
+import { NETWORK_META } from "@/types/composer.types";
+import { CaptionWithFold, FoldCounter } from "@/components/shared/CaptionWithFold";
 
 const STATUS_META = {
   draft:     { label: "Brouillon", variant: "secondary" as const, icon: Clock },
@@ -39,7 +41,7 @@ function StatCard({ label, value, icon: Icon }: { label: string; value: number; 
   );
 }
 
-function PostDetailSheet({
+export function PostDetailSheet({
   post,
   onClose,
   onDelete,
@@ -54,6 +56,7 @@ function PostDetailSheet({
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editCaption, setEditCaption] = useState("");
   const [editHashtags, setEditHashtags] = useState("");
 
@@ -64,6 +67,7 @@ function PostDetailSheet({
       setEditHashtags(post.hashtags.join(" "));
       setIsEditing(false);
       setConfirmDelete(false);
+      setDeleteError(null);
     }
   }, [post?.id]);
 
@@ -87,11 +91,19 @@ function PostDetailSheet({
   };
 
   const handleDelete = async () => {
-    if (!confirmDelete) { setConfirmDelete(true); return; }
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setDeleteError(null);
+      return;
+    }
     setIsDeleting(true);
+    setDeleteError(null);
     try {
       await deletePost(post.id);
       onDelete(post.id);
+    } catch (err) {
+      setDeleteError(String(err));
+      setConfirmDelete(false);
     } finally {
       setIsDeleting(false);
     }
@@ -123,16 +135,24 @@ function PostDetailSheet({
               Légende
             </h3>
             {isEditing ? (
-              <Textarea
-                value={editCaption}
-                onChange={(e) => setEditCaption(e.target.value)}
-                className="text-sm min-h-32 resize-none"
-                autoFocus
-              />
+              <div className="flex flex-col gap-1">
+                <Textarea
+                  value={editCaption}
+                  onChange={(e) => setEditCaption(e.target.value)}
+                  className="text-sm min-h-32 resize-none"
+                  autoFocus
+                />
+                <FoldCounter
+                  length={editCaption.length}
+                  foldLimit={NETWORK_META[post.network].foldLimit}
+                />
+              </div>
             ) : (
-              <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">
-                {post.caption}
-              </p>
+              <CaptionWithFold
+                text={post.caption}
+                foldLimit={NETWORK_META[post.network].foldLimit}
+                network={NETWORK_META[post.network].label}
+              />
             )}
           </div>
 
@@ -179,57 +199,83 @@ function PostDetailSheet({
         </div>
 
         {/* Actions footer */}
-        <div className="shrink-0 px-6 py-4 border-t border-border flex items-center justify-between gap-2">
-          {isEditing ? (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsEditing(false)}
-                disabled={isSaving}
-              >
-                Annuler
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSaveEdit}
-                disabled={isSaving || !editCaption.trim()}
-                className="gap-1.5"
-              >
-                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                Sauvegarder
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={confirmDelete
-                  ? "text-destructive hover:text-destructive font-semibold"
-                  : "text-muted-foreground hover:text-destructive gap-1.5"}
-                onClick={handleDelete}
-                disabled={isDeleting}
-              >
-                {isDeleting
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  : confirmDelete
-                    ? "Confirmer la suppression ?"
-                    : <><Trash2 className="h-3.5 w-3.5" />Supprimer</>}
-              </Button>
-              {isDraft && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => { setIsEditing(true); setConfirmDelete(false); }}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  Modifier
-                </Button>
-              )}
-            </>
+        <div className="shrink-0 px-6 py-4 border-t border-border flex flex-col gap-2">
+          {deleteError && (
+            <p className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">
+              {deleteError}
+            </p>
           )}
+          <div className="flex items-center justify-between gap-2">
+            {isEditing ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsEditing(false)}
+                  disabled={isSaving}
+                >
+                  Annuler
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSaveEdit}
+                  disabled={isSaving || !editCaption.trim()}
+                  className="gap-1.5"
+                >
+                  {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  Sauvegarder
+                </Button>
+              </>
+            ) : confirmDelete ? (
+              /* Two-step confirm: explicit Confirm + Cancel buttons side by side */
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setConfirmDelete(false); setDeleteError(null); }}
+                  disabled={isDeleting}
+                  className="text-muted-foreground"
+                >
+                  Annuler
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="gap-1.5"
+                >
+                  {isDeleting
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Trash2 className="h-3.5 w-3.5" />}
+                  Confirmer la suppression
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-destructive gap-1.5"
+                  onClick={handleDelete}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Supprimer
+                </Button>
+                {isDraft && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => { setIsEditing(true); setConfirmDelete(false); }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Modifier
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </SheetContent>
     </Sheet>

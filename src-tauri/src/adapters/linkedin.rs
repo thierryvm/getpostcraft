@@ -34,13 +34,13 @@ impl LinkedInUser {
 
 // ── Token exchange ─────────────────────────────────────────────────────────
 
-/// Exchange an authorization code for a LinkedIn access token (PKCE + client_secret).
-/// LinkedIn requires client_secret even when PKCE is used.
+/// Exchange an authorization code for a LinkedIn access token.
+/// LinkedIn confidential clients use client_secret only — PKCE code_verifier is
+/// not supported for apps that have a client_secret (public-client flow only).
 pub async fn exchange_code(
     client_id: &str,
     client_secret: &str,
     code: &str,
-    code_verifier: &str,
     redirect_uri: &str,
 ) -> Result<String, String> {
     #[derive(Deserialize)]
@@ -57,13 +57,17 @@ pub async fn exchange_code(
     let client = reqwest::Client::new();
     let resp = client
         .post(TOKEN_URL)
+        // LinkedIn requires client credentials via HTTP Basic Auth for confidential clients,
+        // not in the form body (invalid_client if sent as form params).
+        // LinkedIn confidential clients: credentials in form body only, no PKCE verifier.
+        // PKCE (code_verifier) is for public clients only — sending it with client_secret
+        // causes invalid_client. Basic Auth is also ignored; form body is authoritative.
         .form(&[
             ("grant_type", "authorization_code"),
             ("code", code),
             ("redirect_uri", redirect_uri),
             ("client_id", client_id),
             ("client_secret", client_secret),
-            ("code_verifier", code_verifier),
         ])
         .send()
         .await

@@ -394,14 +394,9 @@ pub async fn start_linkedin_oauth_flow(
     .map_err(|_| "LinkedIn OAuth flow timed out — please try again")??;
 
     // 8. Exchange code → access token
-    let access_token = crate::adapters::linkedin::exchange_code(
-        &client_id,
-        &client_secret,
-        &code,
-        &code_verifier,
-        &redirect_uri,
-    )
-    .await?;
+    let access_token =
+        crate::adapters::linkedin::exchange_code(&client_id, &client_secret, &code, &redirect_uri)
+            .await?;
 
     // 9. Fetch profile (id + name) to build the author URN
     let user_info = crate::adapters::linkedin::get_user_info(&access_token).await?;
