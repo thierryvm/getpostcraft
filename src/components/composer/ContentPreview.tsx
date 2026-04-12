@@ -441,13 +441,11 @@ export function ContentPreview() {
               className="w-full bg-secondary/50 border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary resize-none leading-relaxed"
             />
           ) : (
-            <div className="max-h-48 overflow-y-auto rounded-md pr-1">
-              <CaptionWithFold
-                text={safeResult.caption}
-                foldLimit={foldLimit}
-                network={networkLabel}
-              />
-            </div>
+            <CaptionWithFold
+              text={safeResult.caption}
+              foldLimit={foldLimit}
+              network={networkLabel}
+            />
           )}
         </div>
 
