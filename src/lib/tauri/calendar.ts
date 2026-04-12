@@ -14,17 +14,17 @@ export async function schedulePost(
   postId: number,
   scheduledAt: string
 ): Promise<void> {
-  return invoke("schedule_post", { post_id: postId, scheduled_at: scheduledAt });
+  return invoke("schedule_post", { postId, scheduledAt });
 }
 
 /** Remove the scheduled date from a post. */
 export async function unschedulePost(postId: number): Promise<void> {
-  return invoke("unschedule_post", { post_id: postId });
+  return invoke("unschedule_post", { postId });
 }
 
 /** Delete a post permanently. */
 export async function deletePost(postId: number): Promise<void> {
-  return invoke("delete_post", { post_id: postId });
+  return invoke("delete_post", { postId });
 }
 
 /** Update caption and hashtags of a draft post. */
@@ -33,5 +33,5 @@ export async function updatePostDraft(
   caption: string,
   hashtags: string[]
 ): Promise<void> {
-  return invoke("update_post_draft", { post_id: postId, caption, hashtags });
+  return invoke("update_post_draft", { postId, caption, hashtags });
 }

@@ -127,7 +127,7 @@ describe("PostDetailSheet — suppression (flux deux étapes)", () => {
     await user.click(screen.getByRole("button", { name: /confirmer/i }));
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith("delete_post", { post_id: 42 });
+      expect(mockInvoke).toHaveBeenCalledWith("delete_post", { postId: 42 });
     });
   });
 
@@ -256,6 +256,7 @@ describe("PostDetailSheet — édition (brouillon)", () => {
       expect(mockInvoke).toHaveBeenCalledWith(
         "update_post_draft",
         expect.objectContaining({
+          postId: 42,
           caption: "Nouvelle caption modifiée pour le test",
         })
       );
