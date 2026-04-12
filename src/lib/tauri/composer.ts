@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { GeneratedContent, Network, PostRecord } from "@/types/composer.types";
 
+/** Scrape a URL and return extracted text ready to use as a brief. */
+export async function scrapeUrlForBrief(url: string): Promise<string> {
+  return invoke<string>("scrape_url_for_brief", { url });
+}
+
 /** Fire-and-forget: warm up the Python sidecar when Composer mounts. */
 export function warmupSidecar(): void {
   invoke("warmup_sidecar").catch(() => {
@@ -25,4 +30,37 @@ export async function saveDraft(
 
 export async function getPostHistory(limit?: number): Promise<PostRecord[]> {
   return invoke<PostRecord[]>("get_post_history", { limit });
+}
+
+export interface CaptionVariant {
+  tone: "educational" | "casual" | "punchy";
+  caption: string;
+  hashtags: string[];
+}
+
+export async function generateVariants(
+  brief: string,
+  network: string
+): Promise<CaptionVariant[]> {
+  return invoke<CaptionVariant[]>("generate_variants", { brief, network });
+}
+
+export interface CarouselSlide {
+  index: number;
+  total: number;
+  emoji: string;
+  title: string;
+  body: string;
+}
+
+export async function generateCarousel(
+  brief: string,
+  network: string,
+  slideCount: number
+): Promise<CarouselSlide[]> {
+  return invoke<CarouselSlide[]>("generate_carousel", {
+    brief,
+    network,
+    slide_count: slideCount,
+  });
 }

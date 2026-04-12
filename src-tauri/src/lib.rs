@@ -5,8 +5,8 @@ mod network_rules;
 mod sidecar;
 mod state;
 
-use tauri::Manager;
 pub use state::AppState;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -47,11 +47,18 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // AI
             commands::ai::generate_content,
+            commands::ai::generate_variants,
             commands::ai::save_draft,
             commands::ai::get_post_history,
+            commands::ai::scrape_url_for_brief,
             commands::ai::warmup_sidecar,
+            commands::ai::generate_carousel,
             // Media
             commands::media::render_post_image,
+            commands::media::render_code_image,
+            commands::media::render_terminal_image,
+            commands::media::render_carousel_slides,
+            commands::media::export_carousel_zip,
             // Settings — BYOK
             commands::settings::save_ai_key,
             commands::settings::test_ai_key,
@@ -60,6 +67,10 @@ pub fn run() {
             // Settings — active provider
             commands::settings::set_active_provider,
             commands::settings::get_active_provider,
+            // Calendar
+            commands::calendar::get_calendar_posts,
+            commands::calendar::schedule_post,
+            commands::calendar::unschedule_post,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

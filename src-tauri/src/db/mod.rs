@@ -1,4 +1,7 @@
-use sqlx::{sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions}, SqlitePool};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
+    SqlitePool,
+};
 use std::str::FromStr;
 
 pub mod history;
@@ -15,13 +18,12 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let options = SqliteConnectOptions::from_str(
-        &format!("sqlite://{}", db_path.to_string_lossy()),
-    )
-    .map_err(|e| e.to_string())?
-    .create_if_missing(true)
-    .journal_mode(SqliteJournalMode::Wal)
-    .foreign_keys(true);
+    let options =
+        SqliteConnectOptions::from_str(&format!("sqlite://{}", db_path.to_string_lossy()))
+            .map_err(|e| e.to_string())?
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .foreign_keys(true);
 
     let pool = SqlitePoolOptions::new()
         .max_connections(4)

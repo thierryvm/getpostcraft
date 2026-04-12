@@ -98,11 +98,7 @@ async fn run_sidecar(json_input: String, timeout_secs: u64) -> Result<String, St
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     })
     .await
-    .map_err(|_| {
-        format!(
-            "Sidecar timeout ({timeout_secs}s) — is Python installed and in PATH?"
-        )
-    })?
+    .map_err(|_| format!("Sidecar timeout ({timeout_secs}s) — is Python installed and in PATH?"))?
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -121,9 +117,12 @@ pub async fn call_sidecar(request: SidecarRequest) -> Result<SidecarData, String
         .map_err(|e| format!("Parse sidecar output: {e} (got: {stdout})"))?;
 
     if resp.ok {
-        resp.data.ok_or_else(|| "Sidecar ok but no data".to_string())
+        resp.data
+            .ok_or_else(|| "Sidecar ok but no data".to_string())
     } else {
-        Err(resp.error.unwrap_or_else(|| "Unknown sidecar error".to_string()))
+        Err(resp
+            .error
+            .unwrap_or_else(|| "Unknown sidecar error".to_string()))
     }
 }
 
@@ -152,6 +151,8 @@ pub async fn call_render_sidecar(
             .map(|d| d.path)
             .ok_or_else(|| "Render sidecar ok but no path".to_string())
     } else {
-        Err(resp.error.unwrap_or_else(|| "Unknown render sidecar error".to_string()))
+        Err(resp
+            .error
+            .unwrap_or_else(|| "Unknown render sidecar error".to_string()))
     }
 }

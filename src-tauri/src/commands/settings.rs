@@ -1,5 +1,5 @@
-use serde::Serialize;
 use crate::state::AppState;
+use serde::Serialize;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -118,9 +118,15 @@ pub async fn save_ai_key(
                 .lock()
                 .map_err(|e| e.to_string())?
                 .insert(provider.clone(), key);
-            Ok(KeyValidationResult { valid: true, error: None })
+            Ok(KeyValidationResult {
+                valid: true,
+                error: None,
+            })
         }
-        Err(e) => Ok(KeyValidationResult { valid: false, error: Some(e) }),
+        Err(e) => Ok(KeyValidationResult {
+            valid: false,
+            error: Some(e),
+        }),
     }
 }
 
@@ -131,9 +137,15 @@ pub fn get_ai_key_status(provider: String) -> AiKeyStatus {
         Ok(key) if !key.is_empty() => {
             let chars: Vec<char> = key.chars().collect();
             let last4: String = chars[chars.len().saturating_sub(4)..].iter().collect();
-            AiKeyStatus { configured: true, masked: Some(format!("••••••••{last4}")) }
+            AiKeyStatus {
+                configured: true,
+                masked: Some(format!("••••••••{last4}")),
+            }
         }
-        _ => AiKeyStatus { configured: false, masked: None },
+        _ => AiKeyStatus {
+            configured: false,
+            masked: None,
+        },
     }
 }
 
@@ -159,8 +171,14 @@ pub async fn test_ai_key(provider: String) -> Result<KeyValidationResult, String
         _ => return Err(format!("Provider inconnu : {provider}")),
     };
     match result {
-        Ok(()) => Ok(KeyValidationResult { valid: true, error: None }),
-        Err(e) => Ok(KeyValidationResult { valid: false, error: Some(e) }),
+        Ok(()) => Ok(KeyValidationResult {
+            valid: true,
+            error: None,
+        }),
+        Err(e) => Ok(KeyValidationResult {
+            valid: false,
+            error: Some(e),
+        }),
     }
 }
 

@@ -3,6 +3,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   LayoutDashboard,
   PenLine,
+  CalendarDays,
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
@@ -15,6 +16,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/composer", label: "Composer", icon: PenLine },
+  { to: "/calendar", label: "Calendrier", icon: CalendarDays },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

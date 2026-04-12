@@ -6,6 +6,7 @@ import {
 import { RootLayout } from "./routes/__root";
 import { DashboardPage } from "./routes/index";
 import { ComposerPage } from "./routes/composer/index";
+import { CalendarPage } from "./routes/calendar/index";
 import { SettingsPage } from "./routes/settings/index";
 
 const rootRoute = createRootRoute({ component: RootLayout });
@@ -22,6 +23,12 @@ const composerRoute = createRoute({
   component: ComposerPage,
 });
 
+const calendarRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/calendar",
+  component: CalendarPage,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -34,6 +41,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   composerRoute,
+  calendarRoute,
   settingsRoute,
 ]);
 

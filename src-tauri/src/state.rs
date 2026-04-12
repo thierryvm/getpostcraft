@@ -1,6 +1,6 @@
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use sqlx::SqlitePool;
 
 pub struct ActiveProvider {
     /// "openrouter" | "anthropic" | "ollama"

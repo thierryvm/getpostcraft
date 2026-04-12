@@ -53,6 +53,33 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             _respond_error(str(exc))
 
+    elif action == "generate_carousel":
+        try:
+            client = AIClient(
+                provider=req["provider"],
+                api_key=req.get("api_key"),
+                model=req["model"],
+                base_url=req.get("base_url"),
+            )
+            slides = client.generate_carousel_slides(
+                brief=req["brief"],
+                network=req["network"],
+                slide_count=int(req.get("slide_count", 5)),
+                system_prompt=req["system_prompt"],
+            )
+            print(json.dumps({"ok": True, "data": {"slides": slides}}), flush=True)
+        except Exception as exc:  # noqa: BLE001
+            _respond_error(str(exc))
+
+    elif action == "scrape_url":
+        try:
+            from scraper import scrape_url
+
+            text = scrape_url(req["url"], max_chars=req.get("max_chars", 3000))
+            print(json.dumps({"ok": True, "data": {"text": text}}), flush=True)
+        except Exception as exc:  # noqa: BLE001
+            _respond_error(str(exc))
+
     elif action == "warmup":
         # Verify required modules are importable; used for pre-warming on Composer open.
         missing = []

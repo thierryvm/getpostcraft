@@ -1,7 +1,8 @@
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Loader2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle, Link2, FileText } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -13,7 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useComposerStore } from "@/stores/composer.store";
-import { generateContent } from "@/lib/tauri/composer";
+import { generateContent, generateVariants, saveDraft, scrapeUrlForBrief } from "@/lib/tauri/composer";
 import { NETWORK_META, type Network } from "@/types/composer.types";
 
 const briefSchema = z.object({
@@ -27,14 +28,20 @@ const briefSchema = z.object({
 type BriefFormData = z.infer<typeof briefSchema>;
 
 export function BriefForm() {
-  const { brief, network, isLoading, error, setBrief, setNetwork, setResult, setIsLoading, setError } =
+  const { brief, network, isLoading, error, setBrief, setNetwork, setResult, setVariants, setIsLoading, setError } =
     useComposerStore();
+
+  const [inputMode, setInputMode] = useState<"text" | "url">("text");
+  const [urlValue, setUrlValue] = useState("");
+  const [isScraping, setIsScraping] = useState(false);
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
     watch,
     control,
+    setValue,
     formState: { errors, isValid },
   } = useForm<BriefFormData>({
     resolver: zodResolver(briefSchema),
@@ -52,10 +59,45 @@ export function BriefForm() {
       setResult(result);
       setBrief(data.brief);
       setNetwork(data.network as Network);
+      saveDraft(data.network as Network, result.caption, result.hashtags).catch(() => {});
     } catch (err) {
       setError(String(err));
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const onVariants = async (data: BriefFormData) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const variants = await generateVariants(data.brief, data.network as Network);
+      setBrief(data.brief);
+      setNetwork(data.network as Network);
+      setVariants(variants);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleScrape = async () => {
+    const url = urlValue.trim();
+    if (!url) return;
+    setIsScraping(true);
+    setScrapeError(null);
+    try {
+      const text = await scrapeUrlForBrief(url);
+      // Truncate to 500 chars for the brief field
+      const truncated = text.slice(0, 490);
+      setValue("brief", truncated, { shouldValidate: true });
+      setBrief(truncated);
+      setInputMode("text"); // switch to text mode so user can review/edit
+    } catch (err) {
+      setScrapeError(String(err));
+    } finally {
+      setIsScraping(false);
     }
   };
 
@@ -64,7 +106,7 @@ export function BriefForm() {
       <div>
         <h1 className="text-xl font-semibold text-foreground">Nouveau post</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Décris ton idée, Claude génère le contenu.
+          Décris ton idée ou colle une URL, Claude génère le contenu.
         </p>
       </div>
 
@@ -96,32 +138,105 @@ export function BriefForm() {
         />
       </div>
 
-      {/* Brief textarea */}
+      {/* Brief / URL toggle */}
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-foreground">Brief</label>
-        <Textarea
-          {...register("brief")}
-          placeholder="Décris ce que tu veux poster..."
-          className="min-h-36 resize-none"
-        />
-        <div className="flex justify-between items-center">
-          {errors.brief ? (
-            <span className="text-xs text-destructive">{errors.brief.message}</span>
-          ) : (
-            <span />
-          )}
-          <span
-            className={`text-xs ${(briefValue?.length ?? 0) > 450 ? "text-destructive" : "text-muted-foreground"}`}
-          >
-            {briefValue?.length ?? 0} / 500
-          </span>
+        <div className="flex items-center justify-between">
+          <label className="text-sm font-medium text-foreground">Brief</label>
+          <div className="flex gap-1 p-0.5 bg-secondary/50 rounded-md">
+            <button
+              type="button"
+              onClick={() => { setInputMode("text"); setScrapeError(null); }}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors ${
+                inputMode === "text"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <FileText className="h-3 w-3" />
+              Texte
+            </button>
+            <button
+              type="button"
+              onClick={() => { setInputMode("url"); setScrapeError(null); }}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors ${
+                inputMode === "url"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Link2 className="h-3 w-3" />
+              URL
+            </button>
+          </div>
         </div>
+
+        {inputMode === "url" ? (
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <input
+                value={urlValue}
+                onChange={(e) => setUrlValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleScrape(); } }}
+                placeholder="https://blog.example.com/article"
+                className="flex-1 bg-secondary/50 border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleScrape}
+                disabled={isScraping || !urlValue.trim()}
+                className="shrink-0"
+              >
+                {isScraping ? <Loader2 className="h-4 w-4 animate-spin" /> : "Extraire"}
+              </Button>
+            </div>
+            {scrapeError && (
+              <p className="text-xs text-destructive">{scrapeError}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Fonctionne avec des articles de blog, README GitHub, pages de doc…
+            </p>
+          </div>
+        ) : (
+          <>
+            <Textarea
+              {...register("brief")}
+              placeholder="Décris ce que tu veux poster…"
+              className="min-h-36 resize-none"
+            />
+            <div className="flex justify-between items-center">
+              {errors.brief ? (
+                <span className="text-xs text-destructive">{errors.brief.message}</span>
+              ) : (
+                <span />
+              )}
+              <span
+                className={`text-xs ${(briefValue?.length ?? 0) > 450 ? "text-destructive" : "text-muted-foreground"}`}
+              >
+                {briefValue?.length ?? 0} / 500
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
-      <Button type="submit" disabled={!isValid || isLoading} className="w-full">
-        {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-        {isLoading ? "Génération en cours…" : "Générer avec Claude"}
-      </Button>
+      <div className="flex gap-2">
+        <Button type="submit" disabled={!isValid || isLoading} className="flex-1">
+          {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {isLoading ? "Génération…" : "Générer"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!isValid || isLoading}
+          onClick={handleSubmit(onVariants)}
+          className="shrink-0 text-xs"
+          title="Générer 3 variantes en parallèle (éducatif · casual · percutant)"
+        >
+          {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "×3"}
+        </Button>
+      </div>
 
       {error && (
         <Alert variant="destructive">
