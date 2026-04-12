@@ -26,9 +26,11 @@ class AIClient:
     def generate_caption(
         self, brief: str, network: str, system_prompt: str
     ) -> dict[str, Any]:
+        # LinkedIn posts target 1300-2100 chars; Instagram ~400 — adjust token budget
+        max_tokens = 1200 if network == "linkedin" else 600
         if self.provider == "anthropic":
-            return self._generate_anthropic(brief, system_prompt)
-        return self._generate_openai_compat(brief, system_prompt)
+            return self._generate_anthropic(brief, system_prompt, max_tokens)
+        return self._generate_openai_compat(brief, system_prompt, max_tokens)
 
     def generate_carousel_slides(
         self, brief: str, network: str, slide_count: int, system_prompt: str
@@ -77,7 +79,7 @@ class AIClient:
 
     # ── OpenRouter + Ollama (OpenAI-compatible) ────────────────────────────
 
-    def _generate_openai_compat(self, brief: str, system_prompt: str) -> dict[str, Any]:
+    def _generate_openai_compat(self, brief: str, system_prompt: str, max_tokens: int = 600) -> dict[str, Any]:
         base_url = self.base_url or "https://openrouter.ai/api/v1"
         api_key = self.api_key or "ollama"  # Ollama ignores the key
 
@@ -96,7 +98,7 @@ class AIClient:
 
         response = client.chat.completions.create(
             model=self.model,
-            max_tokens=600,
+            max_tokens=max_tokens,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": brief},
@@ -108,7 +110,7 @@ class AIClient:
 
     # ── Anthropic native ───────────────────────────────────────────────────
 
-    def _generate_anthropic(self, brief: str, system_prompt: str) -> dict[str, Any]:
+    def _generate_anthropic(self, brief: str, system_prompt: str, max_tokens: int = 600) -> dict[str, Any]:
         if not self.api_key:
             raise ValueError("Anthropic requires an API key")
 
@@ -116,7 +118,7 @@ class AIClient:
 
         message = client.messages.create(
             model=self.model,
-            max_tokens=600,
+            max_tokens=max_tokens,
             system=system_prompt,
             messages=[{"role": "user", "content": brief}],
         )
@@ -126,6 +128,15 @@ class AIClient:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+def _sanitize_surrogates(s: str) -> str:
+    """Replace lone surrogates that some AI models produce (e.g. \\udc90).
+
+    Lone surrogates are valid in Python str but cannot be encoded in UTF-8
+    or serialized by json.dumps, which causes silent sidecar crashes.
+    """
+    return s.encode("utf-8", errors="replace").decode("utf-8")
+
 
 def _parse_json_response(text: str) -> dict[str, Any]:
     """Extract JSON from model output, stripping markdown fences if present.
@@ -143,7 +154,10 @@ def _parse_json_response(text: str) -> dict[str, Any]:
 
     if "caption" not in data or "hashtags" not in data:
         raise ValueError(f"Unexpected response shape: {list(data.keys())}")
-    return {"caption": str(data["caption"]), "hashtags": list(data["hashtags"])}
+    return {
+        "caption": _sanitize_surrogates(str(data["caption"])),
+        "hashtags": [_sanitize_surrogates(str(h)) for h in data["hashtags"]],
+    }
 
 
 def _parse_carousel_response(text: str, expected_count: int) -> list[dict]:
@@ -160,9 +174,9 @@ def _parse_carousel_response(text: str, expected_count: int) -> list[dict]:
     slides = []
     for i, slide in enumerate(data[:expected_count]):
         slides.append({
-            "emoji": str(slide.get("emoji", "💡")),
-            "title": str(slide.get("title", f"Slide {i + 1}")),
-            "body": str(slide.get("body", "")),
+            "emoji": _sanitize_surrogates(str(slide.get("emoji", "💡"))),
+            "title": _sanitize_surrogates(str(slide.get("title", f"Slide {i + 1}"))),
+            "body": _sanitize_surrogates(str(slide.get("body", ""))),
         })
     return slides
 

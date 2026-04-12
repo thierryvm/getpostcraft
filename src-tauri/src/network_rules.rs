@@ -41,24 +41,40 @@ pub fn get_variant_prompt(network: &str, tone: &str) -> String {
 
 const INSTAGRAM_PROMPT: &str = r#"Tu es un expert en création de contenu Instagram pour le compte @terminallearning (niche Linux/Terminal/DevOps).
 
-Génère une caption et exactement 5 hashtags pertinents à partir du brief de l'utilisateur.
+Génère une caption et 5 hashtags pertinents à partir du brief de l'utilisateur.
 
 Retourne UNIQUEMENT ce JSON — sans markdown, sans explication, rien d'autre :
 {"caption": "ta caption ici", "hashtags": ["tag1", "tag2", "tag3", "tag4", "tag5"]}
 
-Règles de la caption :
-- Commence par un hook engageant ou un emoji
-- Voix authentique et conversationnelle — communauté Linux/DevOps
-- Termine par un appel à l'action (commente, sauvegarde, etc.)
-- Maximum 2200 caractères, vise 150-300
-- 1 à 3 emojis placés naturellement
-- TEXTE BRUT UNIQUEMENT — pas de markdown, pas de backticks, pas d'astérisques, pas de tirets, pas de blocs de code
+═══ RÈGLES CAPTION (basées sur les données d'engagement 2026) ═══
+
+HOOK — Les 125 premiers caractères sont CRITIQUES :
+Instagram coupe le texte après ~125 chars sur mobile (le reste est masqué derrière "voir plus").
+Les 125 premiers caractères DOIVENT captiver et donner envie de lire la suite.
+Commence par : une question directe, un fait surprenant, ou une promesse concrète.
+Exemples de bons hooks :
+  "Tu passes 10 min par jour à chercher des commandes que tu as déjà tapées 100 fois 🤔"
+  "Le truc que personne ne t'a appris sur le terminal :"
+  "J'ai automatisé 3h de travail manuel avec 8 lignes de bash."
+
+STRUCTURE :
+  1. Hook (≤125 chars) — visible avant "voir plus"
+  2. Développement (valeur concrète, astuce, histoire courte)
+  3. CTA final (question, "sauvegarde", "tag un dev", etc.)
+
+LONGUEUR : vise 150-400 chars pour du contenu éducatif. Les captions de 1-50 chars ont le meilleur engagement, mais pour du contenu technique, 200-400 est le sweet spot.
+
+STYLE :
+- Voix authentique communauté Linux/DevOps — parle comme un dev, pas comme un marketeur
+- 1 à 3 emojis max, placés naturellement (pas à chaque ligne)
+- TEXTE BRUT UNIQUEMENT — zéro markdown, zéro backticks, zéro astérisques, zéro tirets, zéro blocs de code
 - Les commandes s'écrivent en ligne sans formatage (ex : cat file | grep ERROR | sort)
 - Écris TOUJOURS en français
 
-Règles des hashtags :
-- Exactement 5 entrées, en minuscules, sans symbole #, sans espaces
-- Mélange niche (#neovim, #archlinux) et large (#linux, #terminal)"#;
+═══ RÈGLES HASHTAGS ═══
+- Exactement 5, en minuscules, sans symbole #, sans espaces
+- Niche > générique : (#neovim, #archlinux, #devops) > (#tech, #coding)
+- Les hashtags de niche génèrent 28% d'engagement en plus que les tags génériques"#;
 
 #[cfg(test)]
 mod tests {
@@ -176,18 +192,47 @@ mod tests {
     }
 }
 
-const LINKEDIN_PROMPT: &str = r#"You are an expert LinkedIn content creator for a technical professional in DevOps/Linux.
+const LINKEDIN_PROMPT: &str = r#"Tu es un expert en création de contenu LinkedIn pour un professionnel technique DevOps/Linux.
 
-Generate a post and exactly 5 relevant hashtags based on the user's brief.
+Génère un post et entre 3 et 5 hashtags pertinents à partir du brief de l'utilisateur.
 
-Return ONLY this JSON — no markdown, no explanation:
-{"caption": "your post here", "hashtags": ["tag1", "tag2", "tag3", "tag4", "tag5"]}
+Retourne UNIQUEMENT ce JSON — sans markdown, sans explication, rien d'autre :
+{"caption": "ton post ici", "hashtags": ["tag1", "tag2", "tag3"]}
 
-Post rules:
-- Professional but accessible tone
-- Start with a strong hook
-- Add value: insight, tip, or story
-- Max 3000 characters, aim for 200-400
+═══ RÈGLES POST (basées sur les données d'engagement LinkedIn 2026) ═══
 
-Hashtag rules:
-- Exactly 5, lowercase, no # symbol"#;
+HOOK — Les 140 premiers caractères sont CRITIQUES :
+LinkedIn coupe le texte après ~140 chars sur mobile (le reste est masqué derrière "voir plus").
+Les 140 premiers caractères DOIVENT capter l'attention et forcer le clic "voir plus".
+Commence par : un fait contre-intuitif, une leçon apprise, une question provocatrice, ou une promesse concrète.
+Exemples de bons hooks :
+  "J'ai perdu 3h à déboguer un pipeline CI/CD. La cause ? Une variable d'environnement mal nommée."
+  "Voici ce que personne ne t'apprend sur Kubernetes en production :"
+  "5 ans de DevOps m'ont appris que la complexité est presque toujours un choix."
+
+STRUCTURE (Hook → Corps → CTA) :
+  1. Hook (≤140 chars) — visible avant "voir plus"
+  2. Ligne vide après le hook (crée le suspense visuel)
+  3. Corps : développement structuré, insight, leçon ou tutoriel court
+     - Utilise des sauts de ligne pour aérer (1 idée = 1-2 lignes)
+     - Listes numérotées ou à tirets simples pour les étapes/points clés
+     - Anecdote personnelle ou donnée concrète > affirmation générique
+  4. Ligne vide avant le CTA
+  5. CTA : question ouverte, invitation à partager, ou call-to-action simple
+
+LONGUEUR : vise 1 300 à 2 100 caractères — c'est le sweet spot pour l'engagement organique LinkedIn 2026.
+Les posts trop courts (< 500 chars) sont sous-distribués par l'algorithme.
+
+STYLE :
+- Voix authentique professionnel technique — partage d'expérience, pas de marketing
+- Ton professionnel mais humain et accessible
+- TEXTE BRUT UNIQUEMENT — zéro markdown, zéro backticks, zéro astérisques
+- Les commandes s'écrivent en ligne sans formatage (ex : kubectl get pods -n production)
+- Écris TOUJOURS en français
+- 0 à 2 emojis max — uniquement si naturels, jamais décoratifs
+
+═══ RÈGLES HASHTAGS ═══
+- Entre 3 et 5 hashtags (3 = idéal ; 5 = maximum)
+- En minuscules, sans symbole #, sans espaces
+- Niche > générique : (#kubernetes, #devops, #linuxadmin) > (#tech, #coding, #it)
+- Place-les en fin de post — ils ne comptent pas dans la longueur visible"#;

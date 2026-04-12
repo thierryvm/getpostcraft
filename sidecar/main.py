@@ -98,7 +98,10 @@ def main() -> None:
 
 
 def _respond_error(msg: str) -> None:
-    print(json.dumps({"ok": False, "error": msg}), flush=True)
+    # Sanitize lone surrogates — they crash json.dumps and leave stdout empty,
+    # which Rust reads as "Expecting value: line 1 column 1 (char 0)".
+    safe_msg = msg.encode("utf-8", errors="replace").decode("utf-8")
+    print(json.dumps({"ok": False, "error": safe_msg}), flush=True)
 
 
 if __name__ == "__main__":
