@@ -215,8 +215,7 @@ pub async fn start_oauth_flow(
         accept_oauth_callback(listener, acceptor, &csrf),
     )
     .await
-    .map_err(|_| "OAuth flow timed out — please try again")?
-    .map_err(|e| e)?;
+    .map_err(|_| "OAuth flow timed out — please try again")??;
 
     // 8. Exchange code → access token
     let access_token = crate::adapters::instagram::exchange_code(
@@ -313,6 +312,152 @@ pub fn save_instagram_client_secret(secret: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_instagram_client_secret_status() -> bool {
     crate::ai_keys::has_key("instagram_client_secret")
+}
+
+// ── LinkedIn OAuth ────────────────────────────────────────────────────────
+
+/// Start the LinkedIn OAuth PKCE flow.
+/// Opens a browser to LinkedIn, waits for the HTTPS callback (up to 5 minutes),
+/// then exchanges the code and stores the token securely.
+///
+/// Prerequisites:
+///   - linkedin_client_id configured via save_linkedin_client_id
+///   - linkedin_client_secret stored via save_linkedin_client_secret
+///   - https://localhost:7892/callback registered in LinkedIn Developer Portal
+///     → App → Auth → OAuth 2.0 settings → Authorized redirect URLs
+///
+/// Note: PKCE support must be enabled for your LinkedIn app in the Developer Portal.
+#[tauri::command]
+pub async fn start_linkedin_oauth_flow(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<ConnectedAccount, String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    // 1. Load client credentials from secure storage
+    let client_id = crate::db::settings_db::get(&state.db, "linkedin_client_id")
+        .await
+        .ok_or("LinkedIn Client ID not configured. Add it in Settings → Comptes.")?;
+
+    let client_secret = crate::ai_keys::get_key("linkedin_client_secret").map_err(|_| {
+        "LinkedIn client secret not configured. Add it in Settings → Comptes.".to_string()
+    })?;
+
+    // 2. PKCE
+    let code_verifier = generate_code_verifier();
+    let code_challenge = generate_code_challenge(&code_verifier);
+    let csrf = generate_csrf_state();
+
+    // 3. Bind to port 7892 — separate from Instagram's 7891 to allow parallel auth flows
+    const CALLBACK_PORT: u16 = 7892;
+    let listener = TcpListener::bind(format!("127.0.0.1:{CALLBACK_PORT}"))
+        .await
+        .map_err(|e| {
+            format!(
+                "Failed to start callback server on port {CALLBACK_PORT}: {e}. \
+                 Is another LinkedIn auth already in progress?"
+            )
+        })?;
+    let redirect_uri = format!("https://localhost:{CALLBACK_PORT}/callback");
+
+    // 4. TLS (self-signed cert, same as Instagram flow)
+    let acceptor = build_tls_acceptor()?;
+
+    // 5. Build LinkedIn authorization URL
+    // Scopes: openid (OIDC id_token), profile (name/photo), w_member_social (post), r_liteprofile (legacy name)
+    let scope = urlencoding::encode("openid profile w_member_social r_liteprofile");
+    let auth_url = format!(
+        "https://www.linkedin.com/oauth/v2/authorization\
+         ?response_type=code\
+         &client_id={client_id}\
+         &redirect_uri={encoded_redirect}\
+         &scope={scope}\
+         &state={csrf}\
+         &code_challenge={code_challenge}\
+         &code_challenge_method=S256",
+        encoded_redirect = urlencoding::encode(&redirect_uri),
+    );
+
+    // 6. Open browser
+    app.opener()
+        .open_url(&auth_url, None::<&str>)
+        .map_err(|e| format!("Failed to open browser for LinkedIn auth: {e}"))?;
+
+    // 7. Wait for HTTPS callback (5 min timeout)
+    let code = tokio::time::timeout(
+        Duration::from_secs(300),
+        accept_oauth_callback(listener, acceptor, &csrf),
+    )
+    .await
+    .map_err(|_| "LinkedIn OAuth flow timed out — please try again")??;
+
+    // 8. Exchange code → access token
+    let access_token = crate::adapters::linkedin::exchange_code(
+        &client_id,
+        &client_secret,
+        &code,
+        &code_verifier,
+        &redirect_uri,
+    )
+    .await?;
+
+    // 9. Fetch profile (id + name) to build the author URN
+    let user_info = crate::adapters::linkedin::get_user_info(&access_token).await?;
+    let display_name = user_info.display_name();
+
+    // 10. Store token (never passes to renderer)
+    let token_key = format!("linkedin:{}", user_info.id);
+    crate::token_store::save_token(&token_key, &access_token)?;
+
+    // 11. Persist account metadata to SQLite
+    // LinkedIn has no public "username" — use display_name as the label
+    let account = crate::db::accounts::upsert_and_get(
+        &state.db,
+        "linkedin",
+        &user_info.id,
+        &display_name,
+        Some(&display_name),
+        &token_key,
+    )
+    .await?;
+
+    Ok(ConnectedAccount {
+        id: account.id,
+        provider: account.provider,
+        user_id: account.user_id,
+        username: account.username,
+        display_name: account.display_name,
+    })
+}
+
+/// Save the LinkedIn App Client ID to settings.
+#[tauri::command]
+pub async fn save_linkedin_client_id(
+    client_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    crate::db::settings_db::set(&state.db, "linkedin_client_id", &client_id).await
+}
+
+/// Get the LinkedIn App Client ID from settings (for display in UI only).
+#[tauri::command]
+pub async fn get_linkedin_client_id(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    Ok(crate::db::settings_db::get(&state.db, "linkedin_client_id").await)
+}
+
+/// Save the LinkedIn app client_secret.
+/// SECURITY: stored in api_keys.json (user data dir), never crosses IPC back to renderer.
+#[tauri::command]
+pub fn save_linkedin_client_secret(secret: String) -> Result<(), String> {
+    crate::ai_keys::save_key("linkedin_client_secret", &secret)
+}
+
+/// Check if the LinkedIn client_secret is configured.
+#[tauri::command]
+pub fn get_linkedin_client_secret_status() -> bool {
+    crate::ai_keys::has_key("linkedin_client_secret")
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────

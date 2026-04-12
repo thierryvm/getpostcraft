@@ -12,7 +12,8 @@ const IMGBB_API: &str = "https://api.imgbb.com/1/upload";
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PublishResult {
     pub post_id: i64,
-    pub ig_media_id: String,
+    /// Platform-specific media ID or post URN (Instagram media ID, LinkedIn ugcPost URN, etc.)
+    pub media_id: String,
     pub published_at: String,
 }
 
@@ -200,7 +201,7 @@ pub async fn publish_post(
         create_ig_container(&account.user_id, &image_url, &full_caption, &access_token).await?;
 
     // 8. Publish the container
-    let ig_media_id = publish_ig_container(&account.user_id, &container_id, &access_token).await?;
+    let media_id = publish_ig_container(&account.user_id, &container_id, &access_token).await?;
 
     // 9. Update post status in SQLite
     let published_at = Utc::now().to_rfc3339();
@@ -209,13 +210,13 @@ pub async fn publish_post(
         post_id,
         "published",
         Some(&published_at),
-        Some(&ig_media_id),
+        Some(&media_id),
     )
     .await?;
 
     Ok(PublishResult {
         post_id,
-        ig_media_id,
+        media_id,
         published_at,
     })
 }
@@ -237,7 +238,7 @@ pub async fn get_imgbb_key_status(state: tauri::State<'_, AppState>) -> Result<b
         .is_some())
 }
 
-/// Store an image (base64 data URL or file path) on the draft so publish_post can find it.
+/// Store an image (base64 data URL or file path) on the draft so publish commands can find it.
 #[tauri::command]
 pub async fn update_draft_image(
     post_id: i64,
@@ -245,4 +246,101 @@ pub async fn update_draft_image(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     crate::db::history::update_image_path(&state.db, post_id, &image_path).await
+}
+
+// ── LinkedIn publisher ────────────────────────────────────────────────────
+
+/// Publish a draft post to LinkedIn (text-only or with image).
+///
+/// LinkedIn specifics:
+///   - No imgbb needed — image uploaded directly as binary via registerUpload → PUT
+///   - Hashtags embedded in the post text (LinkedIn has no separate hashtag field, max 5)
+///   - Image format: PNG or JPEG, max 10 MB
+///   - Author URN built from account.user_id (the LinkedIn profile ID)
+#[tauri::command]
+pub async fn publish_linkedin_post(
+    post_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<PublishResult, String> {
+    // 1. Load the draft
+    let post = crate::db::history::get_by_id(&state.db, post_id).await?;
+
+    if post.status == "published" {
+        return Err("This post is already published".to_string());
+    }
+
+    // 2. Get connected LinkedIn account
+    let accounts = crate::db::accounts::list(&state.db).await?;
+    let account = accounts
+        .iter()
+        .find(|a| a.provider == "linkedin")
+        .ok_or("No LinkedIn account connected. Connect one in Settings → Comptes.")?;
+
+    // 3. Access token (never leaves Rust)
+    let access_token = crate::token_store::get_token(&account.token_key)?;
+
+    // 4. Build text — hashtags embedded, capped at 5 per LinkedIn best practices
+    let hashtags_str = post
+        .hashtags
+        .iter()
+        .take(5)
+        .map(|h| format!("#{h}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let full_text = if hashtags_str.is_empty() {
+        post.caption.clone()
+    } else {
+        format!("{}\n\n{}", post.caption, hashtags_str)
+    };
+
+    // 5. Publish — with or without image
+    let post_urn = if let Some(image_source) = post.image_path.as_deref() {
+        // Decode image bytes from data URL or file path
+        let image_bytes = if let Some(b64) = image_source.strip_prefix("data:image/png;base64,") {
+            STANDARD
+                .decode(b64)
+                .map_err(|e| format!("Failed to decode base64 image: {e}"))?
+        } else {
+            std::fs::read(image_source)
+                .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))?
+        };
+
+        // Step 1: Register upload → upload URL + asset URN
+        let (upload_url, asset_urn) =
+            crate::adapters::linkedin::register_image_upload(&account.user_id, &access_token)
+                .await?;
+
+        // Step 2: Upload binary
+        crate::adapters::linkedin::upload_image_binary(&upload_url, &image_bytes, &access_token)
+            .await?;
+
+        // Step 3: Publish ugcPost with image
+        crate::adapters::linkedin::publish_image(
+            &account.user_id,
+            &full_text,
+            &asset_urn,
+            &access_token,
+        )
+        .await?
+    } else {
+        // Text-only post
+        crate::adapters::linkedin::publish_text(&account.user_id, &full_text, &access_token).await?
+    };
+
+    // 6. Update post status in SQLite
+    let published_at = Utc::now().to_rfc3339();
+    crate::db::history::update_status(
+        &state.db,
+        post_id,
+        "published",
+        Some(&published_at),
+        Some(&post_urn),
+    )
+    .await?;
+
+    Ok(PublishResult {
+        post_id,
+        media_id: post_urn,
+        published_at,
+    })
 }

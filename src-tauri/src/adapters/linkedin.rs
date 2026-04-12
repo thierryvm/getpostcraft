@@ -216,12 +216,10 @@ pub async fn upload_image_binary(
         .await
         .map_err(|e| format!("LinkedIn image upload network error: {e}"))?;
 
-    if !resp.status().is_success() {
+    let status = resp.status();
+    if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!(
-            "LinkedIn image upload failed ({}): {body}",
-            resp.status()
-        ));
+        return Err(format!("LinkedIn image upload failed ({status}): {body}"));
     }
 
     Ok(())
