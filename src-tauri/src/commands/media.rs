@@ -1,6 +1,6 @@
+use crate::commands::ai::CarouselSlide;
 use base64::Engine as _;
 use std::path::PathBuf;
-use crate::commands::ai::CarouselSlide;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -266,10 +266,12 @@ fn build_terminal_html(command: &str, output: Option<&str>) -> String {
 
 fn build_carousel_slide_html(slide: &CarouselSlide) -> String {
     let dots: String = (1..=slide.total)
-        .map(|i| if i == slide.index {
-            r#"<div class="dot active"></div>"#.to_string()
-        } else {
-            r#"<div class="dot"></div>"#.to_string()
+        .map(|i| {
+            if i == slide.index {
+                r#"<div class="dot active"></div>"#.to_string()
+            } else {
+                r#"<div class="dot"></div>"#.to_string()
+            }
         })
         .collect::<Vec<_>>()
         .join("");
@@ -303,10 +305,19 @@ fn build_carousel_slide_html(slide: &CarouselSlide) -> String {
     html.push_str(css);
     html.push_str("</style></head><body>");
     html.push_str(r#"<div class="brand">getpostcraft</div>"#);
-    html.push_str(&format!(r#"<div class="counter">{}/{}</div>"#, slide.index, slide.total));
+    html.push_str(&format!(
+        r#"<div class="counter">{}/{}</div>"#,
+        slide.index, slide.total
+    ));
     html.push_str(r#"<div class="content">"#);
-    html.push_str(&format!(r#"<div class="emoji">{}</div>"#, html_escape(&slide.emoji)));
-    html.push_str(&format!(r#"<div class="title">{}</div>"#, html_escape(&slide.title)));
+    html.push_str(&format!(
+        r#"<div class="emoji">{}</div>"#,
+        html_escape(&slide.emoji)
+    ));
+    html.push_str(&format!(
+        r#"<div class="title">{}</div>"#,
+        html_escape(&slide.title)
+    ));
     html.push_str(r#"<div class="accent"></div>"#);
     html.push_str(&format!(
         r#"<div class="body">{}</div>"#,
@@ -322,10 +333,7 @@ fn build_carousel_slide_html(slide: &CarouselSlide) -> String {
 
 /// Render caption + hashtags to 1080×1080 PNG. Returns base64 data URL.
 #[tauri::command]
-pub async fn render_post_image(
-    caption: String,
-    hashtags: Vec<String>,
-) -> Result<String, String> {
+pub async fn render_post_image(caption: String, hashtags: Vec<String>) -> Result<String, String> {
     render_to_base64(&build_post_html(&caption, &hashtags)).await
 }
 
@@ -350,9 +358,7 @@ pub async fn render_terminal_image(
 
 /// Render each carousel slide to PNG. Returns Vec of base64 data URLs (same order as input).
 #[tauri::command]
-pub async fn render_carousel_slides(
-    slides: Vec<CarouselSlide>,
-) -> Result<Vec<String>, String> {
+pub async fn render_carousel_slides(slides: Vec<CarouselSlide>) -> Result<Vec<String>, String> {
     let mut images = Vec::with_capacity(slides.len());
     for slide in &slides {
         let data_url = render_to_base64(&build_carousel_slide_html(slide)).await?;
@@ -385,8 +391,8 @@ pub async fn export_carousel_zip(images: Vec<String>) -> Result<String, String> 
             .decode(b64)
             .map_err(|e| format!("Base64 decode error at index {i}: {e}"))?;
 
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored); // PNGs are already compressed
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored); // PNGs are already compressed
 
         zip.start_file(format!("slide_{:02}.png", i + 1), options)
             .map_err(|e| e.to_string())?;

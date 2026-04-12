@@ -5,8 +5,8 @@ mod network_rules;
 mod sidecar;
 mod state;
 
-use tauri::Manager;
 pub use state::AppState;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

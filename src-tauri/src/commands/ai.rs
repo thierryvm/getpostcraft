@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
 use crate::{db::history::PostRecord, state::AppState};
+use serde::{Deserialize, Serialize};
 
 /// A single slide in a carousel (index is 1-based).
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -55,10 +55,12 @@ pub async fn generate_content(
 
         let key = cached
             .or_else(|| crate::ai_keys::get_key(&provider).ok())
-            .ok_or_else(|| format!(
-                "Aucune clé API pour « {provider} ». \
+            .ok_or_else(|| {
+                format!(
+                    "Aucune clé API pour « {provider} ». \
                  Configure-la dans Paramètres → Intelligence Artificielle."
-            ))?;
+                )
+            })?;
         Some(key)
     };
 
@@ -144,8 +146,8 @@ pub async fn generate_variants(
 
     let raw = [
         ("educational", h_edu.await.map_err(|e| e.to_string())?),
-        ("casual",      h_cas.await.map_err(|e| e.to_string())?),
-        ("punchy",      h_pun.await.map_err(|e| e.to_string())?),
+        ("casual", h_cas.await.map_err(|e| e.to_string())?),
+        ("punchy", h_pun.await.map_err(|e| e.to_string())?),
     ];
     let mut variants = Vec::with_capacity(3);
     for (tone, res) in raw {
@@ -182,15 +184,23 @@ pub async fn scrape_url_for_brief(url: String) -> Result<String, String> {
     let stdout = crate::sidecar::run_sidecar_raw(json, 20).await?;
 
     #[derive(serde::Deserialize)]
-    struct ScrapeData { text: String }
+    struct ScrapeData {
+        text: String,
+    }
     #[derive(serde::Deserialize)]
-    struct ScrapeResp { ok: bool, data: Option<ScrapeData>, error: Option<String> }
+    struct ScrapeResp {
+        ok: bool,
+        data: Option<ScrapeData>,
+        error: Option<String>,
+    }
 
-    let resp: ScrapeResp = serde_json::from_str(&stdout)
-        .map_err(|e| format!("Parse scrape response: {e}"))?;
+    let resp: ScrapeResp =
+        serde_json::from_str(&stdout).map_err(|e| format!("Parse scrape response: {e}"))?;
 
     if resp.ok {
-        resp.data.map(|d| d.text).ok_or_else(|| "No text returned".to_string())
+        resp.data
+            .map(|d| d.text)
+            .ok_or_else(|| "No text returned".to_string())
     } else {
         Err(resp.error.unwrap_or_else(|| "Scrape failed".to_string()))
     }
@@ -242,10 +252,12 @@ pub async fn generate_carousel(
             .and_then(|c| c.get(&provider).cloned());
         let key = cached
             .or_else(|| crate::ai_keys::get_key(&provider).ok())
-            .ok_or_else(|| format!(
-                "Aucune clé API pour « {provider} ». \
+            .ok_or_else(|| {
+                format!(
+                    "Aucune clé API pour « {provider} ». \
                  Configure-la dans Paramètres → Intelligence Artificielle."
-            ))?;
+                )
+            })?;
         Some(key)
     };
 
@@ -282,20 +294,33 @@ pub async fn generate_carousel(
     let stdout = crate::sidecar::run_sidecar_raw(json, 45).await?;
 
     #[derive(Deserialize)]
-    struct SlideData { emoji: String, title: String, body: String }
+    struct SlideData {
+        emoji: String,
+        title: String,
+        body: String,
+    }
     #[derive(Deserialize)]
-    struct CarouselData { slides: Vec<SlideData> }
+    struct CarouselData {
+        slides: Vec<SlideData>,
+    }
     #[derive(Deserialize)]
-    struct CarouselResp { ok: bool, data: Option<CarouselData>, error: Option<String> }
-
-    let resp: CarouselResp = serde_json::from_str(&stdout)
-        .map_err(|e| format!("Parse carousel response: {e}"))?;
-
-    if !resp.ok {
-        return Err(resp.error.unwrap_or_else(|| "Carousel generation failed".to_string()));
+    struct CarouselResp {
+        ok: bool,
+        data: Option<CarouselData>,
+        error: Option<String>,
     }
 
-    let slides_data = resp.data
+    let resp: CarouselResp =
+        serde_json::from_str(&stdout).map_err(|e| format!("Parse carousel response: {e}"))?;
+
+    if !resp.ok {
+        return Err(resp
+            .error
+            .unwrap_or_else(|| "Carousel generation failed".to_string()));
+    }
+
+    let slides_data = resp
+        .data
         .ok_or_else(|| "No carousel data returned".to_string())?
         .slides;
     let total = slides_data.len() as u8;
