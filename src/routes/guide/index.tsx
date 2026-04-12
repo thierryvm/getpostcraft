@@ -7,9 +7,6 @@ import {
   Settings,
   LayoutDashboard,
   CalendarDays,
-  Code2,
-  Terminal,
-  Layers,
   Hash,
   ChevronRight,
 } from "lucide-react";
@@ -81,25 +78,138 @@ function Tip({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ── Visual previews ───────────────────────────────────────────────────────
+
+function PreviewPost() {
+  return (
+    <div className="w-full aspect-square rounded-md overflow-hidden bg-[#0d1117] flex flex-col items-center justify-center p-3 gap-2 border border-white/5">
+      <div className="w-2 h-2 rounded-full bg-[#3ddc84]" />
+      <div className="w-3/4 h-2 rounded bg-white/20" />
+      <div className="w-full h-1.5 rounded bg-white/10" />
+      <div className="w-5/6 h-1.5 rounded bg-white/10" />
+      <div className="w-4/6 h-1.5 rounded bg-white/10" />
+      <div className="mt-1 flex gap-1">
+        <div className="h-1 w-8 rounded-full bg-[#3ddc84]/40" />
+        <div className="h-1 w-10 rounded-full bg-[#3ddc84]/40" />
+        <div className="h-1 w-7 rounded-full bg-[#3ddc84]/40" />
+      </div>
+    </div>
+  );
+}
+
+function PreviewCode() {
+  return (
+    <div className="w-full aspect-square rounded-md overflow-hidden bg-[#0d1117] border border-white/5 flex flex-col">
+      {/* Title bar */}
+      <div className="flex items-center gap-1.5 px-3 py-2 bg-[#161b22] border-b border-white/5">
+        <div className="h-2 w-2 rounded-full bg-red-500/60" />
+        <div className="h-2 w-2 rounded-full bg-yellow-500/60" />
+        <div className="h-2 w-2 rounded-full bg-green-500/60" />
+        <span className="ml-2 text-[9px] text-white/30 font-mono">script.sh</span>
+      </div>
+      {/* Code lines */}
+      <div className="flex-1 flex flex-col gap-1.5 p-3 font-mono">
+        <div className="flex gap-2">
+          <span className="text-[8px] text-[#3ddc84]/70">#!/bin/bash</span>
+        </div>
+        <div className="flex gap-1.5">
+          <span className="text-[8px] text-blue-400/70">echo</span>
+          <span className="text-[8px] text-yellow-300/70">"Hello world"</span>
+        </div>
+        <div className="flex gap-1.5">
+          <span className="text-[8px] text-purple-400/70">for</span>
+          <span className="text-[8px] text-white/50">i in</span>
+          <span className="text-[8px] text-yellow-300/70">1 2 3</span>
+        </div>
+        <div className="flex gap-1.5 pl-3">
+          <span className="text-[8px] text-blue-400/70">echo</span>
+          <span className="text-[8px] text-white/40">$i</span>
+        </div>
+        <div className="text-[8px] text-purple-400/70">done</div>
+      </div>
+    </div>
+  );
+}
+
+function PreviewTerminal() {
+  return (
+    <div className="w-full aspect-square rounded-md overflow-hidden bg-[#0d1117] border border-white/5 flex flex-col">
+      {/* Title bar */}
+      <div className="flex items-center gap-1.5 px-3 py-2 bg-[#161b22] border-b border-white/5">
+        <div className="h-2 w-2 rounded-full bg-red-500/60" />
+        <div className="h-2 w-2 rounded-full bg-yellow-500/60" />
+        <div className="h-2 w-2 rounded-full bg-green-500/60" />
+        <span className="ml-2 text-[9px] text-white/30 font-mono">bash</span>
+      </div>
+      {/* Terminal output */}
+      <div className="flex-1 flex flex-col gap-1 p-3 font-mono">
+        <div className="flex gap-1">
+          <span className="text-[8px] text-[#3ddc84]">$</span>
+          <span className="text-[8px] text-white/70">ls -la</span>
+        </div>
+        <div className="text-[8px] text-white/40">total 48</div>
+        <div className="text-[8px] text-white/40">drwxr-xr-x  .config</div>
+        <div className="text-[8px] text-white/40">-rw-r--r--  .bashrc</div>
+        <div className="flex gap-1 mt-1">
+          <span className="text-[8px] text-[#3ddc84]">$</span>
+          <span className="text-[8px] text-white/70">git status</span>
+        </div>
+        <div className="text-[8px] text-[#3ddc84]/70">On branch main</div>
+        <div className="text-[8px] text-[#3ddc84]/50">nothing to commit</div>
+      </div>
+    </div>
+  );
+}
+
+function PreviewCarousel() {
+  return (
+    <div className="w-full aspect-square rounded-md overflow-hidden bg-transparent flex items-center justify-center">
+      {/* Stacked slides effect */}
+      <div className="relative w-4/5 h-4/5">
+        {/* Slide 3 (back) */}
+        <div className="absolute inset-0 translate-x-3 translate-y-3 rounded-md bg-[#161b22] border border-white/5" />
+        {/* Slide 2 (middle) */}
+        <div className="absolute inset-0 translate-x-1.5 translate-y-1.5 rounded-md bg-[#161b22] border border-white/5" />
+        {/* Slide 1 (front) */}
+        <div className="absolute inset-0 rounded-md bg-[#0d1117] border border-white/10 flex flex-col items-center justify-center gap-2 p-3">
+          <span className="text-lg">💡</span>
+          <div className="w-3/4 h-2 rounded bg-[#3ddc84]/30" />
+          <div className="w-full h-1.5 rounded bg-white/10" />
+          <div className="w-5/6 h-1.5 rounded bg-white/10" />
+          <div className="flex gap-1 mt-1">
+            <div className="h-1 w-1 rounded-full bg-[#3ddc84]" />
+            <div className="h-1 w-1 rounded-full bg-white/20" />
+            <div className="h-1 w-1 rounded-full bg-white/20" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Visual tab card ───────────────────────────────────────────────────────
 
 function VisualCard({
-  icon: Icon,
   name,
   badge,
   desc,
+  preview: Preview,
 }: {
-  icon: React.ElementType;
   name: string;
   badge?: string;
   desc: string;
+  preview: () => React.ReactElement;
 }) {
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-4">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary">
-        <Icon className="h-4 w-4 text-muted-foreground" />
+    <div className="flex flex-col rounded-lg border border-border bg-card overflow-hidden">
+      {/* Mini preview */}
+      <div className="bg-[#0d1117] p-3">
+        <div className="w-24 mx-auto">
+          <Preview />
+        </div>
       </div>
-      <div className="flex flex-col gap-1">
+      {/* Info */}
+      <div className="flex flex-col gap-1 p-4">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-foreground">{name}</span>
           {badge && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{badge}</Badge>}
@@ -184,27 +294,27 @@ export function GuidePage() {
 
             <div className="flex flex-col gap-2">
               <span className="text-xs font-semibold uppercase tracking-widest text-primary">Templates visuels 1080×1080</span>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <VisualCard
-                  icon={Image}
                   name="Post"
-                  desc="Card texte avec ta légende en overlay sur un fond sombre. Idéal pour les citations, annonces ou posts inspirationnels."
+                  preview={PreviewPost}
+                  desc="Texte de ta légende sur fond sombre avec accent vert. Parfait pour les annonces, citations ou présentations de projet."
                 />
                 <VisualCard
-                  icon={Code2}
                   name="Code"
-                  desc="Mockup de snippet de code avec syntax highlighting. Colle ton code, choisis le langage (bash, python, js…) et un nom de fichier optionnel."
+                  preview={PreviewCode}
+                  desc="Snippet de code avec syntax highlighting coloré. Renseigne le langage (bash, python, js…) et colle ton code."
                 />
                 <VisualCard
-                  icon={Terminal}
                   name="Terminal"
-                  desc="Fenêtre de terminal simulée avec output de commande. Parfait pour les posts DevOps, Linux, CLI."
+                  preview={PreviewTerminal}
+                  desc="Fenêtre de terminal simulée style macOS/Linux. Tape tes commandes et leur output. Idéal pour DevOps et Linux."
                 />
                 <VisualCard
-                  icon={Layers}
                   name="Carrousel"
                   badge="Multi-slides"
-                  desc="Génère jusqu'à 10 slides avec titre, emoji et contenu. Chaque slide est exportée en PNG. Idéal pour les tutoriels étape par étape."
+                  preview={PreviewCarousel}
+                  desc="Plusieurs slides empilées. L'IA génère le contenu de chaque slide automatiquement depuis ton brief."
                 />
               </div>
             </div>
