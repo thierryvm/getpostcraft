@@ -9,6 +9,7 @@ import {
   PanelLeftOpen,
   Zap,
 } from "lucide-react";
+import { HelpSheet } from "@/components/shared/HelpSheet";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/ui.store";
 import { cn } from "@/lib/utils";
@@ -88,21 +89,39 @@ export function RootLayout() {
           ))}
         </nav>
 
-        {/* Collapse toggle */}
+        {/* Bottom actions: Help + Collapse */}
         <div className="border-t border-border p-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleSidebar}
-            className="h-8 w-full text-muted-foreground hover:text-foreground"
-            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {sidebarCollapsed ? (
-              <PanelLeftOpen className="h-4 w-4" />
-            ) : (
-              <PanelLeftClose className="h-4 w-4" />
-            )}
-          </Button>
+          {sidebarCollapsed ? (
+            /* Collapsed: stack icons vertically */
+            <div className="flex flex-col gap-1">
+              <HelpSheet collapsed={true} />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleSidebar}
+                className="h-8 w-8 mx-auto text-muted-foreground hover:text-foreground"
+                aria-label="Expand sidebar"
+              >
+                <PanelLeftOpen className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            /* Expanded: Help takes left, collapse on the right */
+            <div className="flex items-center gap-1">
+              <div className="flex-1">
+                <HelpSheet collapsed={false} />
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleSidebar}
+                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                aria-label="Collapse sidebar"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
         </div>
       </aside>
 
