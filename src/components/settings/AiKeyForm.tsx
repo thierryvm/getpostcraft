@@ -55,6 +55,12 @@ export function AiKeyForm() {
         setValidatedAt(new Date());
         return;
       }
+      // Key already configured + no new key entered → just update the model
+      if (!inputKey.trim() && keyStatus?.configured) {
+        await setActiveProvider(provider, model);
+        setResult({ valid: true });
+        return;
+      }
       if (!inputKey.trim()) return;
       const r = await saveAiKey(provider, inputKey.trim());
       setResult(r);
@@ -79,7 +85,10 @@ export function AiKeyForm() {
   };
 
   const needsKey = PROVIDER_META[provider].keyPrefix !== null;
-  const canSave = provider === "ollama" || inputKey.trim().length > 0;
+  const canSave =
+    provider === "ollama" ||
+    inputKey.trim().length > 0 ||
+    (keyStatus?.configured ?? false);
 
   return (
     <div className="flex flex-col gap-6">
@@ -166,7 +175,11 @@ export function AiKeyForm() {
       {/* Action */}
       <Button onClick={handleSave} disabled={!canSave || isLoading} className="w-fit">
         {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-        {provider === "ollama" ? "Définir comme actif" : "Tester & Sauvegarder"}
+        {provider === "ollama"
+          ? "Définir comme actif"
+          : inputKey.trim()
+          ? "Tester & Sauvegarder"
+          : "Appliquer le modèle"}
       </Button>
 
       {/* Result */}
