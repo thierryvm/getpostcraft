@@ -18,3 +18,8 @@ export function saveImgbbKey(apiKey: string): Promise<void> {
 export function getImgbbKeyStatus(): Promise<boolean> {
   return invoke<boolean>("get_imgbb_key_status");
 }
+
+/** Attach a base64 data URL (or file path) to a draft post so publish_post can find it. */
+export function updateDraftImage(postId: number, imagePath: string): Promise<void> {
+  return invoke<void>("update_draft_image", { postId, imagePath });
+}

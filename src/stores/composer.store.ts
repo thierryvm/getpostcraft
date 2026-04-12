@@ -9,12 +9,15 @@ interface ComposerState {
   variants: CaptionVariant[] | null;
   isLoading: boolean;
   error: string | null;
+  /** ID of the last draft saved to DB — used by publishPost */
+  draftId: number | null;
   setBrief: (brief: string) => void;
   setNetwork: (network: Network) => void;
   setResult: (result: GeneratedContent | null) => void;
   setVariants: (variants: CaptionVariant[] | null) => void;
   setIsLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+  setDraftId: (id: number | null) => void;
 }
 
 export const useComposerStore = create<ComposerState>((set) => ({
@@ -24,10 +27,12 @@ export const useComposerStore = create<ComposerState>((set) => ({
   variants: null,
   isLoading: false,
   error: null,
+  draftId: null,
   setBrief: (brief) => set({ brief }),
   setNetwork: (network) => set({ network }),
   setResult: (result) => set({ result, variants: null }),
   setVariants: (variants) => set({ variants, result: null }),
   setIsLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
+  setDraftId: (draftId) => set({ draftId }),
 }));

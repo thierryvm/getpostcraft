@@ -18,12 +18,20 @@ pub struct PublishResult {
 
 // ── Image upload (imgbb) ───────────────────────────────────────────────────
 
-/// Upload a local PNG to imgbb and return the public URL.
-/// Requires an imgbb API key stored in settings as "imgbb_api_key".
-async fn upload_image_to_imgbb(image_path: &str, api_key: &str) -> Result<String, String> {
-    let bytes = std::fs::read(image_path)
-        .map_err(|e| format!("Cannot read image file {image_path}: {e}"))?;
-    let b64 = STANDARD.encode(&bytes);
+/// Upload an image to imgbb and return the public URL.
+/// `image_source` can be either:
+///   - a local file path (absolute)
+///   - a base64 data URL (`data:image/png;base64,...`) — as returned by the render pipeline
+async fn upload_image_to_imgbb(image_source: &str, api_key: &str) -> Result<String, String> {
+    // If the render pipeline already gave us a base64 data URL, reuse it directly.
+    // Otherwise fall back to reading from disk (future-proofing for saved files).
+    let b64 = if let Some(b64_part) = image_source.strip_prefix("data:image/png;base64,") {
+        b64_part.to_string()
+    } else {
+        let bytes = std::fs::read(image_source)
+            .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))?;
+        STANDARD.encode(&bytes)
+    };
 
     #[derive(Deserialize)]
     struct ImgbbData {
@@ -227,4 +235,14 @@ pub async fn get_imgbb_key_status(state: tauri::State<'_, AppState>) -> Result<b
     Ok(crate::db::settings_db::get(&state.db, "imgbb_api_key")
         .await
         .is_some())
+}
+
+/// Store an image (base64 data URL or file path) on the draft so publish_post can find it.
+#[tauri::command]
+pub async fn update_draft_image(
+    post_id: i64,
+    image_path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    crate::db::history::update_image_path(&state.db, post_id, &image_path).await
 }

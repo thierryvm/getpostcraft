@@ -28,7 +28,7 @@ const briefSchema = z.object({
 type BriefFormData = z.infer<typeof briefSchema>;
 
 export function BriefForm() {
-  const { brief, network, isLoading, error, setBrief, setNetwork, setResult, setVariants, setIsLoading, setError } =
+  const { brief, network, isLoading, error, setBrief, setNetwork, setResult, setVariants, setIsLoading, setError, setDraftId } =
     useComposerStore();
 
   const [inputMode, setInputMode] = useState<"text" | "url">("text");
@@ -59,7 +59,9 @@ export function BriefForm() {
       setResult(result);
       setBrief(data.brief);
       setNetwork(data.network as Network);
-      saveDraft(data.network as Network, result.caption, result.hashtags).catch(() => {});
+      saveDraft(data.network as Network, result.caption, result.hashtags)
+        .then(setDraftId)
+        .catch(() => {});
     } catch (err) {
       setError(String(err));
     } finally {

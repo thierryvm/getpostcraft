@@ -1,5 +1,6 @@
 import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -8,11 +9,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useNavigate } from "@tanstack/react-router";
 import { useComposerStore } from "@/stores/composer.store";
 import { generateContent, saveDraft, generateCarousel } from "@/lib/tauri/composer";
 import type { CaptionVariant, CarouselSlide } from "@/lib/tauri/composer";
 import { renderPostImage, renderCodeImage, renderTerminalImage, renderCarouselSlides, exportCarouselZip } from "@/lib/tauri/media";
+import { publishPost, updateDraftImage } from "@/lib/tauri/publisher";
 import { NETWORK_META } from "@/types/composer.types";
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -146,8 +147,8 @@ function VariantsPanel({
 }
 
 export function ContentPreview() {
-  const { result, variants, network, brief, setResult, setVariants, setIsLoading, setError } = useComposerStore();
-  const navigate = useNavigate();
+  const { result, variants, network, brief, draftId, setResult, setVariants, setIsLoading, setError, setDraftId } = useComposerStore();
+  const queryClient = useQueryClient();
   const captionLimit = NETWORK_META[network].captionLimit;
   const imageRef = useRef<HTMLDivElement>(null);
 
@@ -175,13 +176,27 @@ export function ContentPreview() {
   const [carouselError, setCarouselError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+  const [publishedInSession, setPublishedInSession] = useState(false);
 
-  // Sync local hashtag state whenever a new result arrives; reset image
+  // Publish to Instagram via imgbb + Graph API
+  const publishMutation = useMutation({
+    mutationFn: () => {
+      if (draftId === null) throw new Error("Aucun brouillon enregistré");
+      return publishPost(draftId);
+    },
+    onSuccess: () => {
+      setPublishedInSession(true);
+      queryClient.invalidateQueries({ queryKey: ["post_history"] });
+    },
+  });
+
+  // Sync local hashtag state whenever a new result arrives; reset image + publish state
   useEffect(() => {
     if (result) {
       setHashtags(result.hashtags);
       setImageUrl(null);
       setRenderError(null);
+      setPublishedInSession(false);
     }
   }, [result]);
 
@@ -200,7 +215,9 @@ export function ContentPreview() {
     try {
       const newResult = await generateContent(brief, network);
       setResult(newResult);
-      saveDraft(network, newResult.caption, newResult.hashtags).catch(() => {});
+      saveDraft(network, newResult.caption, newResult.hashtags)
+        .then(setDraftId)
+        .catch(() => {});
     } catch (err) {
       setError(String(err));
     } finally {
@@ -225,6 +242,12 @@ export function ContentPreview() {
         url = await renderPostImage(result.caption, hashtags);
       }
       setImageUrl(url);
+      // Persist the data URL in SQLite so publish_post can upload it to imgbb
+      if (draftId !== null) {
+        updateDraftImage(draftId, url).catch(() => {
+          // Non-fatal: publish will fail with a clear error if image_path is missing
+        });
+      }
     } catch (err) {
       setRenderError(String(err));
     } finally {
@@ -270,7 +293,9 @@ export function ContentPreview() {
   const handleSelectVariant = (v: CaptionVariant) => {
     setResult({ caption: v.caption, hashtags: v.hashtags });
     setVariants(null);
-    saveDraft(network, v.caption, v.hashtags).catch(() => {});
+    saveDraft(network, v.caption, v.hashtags)
+      .then(setDraftId)
+      .catch(() => {});
   };
 
   if (!result && !variants) {
@@ -568,34 +593,55 @@ export function ContentPreview() {
         <Separator />
 
         {/* Actions */}
-        <div className="flex gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="flex-1">
-                <Button
-                  variant="default"
-                  className="w-full"
-                  onClick={() => navigate({ to: "/settings", search: { tab: "accounts" } })}
-                >
-                  Publier sur Instagram
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>Connecter un compte Instagram</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-2">
+            {/* Publish button — visible only when image rendered and not yet published */}
+            {imageUrl !== null && !publishedInSession && (
               <Button
-                variant="outline"
-                size="icon"
-                onClick={handleRegenerate}
-                aria-label="Regénérer"
+                variant="default"
+                className="flex-1"
+                disabled={publishMutation.isPending || draftId === null}
+                onClick={() => publishMutation.mutate()}
               >
-                <RefreshCw className="h-4 w-4" />
+                {publishMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Publication…
+                  </>
+                ) : (
+                  "Publier sur Instagram"
+                )}
               </Button>
-            </TooltipTrigger>
-            <TooltipContent>Regénérer</TooltipContent>
-          </Tooltip>
+            )}
+            {/* Success badge replaces button after publish */}
+            {publishedInSession && (
+              <span className="flex-1 flex items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary">
+                <Check className="h-4 w-4" />
+                Publié ✓
+              </span>
+            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleRegenerate}
+                  aria-label="Regénérer"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Regénérer</TooltipContent>
+            </Tooltip>
+          </div>
+          {/* Publish error */}
+          {publishMutation.isError && (
+            <p className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">
+              {publishMutation.error instanceof Error
+                ? publishMutation.error.message
+                : String(publishMutation.error)}
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>
