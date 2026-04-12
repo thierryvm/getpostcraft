@@ -31,8 +31,11 @@ def render_html_to_png(
     # Using set_content() directly does NOT honour <meta charset>; goto(file://) does.
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".html")
     try:
+        # Sanitize lone surrogates that some AI models produce (e.g. \udc90).
+        # Re-encode through UTF-8 with replacement so Chromium gets clean HTML.
+        safe_html = html.encode("utf-8", errors="replace").decode("utf-8")
         with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-            fh.write(html)
+            fh.write(safe_html)
 
         # Convert to file:// URL (forward slashes required on Windows too)
         file_url = "file:///" + tmp_path.replace("\\", "/")

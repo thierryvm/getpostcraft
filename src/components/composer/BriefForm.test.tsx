@@ -6,10 +6,13 @@ import { invoke } from "@tauri-apps/api/core";
 
 const mockInvoke = vi.mocked(invoke);
 
+import { getDefaultFormat } from "@/types/composer.types";
+
 // Stable mock function references — same instance across all renders in all tests
 const storeFns = {
   setBrief: vi.fn(),
   setNetwork: vi.fn(),
+  setImageFormat: vi.fn(),
   setResult: vi.fn(),
   setVariants: vi.fn(),
   setIsLoading: vi.fn(),
@@ -22,6 +25,7 @@ vi.mock("@/stores/composer.store", () => ({
   useComposerStore: vi.fn(() => ({
     brief: "",
     network: "instagram" as const,
+    imageFormat: getDefaultFormat("instagram"),
     isLoading: false,
     error: null,
     result: null,
@@ -156,6 +160,42 @@ describe("BriefForm — soumission", () => {
     const submitBtn = screen.getByRole("button", { name: /générer/i });
     expect(submitBtn).toBeDisabled();
     expect(mockInvoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("BriefForm — sélecteur de format image", () => {
+  it("affiche les formats Instagram par défaut (3 options)", async () => {
+    render(<BriefForm />);
+    await waitFor(() => {
+      expect(screen.getByText("Portrait 4:5")).toBeInTheDocument();
+      expect(screen.getByText("Carré 1:1")).toBeInTheDocument();
+      expect(screen.getByText("Paysage 1.91:1")).toBeInTheDocument();
+    });
+  });
+
+  it("le format Portrait 4:5 est actif par défaut (Instagram)", async () => {
+    render(<BriefForm />);
+    await waitFor(() => {
+      const portraitBtn = screen.getByText("Portrait 4:5").closest("button");
+      expect(portraitBtn).toHaveClass("border-primary");
+    });
+  });
+
+  it("cliquer sur Carré 1:1 appelle setImageFormat avec les bonnes dimensions", async () => {
+    const user = userEvent.setup();
+    render(<BriefForm />);
+    await waitFor(() => screen.getByText("Carré 1:1"));
+    await user.click(screen.getByText("Carré 1:1").closest("button")!);
+    expect(storeFns.setImageFormat).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 1080, height: 1080 })
+    );
+  });
+
+  it("affiche les dimensions sous le label du format", async () => {
+    render(<BriefForm />);
+    await waitFor(() => {
+      expect(screen.getByText("1080×1350")).toBeInTheDocument();
+    });
   });
 });
 

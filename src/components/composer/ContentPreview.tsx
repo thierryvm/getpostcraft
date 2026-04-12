@@ -1,4 +1,4 @@
-import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers } from "lucide-react";
+import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers, Pencil } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,10 @@ import { useComposerStore } from "@/stores/composer.store";
 import { generateContent, saveDraft, generateCarousel } from "@/lib/tauri/composer";
 import type { CaptionVariant, CarouselSlide } from "@/lib/tauri/composer";
 import { renderPostImage, renderCodeImage, renderTerminalImage, renderCarouselSlides, exportCarouselZip } from "@/lib/tauri/media";
-import { publishPost, updateDraftImage } from "@/lib/tauri/publisher";
+import { publishPost, publishLinkedinPost, updateDraftImage } from "@/lib/tauri/publisher";
+import { updatePostDraft } from "@/lib/tauri/calendar";
 import { NETWORK_META } from "@/types/composer.types";
+import { CaptionWithFold } from "@/components/shared/CaptionWithFold";
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -44,16 +46,21 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 function EditableHashtags({
   hashtags,
   onChange,
+  maxHashtags,
 }: {
   hashtags: string[];
   onChange: (tags: string[]) => void;
+  maxHashtags?: number;
 }) {
   const [newTag, setNewTag] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const isAtLimit = maxHashtags !== undefined && hashtags.length >= maxHashtags;
+
   const remove = (tag: string) => onChange(hashtags.filter((t) => t !== tag));
 
   const add = () => {
+    if (isAtLimit) return;
     const tag = newTag.trim().replace(/^#+/, "").toLowerCase();
     if (tag && !hashtags.includes(tag)) {
       onChange([...hashtags, tag]);
@@ -63,43 +70,52 @@ function EditableHashtags({
   };
 
   return (
-    <div className="flex flex-wrap gap-1.5 items-center">
-      {hashtags.map((tag) => (
-        <span
-          key={tag}
-          className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
-        >
-          #{tag}
-          <button
-            type="button"
-            onClick={() => remove(tag)}
-            className="text-muted-foreground hover:text-destructive transition-colors"
-            aria-label={`Supprimer #${tag}`}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap gap-1.5 items-center">
+        {hashtags.map((tag) => (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
           >
-            <X className="h-3 w-3" />
-          </button>
-        </span>
-      ))}
-      <div className="inline-flex items-center gap-1">
-        <input
-          ref={inputRef}
-          value={newTag}
-          onChange={(e) => setNewTag(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); add(); }
-          }}
-          placeholder="ajouter..."
-          className="w-20 bg-transparent text-xs text-foreground placeholder:text-muted-foreground border-b border-border focus:outline-none focus:border-primary"
-        />
-        <button
-          type="button"
-          onClick={add}
-          className="text-muted-foreground hover:text-primary transition-colors"
-          aria-label="Ajouter hashtag"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
+            #{tag}
+            <button
+              type="button"
+              onClick={() => remove(tag)}
+              className="text-muted-foreground hover:text-destructive transition-colors"
+              aria-label={`Supprimer #${tag}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+        {!isAtLimit && (
+          <div className="inline-flex items-center gap-1">
+            <input
+              ref={inputRef}
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); add(); }
+              }}
+              placeholder="ajouter..."
+              className="w-20 bg-transparent text-xs text-foreground placeholder:text-muted-foreground border-b border-border focus:outline-none focus:border-primary"
+            />
+            <button
+              type="button"
+              onClick={add}
+              className="text-muted-foreground hover:text-primary transition-colors"
+              aria-label="Ajouter hashtag"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
+      {isAtLimit && (
+        <p className="text-xs text-muted-foreground">
+          Limite de {maxHashtags} hashtags atteinte pour ce réseau.
+        </p>
+      )}
     </div>
   );
 }
@@ -147,9 +163,9 @@ function VariantsPanel({
 }
 
 export function ContentPreview() {
-  const { result, variants, network, brief, draftId, setResult, setVariants, setIsLoading, setError, setDraftId } = useComposerStore();
+  const { result, variants, network, brief, imageFormat, draftId, setResult, setIsLoading, setError, setDraftId } = useComposerStore();
   const queryClient = useQueryClient();
-  const captionLimit = NETWORK_META[network].captionLimit;
+  const { captionLimit, hashtagLimit, foldLimit, label: networkLabel } = NETWORK_META[network];
   const imageRef = useRef<HTMLDivElement>(null);
 
   type VisualTemplate = "post" | "code" | "terminal" | "carousel";
@@ -177,11 +193,15 @@ export function ContentPreview() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const [publishedInSession, setPublishedInSession] = useState(false);
+  // Inline caption editing
+  const [isEditingCaption, setIsEditingCaption] = useState(false);
+  const [editCaption, setEditCaption] = useState("");
 
-  // Publish to Instagram via imgbb + Graph API
+  // Publish to the selected network
   const publishMutation = useMutation({
     mutationFn: () => {
       if (draftId === null) throw new Error("Aucun brouillon enregistré");
+      if (network === "linkedin") return publishLinkedinPost(draftId);
       return publishPost(draftId);
     },
     onSuccess: () => {
@@ -197,6 +217,7 @@ export function ContentPreview() {
       setImageUrl(null);
       setRenderError(null);
       setPublishedInSession(false);
+      setIsEditingCaption(false);
     }
   }, [result]);
 
@@ -230,16 +251,17 @@ export function ContentPreview() {
     setRenderError(null);
     setImageUrl(null);
     try {
+      const { width, height } = imageFormat;
       let url: string;
       if (template === "code") {
         if (!code.trim()) { setRenderError("Colle du code d'abord."); setIsRendering(false); return; }
-        url = await renderCodeImage(code, language, filename || undefined);
+        url = await renderCodeImage(code, language, filename || undefined, width, height);
       } else if (template === "terminal") {
         if (!termCommand.trim()) { setRenderError("Saisis une commande d'abord."); setIsRendering(false); return; }
-        url = await renderTerminalImage(termCommand, termOutput || undefined);
+        url = await renderTerminalImage(termCommand, termOutput || undefined, width, height);
       } else {
         if (!result) { setRenderError("Génère du contenu d'abord."); setIsRendering(false); return; }
-        url = await renderPostImage(result.caption, hashtags);
+        url = await renderPostImage(result.caption, hashtags, width, height);
       }
       setImageUrl(url);
       // Persist the data URL in SQLite so publish_post can upload it to imgbb
@@ -291,8 +313,9 @@ export function ContentPreview() {
   };
 
   const handleSelectVariant = (v: CaptionVariant) => {
+    // setResult already clears variants in the store — don't call setVariants(null) after,
+    // as it would reset result back to null.
     setResult({ caption: v.caption, hashtags: v.hashtags });
-    setVariants(null);
     saveDraft(network, v.caption, v.hashtags)
       .then(setDraftId)
       .catch(() => {});
@@ -343,12 +366,78 @@ export function ContentPreview() {
               <span className={`text-xs ${isOverLimit ? "text-destructive" : "text-muted-foreground"}`}>
                 {captionLength} / {captionLimit}
               </span>
-              <CopyButton text={safeResult.caption} label="la caption" />
+              {!isEditingCaption && (
+                <>
+                  <CopyButton text={safeResult.caption} label="la caption" />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => { setEditCaption(safeResult.caption); setIsEditingCaption(true); }}
+                      >
+                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Modifier</TooltipContent>
+                  </Tooltip>
+                </>
+              )}
+              {isEditingCaption && (
+                <div className="flex items-center gap-1">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => {
+                          const updated = { caption: editCaption, hashtags };
+                          setResult(updated);
+                          if (draftId !== null) {
+                            updatePostDraft(draftId, editCaption, hashtags).catch(() => {});
+                          }
+                        }}
+                      >
+                        <Check className="h-3.5 w-3.5 text-primary" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Confirmer</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setIsEditingCaption(false)}
+                      >
+                        <X className="h-3.5 w-3.5 text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Annuler</TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
             </div>
           </div>
-          <p className="text-sm text-foreground whitespace-pre-line leading-relaxed">
-            {safeResult.caption}
-          </p>
+          {isEditingCaption ? (
+            <textarea
+              value={editCaption}
+              onChange={(e) => setEditCaption(e.target.value)}
+              rows={6}
+              className="w-full bg-secondary/50 border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary resize-none leading-relaxed"
+            />
+          ) : (
+            <div className="max-h-48 overflow-y-auto rounded-md pr-1">
+              <CaptionWithFold
+                text={safeResult.caption}
+                foldLimit={foldLimit}
+                network={networkLabel}
+              />
+            </div>
+          )}
         </div>
 
         <Separator />
@@ -364,7 +453,7 @@ export function ContentPreview() {
             </span>
             <CopyButton text={hashtagsText} label="les hashtags" />
           </div>
-          <EditableHashtags hashtags={hashtags} onChange={setHashtags} />
+          <EditableHashtags hashtags={hashtags} onChange={setHashtags} maxHashtags={hashtagLimit} />
         </div>
 
         <Separator />
@@ -373,7 +462,10 @@ export function ContentPreview() {
         <div ref={imageRef} className="flex flex-col gap-3">
           {/* Header + generate button (hidden for carousel which has its own) */}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-foreground">Visuel 1080×1080</span>
+            <span className="text-sm font-medium text-foreground">
+            Visuel {imageFormat.width}×{imageFormat.height}
+            <span className="ml-1.5 text-xs font-normal text-muted-foreground">{imageFormat.ratio}</span>
+          </span>
             {template !== "carousel" && (
               <Button
                 variant="outline"
@@ -579,11 +671,11 @@ export function ContentPreview() {
 
           {template !== "carousel" && (
             imageUrl ? (
-              <div className="rounded-lg overflow-hidden border border-border flex justify-center bg-[#0d1117]">
-                <img src={imageUrl} alt="Visuel post Instagram" className="max-h-72 w-auto object-contain" />
+              <div className="rounded-lg overflow-hidden border border-border flex justify-center items-center bg-[#0d1117] p-2">
+                <img src={imageUrl} alt="Visuel post" className="max-h-96 max-w-full object-contain rounded" />
               </div>
             ) : !renderError && !isRendering ? (
-              <div className="flex h-12 items-center justify-center rounded-lg border border-dashed border-border">
+              <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border">
                 <p className="text-xs text-muted-foreground">Clique sur "Générer" pour créer le visuel</p>
               </div>
             ) : null
@@ -595,8 +687,9 @@ export function ContentPreview() {
         {/* Actions */}
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
-            {/* Publish button — visible only when image rendered and not yet published */}
-            {imageUrl !== null && !publishedInSession && (
+            {/* Publish button — visible once content is ready.
+                LinkedIn allows text-only; Instagram requires an image. */}
+            {(imageUrl !== null || network === "linkedin") && !publishedInSession && (
               <Button
                 variant="default"
                 className="flex-1"
@@ -609,7 +702,7 @@ export function ContentPreview() {
                     Publication…
                   </>
                 ) : (
-                  "Publier sur Instagram"
+                  `Publier sur ${networkLabel}`
                 )}
               </Button>
             )}

@@ -12,6 +12,11 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install rustls CryptoProvider once at process level — required before any
+    // TLS operation (OAuth callback servers). install_default() returns Err if
+    // already installed, which is safe to ignore.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle().clone();
@@ -75,12 +80,16 @@ pub fn run() {
             commands::calendar::unschedule_post,
             commands::calendar::delete_post,
             commands::calendar::update_post_draft,
-            // Publisher
+            // Publisher — Instagram
             commands::publisher::publish_post,
             commands::publisher::save_imgbb_key,
             commands::publisher::get_imgbb_key_status,
+            commands::publisher::save_image_host,
+            commands::publisher::get_image_host,
             commands::publisher::update_draft_image,
-            // OAuth / Accounts
+            // Publisher — LinkedIn
+            commands::publisher::publish_linkedin_post,
+            // OAuth / Accounts — Instagram
             commands::oauth::start_oauth_flow,
             commands::oauth::list_accounts,
             commands::oauth::disconnect_account,
@@ -88,6 +97,12 @@ pub fn run() {
             commands::oauth::get_instagram_app_id,
             commands::oauth::save_instagram_client_secret,
             commands::oauth::get_instagram_client_secret_status,
+            // OAuth / Accounts — LinkedIn
+            commands::oauth::start_linkedin_oauth_flow,
+            commands::oauth::save_linkedin_client_id,
+            commands::oauth::get_linkedin_client_id,
+            commands::oauth::save_linkedin_client_secret,
+            commands::oauth::get_linkedin_client_secret_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

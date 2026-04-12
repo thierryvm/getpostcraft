@@ -1,28 +1,34 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** Render caption + hashtags → 1080×1080 PNG data URL. */
+/** Render caption + hashtags → PNG data URL at the given dimensions (default 1080×1080). */
 export async function renderPostImage(
   caption: string,
-  hashtags: string[]
+  hashtags: string[],
+  width = 1080,
+  height = 1080,
 ): Promise<string> {
-  return invoke<string>("render_post_image", { caption, hashtags });
+  return invoke<string>("render_post_image", { caption, hashtags, width, height });
 }
 
-/** Render a code snippet card → 1080×1080 PNG data URL. */
+/** Render a code snippet card → PNG data URL at the given dimensions (default 1080×1080). */
 export async function renderCodeImage(
   code: string,
   language: string,
-  filename?: string
+  filename?: string,
+  width = 1080,
+  height = 1080,
 ): Promise<string> {
-  return invoke<string>("render_code_image", { code, language, filename: filename ?? null });
+  return invoke<string>("render_code_image", { code, language, filename: filename ?? null, width, height });
 }
 
-/** Render a terminal mockup → 1080×1080 PNG data URL. */
+/** Render a terminal mockup → PNG data URL at the given dimensions (default 1080×1080). */
 export async function renderTerminalImage(
   command: string,
-  output?: string
+  output?: string,
+  width = 1080,
+  height = 1080,
 ): Promise<string> {
-  return invoke<string>("render_terminal_image", { command, output: output ?? null });
+  return invoke<string>("render_terminal_image", { command, output: output ?? null, width, height });
 }
 
 /** Render carousel slides → array of base64 PNG data URLs (same order as input). */

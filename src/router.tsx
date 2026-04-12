@@ -8,6 +8,7 @@ import { DashboardPage } from "./routes/index";
 import { ComposerPage } from "./routes/composer/index";
 import { CalendarPage } from "./routes/calendar/index";
 import { SettingsPage } from "./routes/settings/index";
+import { GuidePage } from "./routes/guide/index";
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
@@ -38,11 +39,18 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+const guideRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/guide",
+  component: GuidePage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   composerRoute,
   calendarRoute,
   settingsRoute,
+  guideRoute,
 ]);
 
 export const router = createRouter({ routeTree });

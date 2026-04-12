@@ -19,7 +19,7 @@ fn html_escape(s: &str) -> String {
 }
 
 /// Render HTML → PNG → base64 data URL. Cleans up the temp file after reading.
-async fn render_to_base64(html: &str) -> Result<String, String> {
+async fn render_to_base64(html: &str, width: u32, height: u32) -> Result<String, String> {
     let dir = renders_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create renders dir: {e}"))?;
 
@@ -27,7 +27,7 @@ async fn render_to_base64(html: &str) -> Result<String, String> {
     let output_path = dir.join(filename);
     let output_str = output_path.to_string_lossy().to_string();
 
-    crate::sidecar::call_render_sidecar(html, &output_str, 1080, 1080).await?;
+    crate::sidecar::call_render_sidecar(html, &output_str, width, height).await?;
 
     let bytes = std::fs::read(&output_path).map_err(|e| format!("Read rendered PNG: {e}"))?;
     let _ = std::fs::remove_file(&output_path);
@@ -38,13 +38,29 @@ async fn render_to_base64(html: &str) -> Result<String, String> {
 
 // ── Template builders ─────────────────────────────────────────────────────────
 
-fn build_post_html(caption: &str, hashtags: &[String]) -> String {
+fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) -> String {
     let caption_escaped = html_escape(caption).replace('\n', "<br>");
     let hashtag_html: String = hashtags
         .iter()
         .map(|t| format!("<span class=\"tag\">#{}</span>", html_escape(t)))
         .collect::<Vec<_>>()
         .join("\n        ");
+
+    // Scale font size down for longer captions so the card stays within the frame.
+    let caption_len = caption.chars().count();
+    let caption_font = if caption_len <= 200 {
+        38
+    } else if caption_len <= 400 {
+        30
+    } else if caption_len <= 700 {
+        24
+    } else {
+        19
+    };
+    let tag_font = (caption_font as f32 * 0.68) as u32;
+    // Vertical padding shrinks for longer text to maximise usable card height.
+    let card_padding = if caption_len <= 400 { 64 } else { 40 };
+    let body_padding = if caption_len <= 400 { 72 } else { 48 };
 
     format!(
         r#"<!DOCTYPE html>
@@ -54,23 +70,26 @@ fn build_post_html(caption: &str, hashtags: &[String]) -> String {
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
-    width: 1080px; height: 1080px; overflow: hidden;
+    width: {width}px; height: {height}px; overflow: hidden;
     background: #0d1117;
     font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     display: flex; flex-direction: column;
     justify-content: center; align-items: center;
-    padding: 72px; color: #e6edf3;
+    padding: {body_padding}px; color: #e6edf3;
   }}
   .card {{
-    width: 100%; background: #161b22;
+    width: 100%;
+    max-height: calc({height}px - {body_padding}px * 2);
+    overflow: hidden;
+    background: #161b22;
     border: 1px solid #21262d; border-radius: 20px;
-    padding: 64px; display: flex; flex-direction: column; gap: 36px;
+    padding: {card_padding}px; display: flex; flex-direction: column; gap: 28px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   }}
-  .caption {{ font-size: 38px; line-height: 1.55; color: #e6edf3; font-weight: 400; }}
-  .divider {{ height: 1px; background: #21262d; }}
-  .tags {{ display: flex; flex-wrap: wrap; gap: 14px; }}
-  .tag {{ font-size: 26px; color: #3ddc84; font-weight: 500; }}
+  .caption {{ font-size: {caption_font}px; line-height: 1.55; color: #e6edf3; font-weight: 400; overflow: hidden; }}
+  .divider {{ height: 1px; flex-shrink: 0; background: #21262d; }}
+  .tags {{ display: flex; flex-wrap: wrap; gap: 12px; flex-shrink: 0; }}
+  .tag {{ font-size: {tag_font}px; color: #3ddc84; font-weight: 500; }}
   .branding {{
     position: absolute; bottom: 44px; right: 64px;
     font-size: 22px; color: #3ddc84; opacity: 0.75;
@@ -92,7 +111,13 @@ fn build_post_html(caption: &str, hashtags: &[String]) -> String {
     )
 }
 
-fn build_code_html(code: &str, language: &str, filename: Option<&str>) -> String {
+fn build_code_html(
+    code: &str,
+    language: &str,
+    filename: Option<&str>,
+    width: u32,
+    height: u32,
+) -> String {
     let code_escaped = html_escape(code);
     let file_label = html_escape(filename.unwrap_or(language));
     let lang_label = html_escape(language);
@@ -110,7 +135,7 @@ fn build_code_html(code: &str, language: &str, filename: Option<&str>) -> String
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
-    width: 1080px; height: 1080px; overflow: hidden;
+    width: {width}px; height: {height}px; overflow: hidden;
     background: #0d1117;
     display: flex; align-items: center; justify-content: center;
     padding: 64px;
@@ -170,7 +195,7 @@ fn build_code_html(code: &str, language: &str, filename: Option<&str>) -> String
     )
 }
 
-fn build_terminal_html(command: &str, output: Option<&str>) -> String {
+fn build_terminal_html(command: &str, output: Option<&str>, width: u32, height: u32) -> String {
     let cmd_escaped = html_escape(command);
     let output_html = output
         .filter(|o| !o.trim().is_empty())
@@ -195,7 +220,7 @@ fn build_terminal_html(command: &str, output: Option<&str>) -> String {
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
-    width: 1080px; height: 1080px; overflow: hidden;
+    width: {width}px; height: {height}px; overflow: hidden;
     background: #0d1117;
     display: flex; align-items: center; justify-content: center;
     padding: 64px; font-family: "Consolas", "Courier New", monospace;
@@ -331,29 +356,54 @@ fn build_carousel_slide_html(slide: &CarouselSlide) -> String {
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
-/// Render caption + hashtags to 1080×1080 PNG. Returns base64 data URL.
+/// Render caption + hashtags to PNG at given dimensions. Returns base64 data URL.
 #[tauri::command]
-pub async fn render_post_image(caption: String, hashtags: Vec<String>) -> Result<String, String> {
-    render_to_base64(&build_post_html(&caption, &hashtags)).await
+pub async fn render_post_image(
+    caption: String,
+    hashtags: Vec<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> Result<String, String> {
+    let w = width.unwrap_or(1080);
+    let h = height.unwrap_or(1080);
+    render_to_base64(&build_post_html(&caption, &hashtags, w, h), w, h).await
 }
 
-/// Render a code snippet card to 1080×1080 PNG. Returns base64 data URL.
+/// Render a code snippet card to PNG at given dimensions. Returns base64 data URL.
 #[tauri::command]
 pub async fn render_code_image(
     code: String,
     language: String,
     filename: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
 ) -> Result<String, String> {
-    render_to_base64(&build_code_html(&code, &language, filename.as_deref())).await
+    let w = width.unwrap_or(1080);
+    let h = height.unwrap_or(1080);
+    render_to_base64(
+        &build_code_html(&code, &language, filename.as_deref(), w, h),
+        w,
+        h,
+    )
+    .await
 }
 
-/// Render a terminal mockup to 1080×1080 PNG. Returns base64 data URL.
+/// Render a terminal mockup to PNG at given dimensions. Returns base64 data URL.
 #[tauri::command]
 pub async fn render_terminal_image(
     command: String,
     output: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
 ) -> Result<String, String> {
-    render_to_base64(&build_terminal_html(&command, output.as_deref())).await
+    let w = width.unwrap_or(1080);
+    let h = height.unwrap_or(1080);
+    render_to_base64(
+        &build_terminal_html(&command, output.as_deref(), w, h),
+        w,
+        h,
+    )
+    .await
 }
 
 /// Render each carousel slide to PNG. Returns Vec of base64 data URLs (same order as input).
@@ -361,7 +411,7 @@ pub async fn render_terminal_image(
 pub async fn render_carousel_slides(slides: Vec<CarouselSlide>) -> Result<Vec<String>, String> {
     let mut images = Vec::with_capacity(slides.len());
     for slide in &slides {
-        let data_url = render_to_base64(&build_carousel_slide_html(slide)).await?;
+        let data_url = render_to_base64(&build_carousel_slide_html(slide), 1080, 1080).await?;
         images.push(data_url);
     }
     Ok(images)

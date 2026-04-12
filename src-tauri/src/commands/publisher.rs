@@ -6,32 +6,78 @@ use crate::state::AppState;
 
 const IG_API: &str = "https://graph.instagram.com/v21.0";
 const IMGBB_API: &str = "https://api.imgbb.com/1/upload";
+const CATBOX_API: &str = "https://catbox.moe/user/api.php";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PublishResult {
     pub post_id: i64,
-    pub ig_media_id: String,
+    /// Platform-specific media ID or post URN (Instagram media ID, LinkedIn ugcPost URN, etc.)
+    pub media_id: String,
     pub published_at: String,
 }
 
-// ── Image upload (imgbb) ───────────────────────────────────────────────────
+// ── Image upload helpers ───────────────────────────────────────────────────
+
+/// Decode an image source (base64 data URL or file path) to raw bytes.
+fn decode_image_bytes(image_source: &str) -> Result<Vec<u8>, String> {
+    if let Some(b64) = image_source.strip_prefix("data:image/png;base64,") {
+        STANDARD
+            .decode(b64)
+            .map_err(|e| format!("Base64 decode error: {e}"))
+    } else {
+        std::fs::read(image_source)
+            .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))
+    }
+}
+
+/// Upload an image to catbox.moe (no API key required).
+/// Returns the public URL, e.g. `https://files.catbox.moe/xxxxxx.png`.
+async fn upload_image_to_catbox(image_source: &str) -> Result<String, String> {
+    let bytes = decode_image_bytes(image_source)?;
+
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name("image.png")
+        .mime_str("image/png")
+        .map_err(|e| format!("Catbox mime error: {e}"))?;
+
+    let form = reqwest::multipart::Form::new()
+        .text("reqtype", "fileupload")
+        .part("fileToUpload", part);
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(CATBOX_API)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Catbox network error: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Catbox upload failed: HTTP {}", resp.status()));
+    }
+
+    let url = resp
+        .text()
+        .await
+        .map_err(|e| format!("Catbox response error: {e}"))?;
+    let url = url.trim().to_string();
+
+    if url.starts_with("https://") {
+        Ok(url)
+    } else {
+        Err(format!("Catbox returned unexpected response: {url}"))
+    }
+}
 
 /// Upload an image to imgbb and return the public URL.
 /// `image_source` can be either:
 ///   - a local file path (absolute)
 ///   - a base64 data URL (`data:image/png;base64,...`) — as returned by the render pipeline
 async fn upload_image_to_imgbb(image_source: &str, api_key: &str) -> Result<String, String> {
-    // If the render pipeline already gave us a base64 data URL, reuse it directly.
-    // Otherwise fall back to reading from disk (future-proofing for saved files).
-    let b64 = if let Some(b64_part) = image_source.strip_prefix("data:image/png;base64,") {
-        b64_part.to_string()
-    } else {
-        let bytes = std::fs::read(image_source)
-            .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))?;
-        STANDARD.encode(&bytes)
-    };
+    let bytes = decode_image_bytes(image_source)?;
+    let b64 = STANDARD.encode(&bytes);
 
     #[derive(Deserialize)]
     struct ImgbbData {
@@ -174,13 +220,19 @@ pub async fn publish_post(
     // 3. Get access token (never leaves Rust)
     let access_token = crate::token_store::get_token(&account.token_key)?;
 
-    // 4. Get imgbb API key
-    let imgbb_key = crate::db::settings_db::get(&state.db, "imgbb_api_key")
+    // 4. Upload image → get public URL (provider: catbox by default, imgbb if configured)
+    let image_host = crate::db::settings_db::get(&state.db, "image_host")
         .await
-        .ok_or("imgbb API key not configured. Add it in Settings → Publication.")?;
+        .unwrap_or_else(|| "catbox".to_string());
 
-    // 5. Upload image to imgbb → get public URL
-    let image_url = upload_image_to_imgbb(image_path, &imgbb_key).await?;
+    let image_url = if image_host == "imgbb" {
+        let key = crate::db::settings_db::get(&state.db, "imgbb_api_key")
+            .await
+            .ok_or("Clé imgbb non configurée. Ajoute-la dans Paramètres → Publication.")?;
+        upload_image_to_imgbb(image_path, &key).await?
+    } else {
+        upload_image_to_catbox(image_path).await?
+    };
 
     // 6. Build caption with hashtags
     let hashtags_str = post
@@ -200,7 +252,7 @@ pub async fn publish_post(
         create_ig_container(&account.user_id, &image_url, &full_caption, &access_token).await?;
 
     // 8. Publish the container
-    let ig_media_id = publish_ig_container(&account.user_id, &container_id, &access_token).await?;
+    let media_id = publish_ig_container(&account.user_id, &container_id, &access_token).await?;
 
     // 9. Update post status in SQLite
     let published_at = Utc::now().to_rfc3339();
@@ -209,13 +261,13 @@ pub async fn publish_post(
         post_id,
         "published",
         Some(&published_at),
-        Some(&ig_media_id),
+        Some(&media_id),
     )
     .await?;
 
     Ok(PublishResult {
         post_id,
-        ig_media_id,
+        media_id,
         published_at,
     })
 }
@@ -237,7 +289,27 @@ pub async fn get_imgbb_key_status(state: tauri::State<'_, AppState>) -> Result<b
         .is_some())
 }
 
-/// Store an image (base64 data URL or file path) on the draft so publish_post can find it.
+/// Save the image host provider ("catbox" | "imgbb").
+#[tauri::command]
+pub async fn save_image_host(
+    provider: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if provider != "catbox" && provider != "imgbb" {
+        return Err(format!("Invalid image host provider: {provider}"));
+    }
+    crate::db::settings_db::set(&state.db, "image_host", &provider).await
+}
+
+/// Get the configured image host provider (defaults to "catbox" if not set).
+#[tauri::command]
+pub async fn get_image_host(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    Ok(crate::db::settings_db::get(&state.db, "image_host")
+        .await
+        .unwrap_or_else(|| "catbox".to_string()))
+}
+
+/// Store an image (base64 data URL or file path) on the draft so publish commands can find it.
 #[tauri::command]
 pub async fn update_draft_image(
     post_id: i64,
@@ -245,4 +317,120 @@ pub async fn update_draft_image(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     crate::db::history::update_image_path(&state.db, post_id, &image_path).await
+}
+
+// ── LinkedIn publisher ────────────────────────────────────────────────────
+
+/// Publish a draft post to LinkedIn (text-only or with image).
+///
+/// LinkedIn specifics:
+///   - No imgbb needed — image uploaded directly as binary via registerUpload → PUT
+///   - Hashtags embedded in the post text (LinkedIn has no separate hashtag field, max 5)
+///   - Image format: PNG or JPEG, max 10 MB
+///   - Author URN built from account.user_id (the LinkedIn profile ID)
+#[tauri::command]
+pub async fn publish_linkedin_post(
+    post_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<PublishResult, String> {
+    // 1. Load the draft
+    let post = crate::db::history::get_by_id(&state.db, post_id).await?;
+
+    if post.status == "published" {
+        return Err("This post is already published".to_string());
+    }
+
+    // 2. Get connected LinkedIn account
+    let accounts = crate::db::accounts::list(&state.db).await?;
+    let account = accounts
+        .iter()
+        .find(|a| a.provider == "linkedin")
+        .ok_or("No LinkedIn account connected. Connect one in Settings → Comptes.")?;
+
+    // 3. Access token (never leaves Rust)
+    let access_token = crate::token_store::get_token(&account.token_key)?;
+
+    // 4. Build text — hashtags embedded, capped at 5 per LinkedIn rules.
+    // Sanitize each tag: keep only alphanumeric + underscore to prevent control-char injection.
+    let hashtags_str = post
+        .hashtags
+        .iter()
+        .take(5)
+        .map(|h| {
+            let clean: String = h
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            format!("#{clean}")
+        })
+        .filter(|t| t.len() > 1) // skip tags that became empty after sanitization
+        .collect::<Vec<_>>()
+        .join(" ");
+    let full_text = if hashtags_str.is_empty() {
+        post.caption.clone()
+    } else {
+        format!("{}\n\n{}", post.caption, hashtags_str)
+    };
+
+    // 5. Publish — with or without image
+    const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024; // LinkedIn hard limit: 10 MB
+
+    let post_urn = if let Some(image_source) = post.image_path.as_deref() {
+        // Decode image bytes from data URL or file path, enforcing the 10 MB limit.
+        let image_bytes = if let Some(b64) = image_source.strip_prefix("data:image/png;base64,") {
+            // base64 overhead: encoded len × 3/4 ≈ decoded len
+            if b64.len() * 3 / 4 > MAX_IMAGE_BYTES {
+                return Err("Image exceeds LinkedIn 10 MB limit".to_string());
+            }
+            STANDARD
+                .decode(b64)
+                .map_err(|e| format!("Failed to decode base64 image: {e}"))?
+        } else {
+            let meta = std::fs::metadata(image_source)
+                .map_err(|e| format!("Cannot stat image file '{image_source}': {e}"))?;
+            if meta.len() > MAX_IMAGE_BYTES as u64 {
+                return Err("Image exceeds LinkedIn 10 MB limit".to_string());
+            }
+            std::fs::read(image_source)
+                .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))?
+        };
+
+        // Step 1: Register upload → upload URL + asset URN
+        let (upload_url, asset_urn) =
+            crate::adapters::linkedin::register_image_upload(&account.user_id, &access_token)
+                .await?;
+
+        // Step 2: Upload binary
+        crate::adapters::linkedin::upload_image_binary(&upload_url, &image_bytes, &access_token)
+            .await?;
+
+        // Step 3: Publish ugcPost with image
+        crate::adapters::linkedin::publish_image(
+            &account.user_id,
+            &full_text,
+            &asset_urn,
+            &access_token,
+        )
+        .await?
+    } else {
+        // Text-only post
+        crate::adapters::linkedin::publish_text(&account.user_id, &full_text, &access_token).await?
+    };
+
+    // 6. Update post status in SQLite
+    let published_at = Utc::now().to_rfc3339();
+    crate::db::history::update_status(
+        &state.db,
+        post_id,
+        "published",
+        Some(&published_at),
+        Some(&post_urn),
+    )
+    .await?;
+
+    Ok(PublishResult {
+        post_id,
+        media_id: post_urn,
+        published_at,
+    })
 }

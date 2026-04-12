@@ -61,6 +61,6 @@ export async function generateCarousel(
   return invoke<CarouselSlide[]>("generate_carousel", {
     brief,
     network,
-    slide_count: slideCount,
+    slideCount,
   });
 }

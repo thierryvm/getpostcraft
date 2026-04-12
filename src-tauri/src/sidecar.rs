@@ -72,6 +72,10 @@ async fn run_sidecar(json_input: String, timeout_secs: u64) -> Result<String, St
     timeout(Duration::from_secs(timeout_secs), async move {
         let mut child = tokio::process::Command::new(PYTHON)
             .arg(&script)
+            // Force UTF-8 I/O on all platforms; 'replace' keeps us alive
+            // even if something slips through our sanitisation layer.
+            .env("PYTHONIOENCODING", "utf-8:replace")
+            .env("PYTHONUTF8", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

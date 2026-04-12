@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { useComposerStore } from "@/stores/composer.store";
 import { generateContent, generateVariants, saveDraft, scrapeUrlForBrief } from "@/lib/tauri/composer";
-import { NETWORK_META, type Network } from "@/types/composer.types";
+import { NETWORK_META, FORMATS_BY_NETWORK, type Network } from "@/types/composer.types";
 
 const briefSchema = z.object({
   brief: z
@@ -28,7 +28,7 @@ const briefSchema = z.object({
 type BriefFormData = z.infer<typeof briefSchema>;
 
 export function BriefForm() {
-  const { brief, network, isLoading, error, setBrief, setNetwork, setResult, setVariants, setIsLoading, setError, setDraftId } =
+  const { brief, network, imageFormat, isLoading, error, setBrief, setNetwork, setImageFormat, setResult, setVariants, setIsLoading, setError, setDraftId } =
     useComposerStore();
 
   const [inputMode, setInputMode] = useState<"text" | "url">("text");
@@ -112,14 +112,20 @@ export function BriefForm() {
         </p>
       </div>
 
-      {/* Network select */}
+      {/* Network + Format selectors */}
       <div className="flex flex-col gap-1.5">
         <label className="text-sm font-medium text-foreground">Réseau</label>
         <Controller
           name="network"
           control={control}
           render={({ field }) => (
-            <Select value={field.value} onValueChange={field.onChange}>
+            <Select
+              value={field.value}
+              onValueChange={(val) => {
+                field.onChange(val);
+                setNetwork(val as Network);
+              }}
+            >
               <SelectTrigger className="w-48">
                 <SelectValue />
               </SelectTrigger>
@@ -138,6 +144,30 @@ export function BriefForm() {
             </Select>
           )}
         />
+      </div>
+
+      {/* Image format selector */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-foreground">Format image</label>
+        <div className="flex flex-wrap gap-1.5">
+          {FORMATS_BY_NETWORK[network].map((fmt) => (
+            <button
+              key={fmt.id}
+              type="button"
+              onClick={() => setImageFormat(fmt)}
+              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${
+                imageFormat.id === fmt.id
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:text-foreground hover:border-border/80"
+              }`}
+            >
+              <span>{fmt.label}</span>
+              <span className={`text-[10px] ${imageFormat.id === fmt.id ? "text-primary/70" : "text-muted-foreground/60"}`}>
+                {fmt.width}×{fmt.height}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Brief / URL toggle */}

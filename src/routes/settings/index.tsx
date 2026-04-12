@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AiKeyForm } from "@/components/settings/AiKeyForm";
 import { AccountsForm } from "@/components/settings/AccountsForm";
+import { PublicationForm } from "@/components/settings/PublicationForm";
 import { AboutSection } from "@/components/settings/AboutSection";
 
 export function SettingsPage() {
@@ -26,6 +27,7 @@ export function SettingsPage() {
         <TabsList>
           <TabsTrigger value="ai">Intelligence Artificielle</TabsTrigger>
           <TabsTrigger value="accounts">Comptes</TabsTrigger>
+          <TabsTrigger value="publication">Publication</TabsTrigger>
           <TabsTrigger value="about">À propos</TabsTrigger>
         </TabsList>
 
@@ -58,6 +60,20 @@ export function SettingsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+        <TabsContent value="publication" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Hébergement des images</CardTitle>
+              <CardDescription>
+                Service utilisé pour héberger temporairement les images avant publication sur Instagram.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <PublicationForm />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="about" className="mt-4">
           <Card>
             <CardHeader>
