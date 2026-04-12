@@ -213,7 +213,7 @@ Retourne UNIQUEMENT ce JSON — sans markdown, sans explication, rien d'autre :
 
 ═══ LE HOOK (caractères 1-140) — DÉCISIF ═══
 
-LinkedIn coupe après ~140 chars. Le hook doit arrêter le scroll. Formules éprouvées :
+LinkedIn coupe après ~210 chars sur mobile. Le hook doit arrêter le scroll. Formules éprouvées :
 
 1. Leçon durement apprise : "J'ai perdu 6h sur un incident prod. La cause : une config nginx que personne n'avait touchée depuis 2 ans."
 2. Contre-intuitif : "Plus tu automatises, plus tu as besoin de comprendre ce que tu automatises. La plupart des DevOps font l'inverse."
