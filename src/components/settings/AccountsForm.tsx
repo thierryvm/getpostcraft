@@ -194,29 +194,54 @@ export function AccountsForm() {
             <div className="flex flex-col gap-2">
               <Label className="text-xs text-muted-foreground">
                 Meta App ID
-                {appId && (
-                  <span className="ml-1 text-primary">✓ configuré</span>
-                )}
+                {appId && <span className="ml-1 text-primary">✓ configuré</span>}
               </Label>
-              <div className="flex gap-2">
-                <Input
-                  placeholder={appId || "876077775447670"}
-                  value={appIdInput}
-                  onChange={(e) => setAppIdInput(e.target.value)}
-                  className="font-mono text-sm"
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!appIdInput.trim() || saveAppId.isPending}
-                  onClick={() => {
-                    saveAppId.mutate(appIdInput.trim());
-                    setAppIdInput("");
-                  }}
-                >
-                  {saveAppId.isPending ? "…" : "Enregistrer"}
-                </Button>
-              </div>
+              {appId && appIdInput === "" ? (
+                <div className="flex gap-2">
+                  <Input
+                    value={appId}
+                    readOnly
+                    className="font-mono text-sm bg-muted/30 cursor-text select-all"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAppIdInput(appId)}
+                  >
+                    Modifier
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="876077775447670"
+                    value={appIdInput}
+                    onChange={(e) => setAppIdInput(e.target.value)}
+                    className="font-mono text-sm"
+                    autoFocus={!!appId}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!appIdInput.trim() || saveAppId.isPending}
+                    onClick={() => {
+                      saveAppId.mutate(appIdInput.trim());
+                      setAppIdInput("");
+                    }}
+                  >
+                    {saveAppId.isPending ? "…" : "Enregistrer"}
+                  </Button>
+                  {appId && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setAppIdInput("")}
+                    >
+                      Annuler
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Client Secret configuration */}
@@ -366,29 +391,54 @@ export function AccountsForm() {
             <div className="flex flex-col gap-2">
               <Label className="text-xs text-muted-foreground">
                 LinkedIn Client ID
-                {savedLiClientId && (
-                  <span className="ml-1 text-primary">✓ configuré</span>
-                )}
+                {savedLiClientId && <span className="ml-1 text-primary">✓ configuré</span>}
               </Label>
-              <div className="flex gap-2">
-                <Input
-                  placeholder={savedLiClientId ?? "86xxxxxxxxxxxxxxxx"}
-                  value={liClientIdInput}
-                  onChange={(e) => setLiClientIdInput(e.target.value)}
-                  className="font-mono text-sm"
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!liClientIdInput.trim() || saveLiClientId.isPending}
-                  onClick={() => {
-                    saveLiClientId.mutate(liClientIdInput.trim());
-                    setLiClientIdInput("");
-                  }}
-                >
-                  {saveLiClientId.isPending ? "…" : "Enregistrer"}
-                </Button>
-              </div>
+              {savedLiClientId && liClientIdInput === "" ? (
+                <div className="flex gap-2">
+                  <Input
+                    value={savedLiClientId}
+                    readOnly
+                    className="font-mono text-sm bg-muted/30 cursor-text select-all"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLiClientIdInput(savedLiClientId)}
+                  >
+                    Modifier
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="86xxxxxxxxxxxxxxxx"
+                    value={liClientIdInput}
+                    onChange={(e) => setLiClientIdInput(e.target.value)}
+                    className="font-mono text-sm"
+                    autoFocus={!!savedLiClientId}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!liClientIdInput.trim() || saveLiClientId.isPending}
+                    onClick={() => {
+                      saveLiClientId.mutate(liClientIdInput.trim());
+                      setLiClientIdInput("");
+                    }}
+                  >
+                    {saveLiClientId.isPending ? "…" : "Enregistrer"}
+                  </Button>
+                  {savedLiClientId && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setLiClientIdInput("")}
+                    >
+                      Annuler
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Client Secret — write-only */}
