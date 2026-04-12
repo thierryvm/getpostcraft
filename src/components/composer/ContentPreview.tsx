@@ -682,8 +682,8 @@ export function ContentPreview() {
 
           {template !== "carousel" && (
             imageUrl ? (
-              <div className="rounded-lg overflow-hidden border border-border flex justify-center items-center bg-[#0d1117] p-2">
-                <img src={imageUrl} alt="Visuel post" className="max-h-96 max-w-full object-contain rounded" />
+              <div className="rounded-lg overflow-hidden border border-border">
+                <img src={imageUrl} alt="Visuel post" className="w-full h-auto block" />
               </div>
             ) : !renderError && !isRendering ? (
               <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border">
