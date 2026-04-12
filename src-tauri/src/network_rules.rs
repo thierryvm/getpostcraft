@@ -60,6 +60,122 @@ Règles des hashtags :
 - Exactement 5 entrées, en minuscules, sans symbole #, sans espaces
 - Mélange niche (#neovim, #archlinux) et large (#linux, #terminal)"#;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_system_prompt_instagram_is_default() {
+        let p = get_system_prompt("instagram");
+        assert!(
+            p.contains("@terminallearning"),
+            "Instagram prompt must mention account"
+        );
+        assert!(p.contains("caption"), "must include caption instruction");
+        assert!(p.contains("hashtags"), "must include hashtag instruction");
+    }
+
+    #[test]
+    fn get_system_prompt_unknown_network_falls_back_to_instagram() {
+        let unknown = get_system_prompt("tiktok");
+        let instagram = get_system_prompt("instagram");
+        assert_eq!(
+            unknown, instagram,
+            "unknown networks must fall back to Instagram"
+        );
+    }
+
+    #[test]
+    fn get_system_prompt_linkedin_differs_from_instagram() {
+        let li = get_system_prompt("linkedin");
+        let ig = get_system_prompt("instagram");
+        assert_ne!(li, ig, "LinkedIn and Instagram prompts must be different");
+        assert!(
+            li.contains("LinkedIn"),
+            "LinkedIn prompt must mention LinkedIn"
+        );
+    }
+
+    #[test]
+    fn get_variant_prompt_contains_base_prompt() {
+        let base = get_system_prompt("instagram");
+        let variant = get_variant_prompt("instagram", "educational");
+        assert!(
+            variant.contains(base),
+            "variant prompt must contain the base prompt"
+        );
+    }
+
+    #[test]
+    fn get_variant_prompt_educational_tone() {
+        let p = get_variant_prompt("instagram", "educational");
+        assert!(
+            p.to_lowercase().contains("pédagogique") || p.to_lowercase().contains("educational"),
+            "educational tone must be present"
+        );
+    }
+
+    #[test]
+    fn get_variant_prompt_casual_tone() {
+        let p = get_variant_prompt("instagram", "casual");
+        assert!(
+            p.to_lowercase().contains("décontracté") || p.to_lowercase().contains("casual"),
+            "casual tone must be present"
+        );
+    }
+
+    #[test]
+    fn get_variant_prompt_punchy_tone() {
+        let p = get_variant_prompt("instagram", "punchy");
+        assert!(
+            p.to_lowercase().contains("percutant") || p.to_lowercase().contains("punchy"),
+            "punchy tone must be present"
+        );
+    }
+
+    #[test]
+    fn get_variant_prompt_unknown_tone_falls_back_gracefully() {
+        let p = get_variant_prompt("instagram", "unknown_tone");
+        // Must not panic, must still contain base prompt
+        let base = get_system_prompt("instagram");
+        assert!(p.contains(base));
+    }
+
+    #[test]
+    fn get_carousel_prompt_contains_slide_count() {
+        let p = get_carousel_prompt("instagram", 5);
+        assert!(p.contains("5"), "must mention slide count");
+    }
+
+    #[test]
+    fn get_carousel_prompt_json_format_instruction() {
+        let p = get_carousel_prompt("instagram", 3);
+        assert!(p.contains("JSON"), "must instruct JSON output");
+        assert!(p.contains("emoji"), "must include emoji field");
+        assert!(p.contains("title"), "must include title field");
+        assert!(p.contains("body"), "must include body field");
+    }
+
+    #[test]
+    fn system_prompt_forbids_markdown_in_output() {
+        let p = get_system_prompt("instagram");
+        // The prompt must explicitly forbid markdown to avoid renderer injection
+        assert!(
+            p.contains("markdown") || p.contains("backtick") || p.contains("astérisque"),
+            "Instagram prompt must explicitly forbid markdown formatting"
+        );
+    }
+
+    #[test]
+    fn system_prompt_requires_json_only_output() {
+        let p = get_system_prompt("instagram");
+        assert!(
+            p.contains("UNIQUEMENT") || p.contains("ONLY") || p.contains("without"),
+            "prompt must enforce JSON-only output to prevent injection"
+        );
+    }
+}
+
 const LINKEDIN_PROMPT: &str = r#"You are an expert LinkedIn content creator for a technical professional in DevOps/Linux.
 
 Generate a post and exactly 5 relevant hashtags based on the user's brief.

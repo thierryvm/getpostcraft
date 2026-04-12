@@ -4,6 +4,7 @@ use sqlx::{
 };
 use std::str::FromStr;
 
+pub mod accounts;
 pub mod history;
 pub mod settings_db;
 

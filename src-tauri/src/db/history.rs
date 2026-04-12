@@ -12,6 +12,8 @@ pub struct PostRecord {
     pub created_at: String,
     pub published_at: Option<String>,
     pub scheduled_at: Option<String>,
+    pub image_path: Option<String>,
+    pub ig_media_id: Option<String>,
 }
 
 pub async fn insert_draft(
@@ -19,27 +21,63 @@ pub async fn insert_draft(
     network: &str,
     caption: &str,
     hashtags: &[String],
+    image_path: Option<&str>,
 ) -> Result<i64, String> {
     let hashtags_json = serde_json::to_string(hashtags).map_err(|e| e.to_string())?;
     let now = Utc::now().to_rfc3339();
 
     sqlx::query(
-        "INSERT INTO post_history (network, caption, hashtags, status, created_at)
-         VALUES (?, ?, ?, 'draft', ?)",
+        "INSERT INTO post_history (network, caption, hashtags, status, created_at, image_path)
+         VALUES (?, ?, ?, 'draft', ?, ?)",
     )
     .bind(network)
     .bind(caption)
     .bind(&hashtags_json)
     .bind(&now)
+    .bind(image_path)
     .execute(pool)
     .await
     .map(|r| r.last_insert_rowid())
     .map_err(|e| e.to_string())
 }
 
+pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<PostRecord, String> {
+    let row = sqlx::query(
+        "SELECT id, network, caption, hashtags, status, created_at, published_at,
+                scheduled_at, image_path, ig_media_id
+         FROM post_history WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| format!("Post {id} not found"))?;
+    row_to_post_record(&row)
+}
+
+pub async fn update_status(
+    pool: &SqlitePool,
+    id: i64,
+    status: &str,
+    published_at: Option<&str>,
+    ig_media_id: Option<&str>,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE post_history SET status = ?, published_at = ?, ig_media_id = ? WHERE id = ?",
+    )
+    .bind(status)
+    .bind(published_at)
+    .bind(ig_media_id)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
 pub async fn list_recent(pool: &SqlitePool, limit: i64) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
-        "SELECT id, network, caption, hashtags, status, created_at, published_at
+        "SELECT id, network, caption, hashtags, status, created_at, published_at,
+                scheduled_at, image_path, ig_media_id
          FROM post_history ORDER BY created_at DESC LIMIT ?",
     )
     .bind(limit)
@@ -57,7 +95,8 @@ pub async fn list_in_range(
     to: &str,
 ) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
-        "SELECT id, network, caption, hashtags, status, created_at, published_at, scheduled_at
+        "SELECT id, network, caption, hashtags, status, created_at, published_at,
+                scheduled_at, image_path, ig_media_id
          FROM post_history
          WHERE (scheduled_at IS NOT NULL AND scheduled_at BETWEEN ? AND ?)
             OR (scheduled_at IS NULL AND created_at BETWEEN ? AND ?)
@@ -72,6 +111,17 @@ pub async fn list_in_range(
     .map_err(|e| e.to_string())?;
 
     rows.iter().map(row_to_post_record).collect()
+}
+
+/// Attach an image path (or base64 data URL) to a post.
+pub async fn update_image_path(pool: &SqlitePool, id: i64, image_path: &str) -> Result<(), String> {
+    sqlx::query("UPDATE post_history SET image_path = ? WHERE id = ?")
+        .bind(image_path)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Set (or clear) the scheduled_at date for a post.
@@ -89,6 +139,43 @@ pub async fn set_scheduled_at(
         .map_err(|e| e.to_string())
 }
 
+/// Delete a post by id.
+pub async fn delete_post(pool: &SqlitePool, id: i64) -> Result<(), String> {
+    sqlx::query("DELETE FROM post_history WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Update caption and hashtags for a draft post.
+/// Returns an error if the post is not in draft status.
+pub async fn update_draft_content(
+    pool: &SqlitePool,
+    id: i64,
+    caption: &str,
+    hashtags: &[String],
+) -> Result<(), String> {
+    let hashtags_json = serde_json::to_string(hashtags).map_err(|e| e.to_string())?;
+    let rows_affected = sqlx::query(
+        "UPDATE post_history SET caption = ?, hashtags = ? WHERE id = ? AND status = 'draft'",
+    )
+    .bind(caption)
+    .bind(&hashtags_json)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected())
+    .map_err(|e| e.to_string())?;
+
+    if rows_affected == 0 {
+        Err("Post not found or not a draft".to_string())
+    } else {
+        Ok(())
+    }
+}
+
 fn row_to_post_record(r: &SqliteRow) -> Result<PostRecord, String> {
     let hashtags_str: String = r.try_get("hashtags").map_err(|e| e.to_string())?;
     let hashtags: Vec<String> = serde_json::from_str(&hashtags_str).unwrap_or_default();
@@ -101,5 +188,7 @@ fn row_to_post_record(r: &SqliteRow) -> Result<PostRecord, String> {
         created_at: r.try_get("created_at").map_err(|e| e.to_string())?,
         published_at: r.try_get("published_at").map_err(|e| e.to_string())?,
         scheduled_at: r.try_get("scheduled_at").map_err(|e| e.to_string())?,
+        image_path: r.try_get("image_path").map_err(|e| e.to_string())?,
+        ig_media_id: r.try_get("ig_media_id").map_err(|e| e.to_string())?,
     })
 }

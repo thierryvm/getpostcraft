@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Calendar, CalendarDays, Loader2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar, CalendarDays, Loader2, X, Pencil, Trash2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { getCalendarPosts, schedulePost, unschedulePost } from "@/lib/tauri/calendar";
+import { Textarea } from "@/components/ui/textarea";
+import { getCalendarPosts, schedulePost, unschedulePost, deletePost, updatePostDraft } from "@/lib/tauri/calendar";
 import type { PostRecord } from "@/types/composer.types";
 import { NETWORK_META } from "@/types/composer.types";
 import { cn } from "@/lib/utils";
@@ -75,12 +76,24 @@ function PostModal({
   post,
   onClose,
   onUnschedule,
+  onDelete,
+  onUpdate,
 }: {
   post: PostRecord;
   onClose: () => void;
   onUnschedule: (id: number) => void;
+  onDelete: (id: number) => void;
+  onUpdate: (updated: PostRecord) => void;
 }) {
   const [isRemoving, setIsRemoving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editCaption, setEditCaption] = useState(post.caption);
+  const [editHashtags, setEditHashtags] = useState(post.hashtags.join(" "));
+
+  const isDraft = post.status === "draft";
 
   const handleUnschedule = async () => {
     setIsRemoving(true);
@@ -92,16 +105,43 @@ function PostModal({
     }
   };
 
+  const handleDelete = async () => {
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setIsDeleting(true);
+    try {
+      await deletePost(post.id);
+      onDelete(post.id);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleSaveEdit = async () => {
+    const hashtags = editHashtags
+      .split(/[\s,]+/)
+      .map((t) => t.replace(/^#/, "").trim())
+      .filter(Boolean);
+    setIsSaving(true);
+    try {
+      await updatePostDraft(post.id, editCaption, hashtags);
+      onUpdate({ ...post, caption: editCaption, hashtags });
+      setIsEditing(false);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={onClose}
+      onClick={() => { if (!isEditing) onClose(); }}
     >
       <Card
         className="w-full max-w-md mx-4"
         onClick={(e) => e.stopPropagation()}
       >
         <CardContent className="pt-5 pb-4 flex flex-col gap-3">
+          {/* Header row */}
           <div className="flex items-start justify-between gap-2">
             <span
               className={cn(
@@ -119,33 +159,115 @@ function PostModal({
               <X className="h-4 w-4" />
             </button>
           </div>
-          <p className="text-sm text-foreground whitespace-pre-line leading-relaxed line-clamp-6">
-            {post.caption}
-          </p>
-          {post.hashtags.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {post.hashtags.map((t) => (
-                <span key={t} className="text-xs text-primary">#{t}</span>
-              ))}
+
+          {/* Caption — view or edit */}
+          {isEditing ? (
+            <div className="flex flex-col gap-2">
+              <Textarea
+                value={editCaption}
+                onChange={(e) => setEditCaption(e.target.value)}
+                className="text-sm min-h-28 resize-none"
+                autoFocus
+              />
+              <input
+                type="text"
+                value={editHashtags}
+                onChange={(e) => setEditHashtags(e.target.value)}
+                placeholder="hashtag1 hashtag2 …"
+                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+              />
             </div>
+          ) : (
+            <>
+              <p className="text-sm text-foreground whitespace-pre-line leading-relaxed line-clamp-6">
+                {post.caption}
+              </p>
+              {post.hashtags.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {post.hashtags.map((t) => (
+                    <span key={t} className="text-xs text-primary">#{t}</span>
+                  ))}
+                </div>
+              )}
+            </>
           )}
-          <div className="flex items-center justify-between pt-1 border-t border-border">
-            <span className="text-xs text-muted-foreground">
+
+          {/* Footer row */}
+          <div className="flex items-center justify-between pt-1 border-t border-border gap-2">
+            <span className="text-xs text-muted-foreground shrink-0">
               {post.scheduled_at
                 ? `Planifié · ${new Date(post.scheduled_at).toLocaleDateString("fr-FR")}`
                 : `Créé · ${new Date(post.created_at).toLocaleDateString("fr-FR")}`}
             </span>
-            {post.scheduled_at && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 text-xs text-destructive hover:text-destructive"
-                onClick={handleUnschedule}
-                disabled={isRemoving}
-              >
-                {isRemoving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Retirer"}
-              </Button>
-            )}
+
+            <div className="flex items-center gap-1">
+              {isEditing ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs"
+                    onClick={() => setIsEditing(false)}
+                    disabled={isSaving}
+                  >
+                    Annuler
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs text-primary hover:text-primary"
+                    onClick={handleSaveEdit}
+                    disabled={isSaving || !editCaption.trim()}
+                  >
+                    {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <><Check className="h-3 w-3 mr-1" />Sauvegarder</>}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {isDraft && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                      title="Modifier"
+                      onClick={() => { setIsEditing(true); setConfirmDelete(false); }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                  )}
+                  {post.scheduled_at && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={handleUnschedule}
+                      disabled={isRemoving}
+                    >
+                      {isRemoving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Retirer"}
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "h-6 text-xs",
+                      confirmDelete
+                        ? "text-destructive hover:text-destructive font-semibold"
+                        : "text-muted-foreground hover:text-destructive"
+                    )}
+                    onClick={handleDelete}
+                    disabled={isDeleting}
+                    title={confirmDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer"}
+                  >
+                    {isDeleting
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : confirmDelete
+                        ? "Confirmer ?"
+                        : <Trash2 className="h-3 w-3" />}
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -271,6 +393,16 @@ export function CalendarPage() {
   const handleUnschedule = (id: number) => {
     setPosts((prev) => prev.filter((p) => p.id !== id));
     setSelectedPost(null);
+  };
+
+  const handleDelete = (id: number) => {
+    setPosts((prev) => prev.filter((p) => p.id !== id));
+    setSelectedPost(null);
+  };
+
+  const handleUpdate = (updated: PostRecord) => {
+    setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    setSelectedPost(updated);
   };
 
   const handleScheduleDrop = async (postId: number, date: Date) => {
@@ -458,6 +590,8 @@ export function CalendarPage() {
           post={selectedPost}
           onClose={() => setSelectedPost(null)}
           onUnschedule={handleUnschedule}
+          onDelete={handleDelete}
+          onUpdate={handleUpdate}
         />
       )}
     </div>

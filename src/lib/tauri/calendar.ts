@@ -21,3 +21,17 @@ export async function schedulePost(
 export async function unschedulePost(postId: number): Promise<void> {
   return invoke("unschedule_post", { post_id: postId });
 }
+
+/** Delete a post permanently. */
+export async function deletePost(postId: number): Promise<void> {
+  return invoke("delete_post", { post_id: postId });
+}
+
+/** Update caption and hashtags of a draft post. */
+export async function updatePostDraft(
+  postId: number,
+  caption: string,
+  hashtags: string[]
+): Promise<void> {
+  return invoke("update_post_draft", { post_id: postId, caption, hashtags });
+}
