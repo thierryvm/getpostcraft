@@ -28,3 +28,13 @@ export function saveInstagramAppId(appId: string): Promise<void> {
 export function getInstagramAppId(): Promise<string | null> {
   return invoke<string | null>("get_instagram_app_id");
 }
+
+/** Store the Instagram app client_secret locally (never returned to renderer). */
+export function saveInstagramClientSecret(secret: string): Promise<void> {
+  return invoke<void>("save_instagram_client_secret", { secret });
+}
+
+/** Returns true if the client_secret has been configured. */
+export function getInstagramClientSecretStatus(): Promise<boolean> {
+  return invoke<boolean>("get_instagram_client_secret_status");
+}

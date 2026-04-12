@@ -113,6 +113,17 @@ pub async fn list_in_range(
     rows.iter().map(row_to_post_record).collect()
 }
 
+/// Attach an image path (or base64 data URL) to a post.
+pub async fn update_image_path(pool: &SqlitePool, id: i64, image_path: &str) -> Result<(), String> {
+    sqlx::query("UPDATE post_history SET image_path = ? WHERE id = ?")
+        .bind(image_path)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Set (or clear) the scheduled_at date for a post.
 pub async fn set_scheduled_at(
     pool: &SqlitePool,
@@ -126,6 +137,43 @@ pub async fn set_scheduled_at(
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Delete a post by id.
+pub async fn delete_post(pool: &SqlitePool, id: i64) -> Result<(), String> {
+    sqlx::query("DELETE FROM post_history WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Update caption and hashtags for a draft post.
+/// Returns an error if the post is not in draft status.
+pub async fn update_draft_content(
+    pool: &SqlitePool,
+    id: i64,
+    caption: &str,
+    hashtags: &[String],
+) -> Result<(), String> {
+    let hashtags_json = serde_json::to_string(hashtags).map_err(|e| e.to_string())?;
+    let rows_affected = sqlx::query(
+        "UPDATE post_history SET caption = ?, hashtags = ? WHERE id = ? AND status = 'draft'",
+    )
+    .bind(caption)
+    .bind(&hashtags_json)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected())
+    .map_err(|e| e.to_string())?;
+
+    if rows_affected == 0 {
+        Err("Post not found or not a draft".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn row_to_post_record(r: &SqliteRow) -> Result<PostRecord, String> {

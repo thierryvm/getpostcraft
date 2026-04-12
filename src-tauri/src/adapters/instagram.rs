@@ -11,9 +11,10 @@ pub struct InstagramUser {
 }
 
 /// Exchange an authorization code for an access token using PKCE.
-/// No client_secret required — PKCE provides the proof of authorization.
+/// Meta requires client_secret even when using PKCE (non-standard but enforced).
 pub async fn exchange_code(
     client_id: &str,
+    client_secret: &str,
     code: &str,
     code_verifier: &str,
     redirect_uri: &str,
@@ -34,6 +35,7 @@ pub async fn exchange_code(
         .post(TOKEN_URL)
         .form(&[
             ("client_id", client_id),
+            ("client_secret", client_secret),
             ("code", code),
             ("code_verifier", code_verifier),
             ("redirect_uri", redirect_uri),
