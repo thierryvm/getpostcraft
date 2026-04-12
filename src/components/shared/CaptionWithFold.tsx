@@ -37,7 +37,7 @@ export function CaptionWithFold({
         </span>
         <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
       </div>
-      <p className="text-sm text-muted-foreground/60 whitespace-pre-wrap leading-relaxed">{after}</p>
+      <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{after}</p>
     </div>
   );
 }
