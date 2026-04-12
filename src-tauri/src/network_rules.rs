@@ -66,7 +66,7 @@ LONGUEUR : vise 150-400 chars pour du contenu éducatif. Les captions de 1-50 ch
 
 STYLE :
 - Voix authentique communauté Linux/DevOps — parle comme un dev, pas comme un marketeur
-- 1 à 3 emojis max, placés naturellement (pas à chaque ligne)
+- AUCUN emoji — caractères français standard uniquement (lettres, chiffres, ponctuation courante)
 - TEXTE BRUT UNIQUEMENT — zéro markdown, zéro backticks, zéro astérisques, zéro tirets, zéro blocs de code
 - Les commandes s'écrivent en ligne sans formatage (ex : cat file | grep ERROR | sort)
 - Écris TOUJOURS en français
@@ -229,7 +229,7 @@ STYLE :
 - TEXTE BRUT UNIQUEMENT — zéro markdown, zéro backticks, zéro astérisques
 - Les commandes s'écrivent en ligne sans formatage (ex : kubectl get pods -n production)
 - Écris TOUJOURS en français
-- 0 à 2 emojis max — uniquement si naturels, jamais décoratifs
+- AUCUN emoji — caractères français standard uniquement (lettres, chiffres, ponctuation courante)
 
 ═══ RÈGLES HASHTAGS ═══
 - Entre 3 et 5 hashtags (3 = idéal ; 5 = maximum)
