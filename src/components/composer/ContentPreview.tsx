@@ -364,11 +364,13 @@ export function ContentPreview() {
               <CopyButton text={safeResult.caption} label="la caption" />
             </div>
           </div>
-          <CaptionWithFold
-            text={safeResult.caption}
-            foldLimit={foldLimit}
-            network={networkLabel}
-          />
+          <div className="max-h-48 overflow-y-auto rounded-md pr-1">
+            <CaptionWithFold
+              text={safeResult.caption}
+              foldLimit={foldLimit}
+              network={networkLabel}
+            />
+          </div>
         </div>
 
         <Separator />
@@ -606,7 +608,7 @@ export function ContentPreview() {
                 <img src={imageUrl} alt="Visuel post Instagram" className="max-h-72 w-auto object-contain" />
               </div>
             ) : !renderError && !isRendering ? (
-              <div className="flex h-12 items-center justify-center rounded-lg border border-dashed border-border">
+              <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border">
                 <p className="text-xs text-muted-foreground">Clique sur "Générer" pour créer le visuel</p>
               </div>
             ) : null
