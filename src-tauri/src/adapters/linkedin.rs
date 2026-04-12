@@ -199,13 +199,33 @@ pub async fn register_image_upload(
     ))
 }
 
+/// Validate that an upload URL belongs to LinkedIn's own infrastructure.
+/// Prevents SSRF: the Bearer token must never be sent to an arbitrary host.
+fn validate_linkedin_upload_url(url: &str) -> Result<(), String> {
+    if url.starts_with("https://www.linkedin.com/")
+        || url.starts_with("https://media.licdn.com/")
+        || url.starts_with("https://api.linkedin.com/")
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "LinkedIn upload URL domain validation failed — unexpected host in: {}",
+            url.chars().take(80).collect::<String>()
+        ))
+    }
+}
+
 /// Step 2 — PUT raw image bytes to the LinkedIn upload URL.
 /// LinkedIn accepts JPEG or PNG (max 10 MB).
+/// The upload_url is validated against LinkedIn domains before sending the Bearer token.
 pub async fn upload_image_binary(
     upload_url: &str,
     image_bytes: &[u8],
     access_token: &str,
 ) -> Result<(), String> {
+    // SECURITY: validate domain before attaching Bearer token (SSRF prevention)
+    validate_linkedin_upload_url(upload_url)?;
+
     let client = reqwest::Client::new();
     let resp = client
         .put(upload_url)

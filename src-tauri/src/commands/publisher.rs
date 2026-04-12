@@ -279,12 +279,20 @@ pub async fn publish_linkedin_post(
     // 3. Access token (never leaves Rust)
     let access_token = crate::token_store::get_token(&account.token_key)?;
 
-    // 4. Build text — hashtags embedded, capped at 5 per LinkedIn best practices
+    // 4. Build text — hashtags embedded, capped at 5 per LinkedIn rules.
+    // Sanitize each tag: keep only alphanumeric + underscore to prevent control-char injection.
     let hashtags_str = post
         .hashtags
         .iter()
         .take(5)
-        .map(|h| format!("#{h}"))
+        .map(|h| {
+            let clean: String = h
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            format!("#{clean}")
+        })
+        .filter(|t| t.len() > 1) // skip tags that became empty after sanitization
         .collect::<Vec<_>>()
         .join(" ");
     let full_text = if hashtags_str.is_empty() {
@@ -294,13 +302,24 @@ pub async fn publish_linkedin_post(
     };
 
     // 5. Publish — with or without image
+    const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024; // LinkedIn hard limit: 10 MB
+
     let post_urn = if let Some(image_source) = post.image_path.as_deref() {
-        // Decode image bytes from data URL or file path
+        // Decode image bytes from data URL or file path, enforcing the 10 MB limit.
         let image_bytes = if let Some(b64) = image_source.strip_prefix("data:image/png;base64,") {
+            // base64 overhead: encoded len × 3/4 ≈ decoded len
+            if b64.len() * 3 / 4 > MAX_IMAGE_BYTES {
+                return Err("Image exceeds LinkedIn 10 MB limit".to_string());
+            }
             STANDARD
                 .decode(b64)
                 .map_err(|e| format!("Failed to decode base64 image: {e}"))?
         } else {
+            let meta = std::fs::metadata(image_source)
+                .map_err(|e| format!("Cannot stat image file '{image_source}': {e}"))?;
+            if meta.len() > MAX_IMAGE_BYTES as u64 {
+                return Err("Image exceeds LinkedIn 10 MB limit".to_string());
+            }
             std::fs::read(image_source)
                 .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))?
         };
