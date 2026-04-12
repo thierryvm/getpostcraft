@@ -290,6 +290,17 @@ export function ContentPreview() {
       setCarouselIndex(0);
       const images = await renderCarouselSlides(slides);
       setCarouselImages(images);
+      // Save draft so the publish button becomes available.
+      // Caption = first slide title + body; image = first slide render.
+      const firstSlide = slides[0];
+      const carouselCaption = firstSlide
+        ? `${firstSlide.emoji} ${firstSlide.title}\n${firstSlide.body}`
+        : brief;
+      const id = await saveDraft(network, carouselCaption, hashtags).catch(() => null);
+      if (id !== null) {
+        setDraftId(id);
+        if (images[0]) updateDraftImage(id, images[0]).catch(() => {});
+      }
     } catch (err) {
       setCarouselError(String(err));
     } finally {
@@ -688,8 +699,8 @@ export function ContentPreview() {
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
             {/* Publish button — visible once content is ready.
-                LinkedIn allows text-only; Instagram requires an image. */}
-            {(imageUrl !== null || network === "linkedin") && !publishedInSession && (
+                LinkedIn allows text-only; Instagram requires an image or carousel. */}
+            {(imageUrl !== null || network === "linkedin" || (template === "carousel" && carouselImages !== null)) && !publishedInSession && (
               <Button
                 variant="default"
                 className="flex-1"

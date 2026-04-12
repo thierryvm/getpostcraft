@@ -44,23 +44,21 @@ fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) 
         .iter()
         .map(|t| format!("<span class=\"tag\">#{}</span>", html_escape(t)))
         .collect::<Vec<_>>()
-        .join("\n        ");
+        .join(" ");
 
-    // Scale font size down for longer captions so the card stays within the frame.
+    // Scale font size down for longer captions so the content stays within the frame.
     let caption_len = caption.chars().count();
-    let caption_font = if caption_len <= 200 {
-        38
-    } else if caption_len <= 400 {
-        30
-    } else if caption_len <= 700 {
-        24
+    let caption_font = if caption_len <= 160 {
+        32
+    } else if caption_len <= 320 {
+        26
+    } else if caption_len <= 600 {
+        22
     } else {
-        19
+        18
     };
-    let tag_font = (caption_font as f32 * 0.68) as u32;
-    // Vertical padding shrinks for longer text to maximise usable card height.
-    let card_padding = if caption_len <= 400 { 64 } else { 40 };
-    let body_padding = if caption_len <= 400 { 72 } else { 48 };
+    let tag_font = (caption_font as f32 * 0.60) as u32;
+    let content_padding = if caption_len <= 320 { 52 } else { 36 };
 
     format!(
         r#"<!DOCTYPE html>
@@ -72,38 +70,84 @@ fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) 
   body {{
     width: {width}px; height: {height}px; overflow: hidden;
     background: #0d1117;
-    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, "Courier New", monospace;
     display: flex; flex-direction: column;
     justify-content: center; align-items: center;
-    padding: {body_padding}px; color: #e6edf3;
+    padding: 56px;
   }}
-  .card {{
+  .terminal {{
     width: 100%;
-    max-height: calc({height}px - {body_padding}px * 2);
-    overflow: hidden;
+    max-height: calc({height}px - 112px);
     background: #161b22;
-    border: 1px solid #21262d; border-radius: 20px;
-    padding: {card_padding}px; display: flex; flex-direction: column; gap: 28px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    border: 1px solid #30363d;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(61,220,132,0.08);
   }}
-  .caption {{ font-size: {caption_font}px; line-height: 1.55; color: #e6edf3; font-weight: 400; overflow: hidden; }}
-  .divider {{ height: 1px; flex-shrink: 0; background: #21262d; }}
-  .tags {{ display: flex; flex-wrap: wrap; gap: 12px; flex-shrink: 0; }}
-  .tag {{ font-size: {tag_font}px; color: #3ddc84; font-weight: 500; }}
-  .branding {{
-    position: absolute; bottom: 44px; right: 64px;
-    font-size: 22px; color: #3ddc84; opacity: 0.75;
-    font-weight: 600; letter-spacing: 0.04em;
+  .titlebar {{
+    background: #21262d;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid #30363d;
+    flex-shrink: 0;
   }}
+  .dot {{ width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }}
+  .dot-r {{ background: #ff5f57; }}
+  .dot-y {{ background: #ffbd2e; }}
+  .dot-g {{ background: #28c840; }}
+  .wintitle {{
+    flex: 1; text-align: center;
+    font-size: 18px; color: #8b949e;
+    letter-spacing: 0.03em; font-weight: 500;
+  }}
+  .content {{
+    padding: {content_padding}px;
+    display: flex; flex-direction: column; gap: 0;
+    overflow: hidden;
+  }}
+  .prompt-row {{
+    display: flex; align-items: flex-start; gap: 16px;
+  }}
+  .prompt {{ color: #3ddc84; font-size: {caption_font}px; line-height: 1.6; flex-shrink: 0; font-weight: 600; }}
+  .caption-text {{
+    color: #e6edf3; font-size: {caption_font}px; line-height: 1.6;
+    word-break: break-word; overflow: hidden;
+  }}
+  .cursor {{
+    display: inline-block; width: 3px; height: {caption_font}px;
+    background: #3ddc84; margin-left: 6px;
+    vertical-align: middle; opacity: 0.9;
+  }}
+  .sep {{
+    margin: 28px 0 22px;
+    height: 1px; background: linear-gradient(to right, #3ddc8430, #30363d, transparent);
+    flex-shrink: 0;
+  }}
+  .tags {{
+    display: flex; flex-wrap: wrap; gap: 10px; flex-shrink: 0;
+  }}
+  .tag {{ font-size: {tag_font}px; color: #3ddc84; opacity: 0.75; }}
 </style>
 </head>
 <body>
-  <div class="card">
-    <div class="caption">{caption}</div>
-    <div class="divider"></div>
-    <div class="tags">{hashtags}</div>
+  <div class="terminal">
+    <div class="titlebar">
+      <div class="dot dot-r"></div>
+      <div class="dot dot-y"></div>
+      <div class="dot dot-g"></div>
+      <span class="wintitle">@terminallearning — zsh</span>
+    </div>
+    <div class="content">
+      <div class="prompt-row">
+        <span class="prompt">$</span>
+        <span class="caption-text">{caption}<span class="cursor"></span></span>
+      </div>
+      <div class="sep"></div>
+      <div class="tags">{hashtags}</div>
+    </div>
   </div>
-  <div class="branding">@terminallearning</div>
 </body>
 </html>"#,
         caption = caption_escaped,
