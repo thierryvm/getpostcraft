@@ -12,6 +12,11 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install rustls CryptoProvider once at process level — required before any
+    // TLS operation (OAuth callback servers). install_default() returns Err if
+    // already installed, which is safe to ignore.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle().clone();
