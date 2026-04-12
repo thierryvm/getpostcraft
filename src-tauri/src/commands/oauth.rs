@@ -129,12 +129,18 @@ pub async fn start_oauth_flow(
     let code_challenge = generate_code_challenge(&code_verifier);
     let csrf = generate_csrf_state();
 
-    // 2. Bind to an OS-assigned port (avoids port conflicts)
-    let listener = TcpListener::bind("127.0.0.1:0")
+    // 2. Bind to fixed port 7891 — must match the redirect URI registered in your Meta App.
+    //    Register: http://127.0.0.1:7891/callback in developers.facebook.com → App → Instagram Login
+    const CALLBACK_PORT: u16 = 7891;
+    let listener = TcpListener::bind(format!("127.0.0.1:{CALLBACK_PORT}"))
         .await
-        .map_err(|e| format!("Failed to start callback server: {e}"))?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
+        .map_err(|e| {
+            format!(
+                "Failed to start callback server on port {CALLBACK_PORT}: {e}. \
+                               Is another instance of Getpostcraft already running?"
+            )
+        })?;
+    let redirect_uri = format!("http://127.0.0.1:{CALLBACK_PORT}/callback");
 
     // 3. Build Instagram authorization URL
     let auth_url = format!(
