@@ -1,9 +1,11 @@
+mod adapters;
 mod ai_keys;
 mod commands;
 mod db;
 mod network_rules;
 mod sidecar;
 mod state;
+mod token_store;
 
 pub use state::AppState;
 use tauri::Manager;
@@ -71,6 +73,12 @@ pub fn run() {
             commands::calendar::get_calendar_posts,
             commands::calendar::schedule_post,
             commands::calendar::unschedule_post,
+            // OAuth / Accounts
+            commands::oauth::start_oauth_flow,
+            commands::oauth::list_accounts,
+            commands::oauth::disconnect_account,
+            commands::oauth::save_instagram_app_id,
+            commands::oauth::get_instagram_app_id,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
