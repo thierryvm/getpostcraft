@@ -345,8 +345,16 @@ pub async fn save_draft(
     network: String,
     caption: String,
     hashtags: Vec<String>,
+    image_path: Option<String>,
 ) -> Result<i64, String> {
-    crate::db::history::insert_draft(&state.db, &network, &caption, &hashtags).await
+    crate::db::history::insert_draft(
+        &state.db,
+        &network,
+        &caption,
+        &hashtags,
+        image_path.as_deref(),
+    )
+    .await
 }
 
 /// Fetch recent post history from SQLite.

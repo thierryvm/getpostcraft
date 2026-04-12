@@ -73,6 +73,10 @@ pub fn run() {
             commands::calendar::get_calendar_posts,
             commands::calendar::schedule_post,
             commands::calendar::unschedule_post,
+            // Publisher
+            commands::publisher::publish_post,
+            commands::publisher::save_imgbb_key,
+            commands::publisher::get_imgbb_key_status,
             // OAuth / Accounts
             commands::oauth::start_oauth_flow,
             commands::oauth::list_accounts,
