@@ -145,6 +145,9 @@ def _parse_json_response(text: str) -> dict[str, Any]:
     inside JSON string values, which is invalid. We sanitize those in-string
     control chars before parsing.
     """
+    # Sanitize surrogates in the raw input BEFORE any string operation
+    # (re.sub and json.loads in CPython can raise UnicodeEncodeError on surrogates).
+    text = _sanitize_surrogates(text)
     cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
 
     try:
@@ -162,6 +165,7 @@ def _parse_json_response(text: str) -> dict[str, Any]:
 
 def _parse_carousel_response(text: str, expected_count: int) -> list[dict]:
     """Parse a JSON array of slide objects from model output."""
+    text = _sanitize_surrogates(text)
     cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
     try:
         data = json.loads(cleaned)
