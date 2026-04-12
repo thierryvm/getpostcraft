@@ -8,6 +8,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Zap,
+  BookOpen,
 } from "lucide-react";
 import { HelpSheet } from "@/components/shared/HelpSheet";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ const navItems = [
   { to: "/composer", label: "Composer", icon: PenLine },
   { to: "/calendar", label: "Calendrier", icon: CalendarDays },
   { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/guide", label: "Guide", icon: BookOpen },
 ] as const;
 
 function NavLink({
