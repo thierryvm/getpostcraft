@@ -162,7 +162,7 @@ function VariantsPanel({
 }
 
 export function ContentPreview() {
-  const { result, variants, network, brief, imageFormat, draftId, setResult, setVariants, setIsLoading, setError, setDraftId } = useComposerStore();
+  const { result, variants, network, brief, imageFormat, draftId, setResult, setIsLoading, setError, setDraftId } = useComposerStore();
   const queryClient = useQueryClient();
   const { captionLimit, hashtagLimit, foldLimit, label: networkLabel } = NETWORK_META[network];
   const imageRef = useRef<HTMLDivElement>(null);
@@ -308,8 +308,9 @@ export function ContentPreview() {
   };
 
   const handleSelectVariant = (v: CaptionVariant) => {
+    // setResult already clears variants in the store — don't call setVariants(null) after,
+    // as it would reset result back to null.
     setResult({ caption: v.caption, hashtags: v.hashtags });
-    setVariants(null);
     saveDraft(network, v.caption, v.hashtags)
       .then(setDraftId)
       .catch(() => {});
