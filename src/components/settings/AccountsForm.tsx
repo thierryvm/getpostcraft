@@ -10,9 +10,14 @@ import {
   disconnectAccount,
   getInstagramAppId,
   getInstagramClientSecretStatus,
+  getLinkedInClientId,
+  getLinkedInClientSecretStatus,
   listAccounts,
   saveInstagramAppId,
   saveInstagramClientSecret,
+  saveLinkedInClientId,
+  saveLinkedInClientSecret,
+  startLinkedInOAuthFlow,
   startOAuthFlow,
 } from "@/lib/tauri/oauth";
 import { getImgbbKeyStatus, saveImgbbKey } from "@/lib/tauri/publisher";
@@ -87,9 +92,54 @@ export function AccountsForm() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
   });
 
+  // ── LinkedIn state ────────────────────────────────────────────────────────
+
+  const [liClientIdInput, setLiClientIdInput] = useState("");
+  const [liSecretInput, setLiSecretInput] = useState("");
+  const [liConnectError, setLiConnectError] = useState<string | null>(null);
+
+  const { data: savedLiClientId = null } = useQuery({
+    queryKey: ["linkedin_client_id"],
+    queryFn: getLinkedInClientId,
+  });
+
+  const { data: liSecretConfigured = false } = useQuery({
+    queryKey: ["linkedin_client_secret_status"],
+    queryFn: getLinkedInClientSecretStatus,
+  });
+
+  const saveLiClientId = useMutation({
+    mutationFn: (id: string) => saveLinkedInClientId(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["linkedin_client_id"] }),
+  });
+
+  const saveLiSecret = useMutation({
+    mutationFn: (s: string) => saveLinkedInClientSecret(s),
+    onSuccess: () => {
+      setLiSecretInput("");
+      qc.invalidateQueries({ queryKey: ["linkedin_client_secret_status"] });
+    },
+  });
+
+  const connectLinkedIn = useMutation({
+    mutationFn: () => startLinkedInOAuthFlow(),
+    onSuccess: () => {
+      setLiConnectError(null);
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (e: unknown) => {
+      setLiConnectError(e instanceof Error ? e.message : String(e));
+    },
+  });
+
+  // ── Derived values ─────────────────────────────────────────────────────────
+
   const instagramAccount = accounts.find((a) => a.provider === "instagram");
   const appId = savedAppId ?? "";
   const canConnect = !!appId && secretConfigured;
+
+  const linkedInAccount = accounts.find((a) => a.provider === "linkedin");
+  const canConnectLinkedIn = !!savedLiClientId && liSecretConfigured;
 
   return (
     <div className="flex flex-col gap-6">
@@ -269,13 +319,147 @@ export function AccountsForm() {
         </div>
       </div>
 
+      {/* LinkedIn */}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Link2 className="h-5 w-5 text-[#0A66C2]" />
+          <span className="text-sm font-semibold text-foreground">LinkedIn</span>
+          {linkedInAccount ? (
+            <Badge className="text-xs bg-primary/20 text-primary border-0">Connecté</Badge>
+          ) : (
+            <Badge variant="secondary" className="text-xs">Non connecté</Badge>
+          )}
+        </div>
+
+        {linkedInAccount ? (
+          <div className="flex items-center justify-between rounded-lg border border-border p-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary">
+                <User className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  {linkedInAccount.display_name ?? linkedInAccount.username}
+                </p>
+                <p className="text-xs text-muted-foreground">LinkedIn</p>
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive gap-1.5"
+              disabled={disconnect.isPending}
+              onClick={() =>
+                disconnect.mutate({
+                  provider: linkedInAccount.provider,
+                  userId: linkedInAccount.user_id,
+                })
+              }
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Déconnecter
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {/* Client ID */}
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs text-muted-foreground">
+                LinkedIn Client ID
+                {savedLiClientId && (
+                  <span className="ml-1 text-primary">✓ configuré</span>
+                )}
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder={savedLiClientId ?? "86xxxxxxxxxxxxxxxx"}
+                  value={liClientIdInput}
+                  onChange={(e) => setLiClientIdInput(e.target.value)}
+                  className="font-mono text-sm"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!liClientIdInput.trim() || saveLiClientId.isPending}
+                  onClick={() => {
+                    saveLiClientId.mutate(liClientIdInput.trim());
+                    setLiClientIdInput("");
+                  }}
+                >
+                  {saveLiClientId.isPending ? "…" : "Enregistrer"}
+                </Button>
+              </div>
+            </div>
+
+            {/* Client Secret — write-only */}
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs text-muted-foreground">
+                LinkedIn Client Secret
+                {liSecretConfigured && (
+                  <span className="ml-1 text-primary">✓ configuré</span>
+                )}
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  placeholder={liSecretConfigured ? "••••••••••••••••" : "Client Secret LinkedIn"}
+                  value={liSecretInput}
+                  onChange={(e) => setLiSecretInput(e.target.value)}
+                  className="font-mono text-sm"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!liSecretInput.trim() || saveLiSecret.isPending}
+                  onClick={() => {
+                    saveLiSecret.mutate(liSecretInput.trim());
+                  }}
+                >
+                  {saveLiSecret.isPending ? "…" : "Enregistrer"}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <ExternalLink className="h-3 w-3 shrink-0" />
+                developer.linkedin.com → App → Auth → Client ID &amp; Secret
+              </p>
+            </div>
+
+            <Alert>
+              <AlertDescription className="text-xs text-muted-foreground">
+                La connexion LinkedIn utilise OAuth 2.0 PKCE — aucun mot de passe
+                n'est stocké. Ton token est conservé localement. Enregistre{" "}
+                <span className="font-mono">https://localhost:7892/callback</span>{" "}
+                comme redirect URL dans ton app LinkedIn.
+              </AlertDescription>
+            </Alert>
+
+            {liConnectError && (
+              <p className="text-xs text-destructive">{liConnectError}</p>
+            )}
+
+            <Button
+              className="w-fit gap-2"
+              disabled={!canConnectLinkedIn || connectLinkedIn.isPending}
+              onClick={() => connectLinkedIn.mutate()}
+            >
+              <Link2 className="h-4 w-4" />
+              {connectLinkedIn.isPending
+                ? "En attente de l'autorisation dans le navigateur…"
+                : "Connecter LinkedIn"}
+            </Button>
+          </div>
+        )}
+      </div>
+
       {/* Future networks */}
       <div className="flex flex-col gap-2 opacity-40 pointer-events-none">
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          V2 — Prochainement
+          V3 — Prochainement
         </p>
         <div className="flex gap-2">
-          {["LinkedIn", "Twitter/X", "TikTok"].map((n) => (
+          {["Twitter/X", "TikTok"].map((n) => (
             <Badge key={n} variant="outline" className="text-xs">{n}</Badge>
           ))}
         </div>
