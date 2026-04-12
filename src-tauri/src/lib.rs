@@ -84,6 +84,8 @@ pub fn run() {
             commands::publisher::publish_post,
             commands::publisher::save_imgbb_key,
             commands::publisher::get_imgbb_key_status,
+            commands::publisher::save_image_host,
+            commands::publisher::get_image_host,
             commands::publisher::update_draft_image,
             // Publisher — LinkedIn
             commands::publisher::publish_linkedin_post,

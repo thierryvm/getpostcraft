@@ -6,6 +6,7 @@ use crate::state::AppState;
 
 const IG_API: &str = "https://graph.instagram.com/v21.0";
 const IMGBB_API: &str = "https://api.imgbb.com/1/upload";
+const CATBOX_API: &str = "https://catbox.moe/user/api.php";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -17,22 +18,66 @@ pub struct PublishResult {
     pub published_at: String,
 }
 
-// ── Image upload (imgbb) ───────────────────────────────────────────────────
+// ── Image upload helpers ───────────────────────────────────────────────────
+
+/// Decode an image source (base64 data URL or file path) to raw bytes.
+fn decode_image_bytes(image_source: &str) -> Result<Vec<u8>, String> {
+    if let Some(b64) = image_source.strip_prefix("data:image/png;base64,") {
+        STANDARD
+            .decode(b64)
+            .map_err(|e| format!("Base64 decode error: {e}"))
+    } else {
+        std::fs::read(image_source)
+            .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))
+    }
+}
+
+/// Upload an image to catbox.moe (no API key required).
+/// Returns the public URL, e.g. `https://files.catbox.moe/xxxxxx.png`.
+async fn upload_image_to_catbox(image_source: &str) -> Result<String, String> {
+    let bytes = decode_image_bytes(image_source)?;
+
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name("image.png")
+        .mime_str("image/png")
+        .map_err(|e| format!("Catbox mime error: {e}"))?;
+
+    let form = reqwest::multipart::Form::new()
+        .text("reqtype", "fileupload")
+        .part("fileToUpload", part);
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(CATBOX_API)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Catbox network error: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Catbox upload failed: HTTP {}", resp.status()));
+    }
+
+    let url = resp
+        .text()
+        .await
+        .map_err(|e| format!("Catbox response error: {e}"))?;
+    let url = url.trim().to_string();
+
+    if url.starts_with("https://") {
+        Ok(url)
+    } else {
+        Err(format!("Catbox returned unexpected response: {url}"))
+    }
+}
 
 /// Upload an image to imgbb and return the public URL.
 /// `image_source` can be either:
 ///   - a local file path (absolute)
 ///   - a base64 data URL (`data:image/png;base64,...`) — as returned by the render pipeline
 async fn upload_image_to_imgbb(image_source: &str, api_key: &str) -> Result<String, String> {
-    // If the render pipeline already gave us a base64 data URL, reuse it directly.
-    // Otherwise fall back to reading from disk (future-proofing for saved files).
-    let b64 = if let Some(b64_part) = image_source.strip_prefix("data:image/png;base64,") {
-        b64_part.to_string()
-    } else {
-        let bytes = std::fs::read(image_source)
-            .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))?;
-        STANDARD.encode(&bytes)
-    };
+    let bytes = decode_image_bytes(image_source)?;
+    let b64 = STANDARD.encode(&bytes);
 
     #[derive(Deserialize)]
     struct ImgbbData {
@@ -175,13 +220,19 @@ pub async fn publish_post(
     // 3. Get access token (never leaves Rust)
     let access_token = crate::token_store::get_token(&account.token_key)?;
 
-    // 4. Get imgbb API key
-    let imgbb_key = crate::db::settings_db::get(&state.db, "imgbb_api_key")
+    // 4. Upload image → get public URL (provider: catbox by default, imgbb if configured)
+    let image_host = crate::db::settings_db::get(&state.db, "image_host")
         .await
-        .ok_or("imgbb API key not configured. Add it in Settings → Publication.")?;
+        .unwrap_or_else(|| "catbox".to_string());
 
-    // 5. Upload image to imgbb → get public URL
-    let image_url = upload_image_to_imgbb(image_path, &imgbb_key).await?;
+    let image_url = if image_host == "imgbb" {
+        let key = crate::db::settings_db::get(&state.db, "imgbb_api_key")
+            .await
+            .ok_or("Clé imgbb non configurée. Ajoute-la dans Paramètres → Publication.")?;
+        upload_image_to_imgbb(image_path, &key).await?
+    } else {
+        upload_image_to_catbox(image_path).await?
+    };
 
     // 6. Build caption with hashtags
     let hashtags_str = post
@@ -236,6 +287,26 @@ pub async fn get_imgbb_key_status(state: tauri::State<'_, AppState>) -> Result<b
     Ok(crate::db::settings_db::get(&state.db, "imgbb_api_key")
         .await
         .is_some())
+}
+
+/// Save the image host provider ("catbox" | "imgbb").
+#[tauri::command]
+pub async fn save_image_host(
+    provider: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if provider != "catbox" && provider != "imgbb" {
+        return Err(format!("Invalid image host provider: {provider}"));
+    }
+    crate::db::settings_db::set(&state.db, "image_host", &provider).await
+}
+
+/// Get the configured image host provider (defaults to "catbox" if not set).
+#[tauri::command]
+pub async fn get_image_host(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    Ok(crate::db::settings_db::get(&state.db, "image_host")
+        .await
+        .unwrap_or_else(|| "catbox".to_string()))
 }
 
 /// Store an image (base64 data URL or file path) on the draft so publish commands can find it.

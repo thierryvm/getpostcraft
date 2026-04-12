@@ -29,3 +29,15 @@ export function getImgbbKeyStatus(): Promise<boolean> {
 export function updateDraftImage(postId: number, imagePath: string): Promise<void> {
   return invoke<void>("update_draft_image", { postId, imagePath });
 }
+
+export type ImageHostProvider = "catbox" | "imgbb";
+
+/** Save the image host provider ("catbox" | "imgbb"). */
+export function saveImageHost(provider: ImageHostProvider): Promise<void> {
+  return invoke<void>("save_image_host", { provider });
+}
+
+/** Get the configured image host provider (defaults to "catbox"). */
+export function getImageHost(): Promise<ImageHostProvider> {
+  return invoke<ImageHostProvider>("get_image_host");
+}
