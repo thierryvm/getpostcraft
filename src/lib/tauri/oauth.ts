@@ -38,3 +38,28 @@ export function saveInstagramClientSecret(secret: string): Promise<void> {
 export function getInstagramClientSecretStatus(): Promise<boolean> {
   return invoke<boolean>("get_instagram_client_secret_status");
 }
+
+// ── LinkedIn ──────────────────────────────────────────────────────────────
+
+/** Opens browser, waits for HTTPS callback on port 7892, returns connected account. */
+export function startLinkedInOAuthFlow(): Promise<ConnectedAccount> {
+  return invoke<ConnectedAccount>("start_linkedin_oauth_flow");
+}
+
+export function saveLinkedInClientId(clientId: string): Promise<void> {
+  return invoke<void>("save_linkedin_client_id", { clientId });
+}
+
+export function getLinkedInClientId(): Promise<string | null> {
+  return invoke<string | null>("get_linkedin_client_id");
+}
+
+/** Store the LinkedIn app client_secret locally (never returned to renderer). */
+export function saveLinkedInClientSecret(secret: string): Promise<void> {
+  return invoke<void>("save_linkedin_client_secret", { secret });
+}
+
+/** Returns true if the LinkedIn client_secret is configured. */
+export function getLinkedInClientSecretStatus(): Promise<boolean> {
+  return invoke<boolean>("get_linkedin_client_secret_status");
+}

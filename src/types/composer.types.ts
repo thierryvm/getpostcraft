@@ -14,7 +14,7 @@ export const NETWORK_META: Record<Network, NetworkMeta> = {
     hashtagLimit: 30,
     v1: true,
   },
-  linkedin: { label: "LinkedIn", captionLimit: 3000, hashtagLimit: 5, v1: false },
+  linkedin: { label: "LinkedIn", captionLimit: 3000, hashtagLimit: 5, v1: true },
   twitter: { label: "Twitter / X", captionLimit: 280, hashtagLimit: 2, v1: false },
   tiktok: { label: "TikTok", captionLimit: 2200, hashtagLimit: 100, v1: false },
 };
