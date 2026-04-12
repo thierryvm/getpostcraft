@@ -28,16 +28,16 @@ export function CaptionWithFold({
   const after = text.slice(foldLimit);
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-0">
       <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{before}</p>
-      <div className="flex items-center gap-2 py-0.5">
-        <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
-        <span className="text-[10px] font-medium text-muted-foreground/70 shrink-0 select-none">
-          ↩ fold {network} · {foldLimit} car.
+      <div className="flex items-center gap-2 my-1.5">
+        <div className="flex-1 border-t border-dashed border-amber-500/40" />
+        <span className="text-[10px] font-semibold text-amber-500/80 shrink-0 select-none px-1">
+          — fold {network} {foldLimit} car. —
         </span>
-        <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
+        <div className="flex-1 border-t border-dashed border-amber-500/40" />
       </div>
-      <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{after}</p>
+      <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{after}</p>
     </div>
   );
 }
