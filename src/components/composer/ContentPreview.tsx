@@ -15,6 +15,7 @@ import type { CaptionVariant, CarouselSlide } from "@/lib/tauri/composer";
 import { renderPostImage, renderCodeImage, renderTerminalImage, renderCarouselSlides, exportCarouselZip } from "@/lib/tauri/media";
 import { publishPost, publishLinkedinPost, updateDraftImage } from "@/lib/tauri/publisher";
 import { NETWORK_META } from "@/types/composer.types";
+import { CaptionWithFold } from "@/components/shared/CaptionWithFold";
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -161,9 +162,9 @@ function VariantsPanel({
 }
 
 export function ContentPreview() {
-  const { result, variants, network, brief, draftId, setResult, setVariants, setIsLoading, setError, setDraftId } = useComposerStore();
+  const { result, variants, network, brief, imageFormat, draftId, setResult, setVariants, setIsLoading, setError, setDraftId } = useComposerStore();
   const queryClient = useQueryClient();
-  const { captionLimit, hashtagLimit, label: networkLabel } = NETWORK_META[network];
+  const { captionLimit, hashtagLimit, foldLimit, label: networkLabel } = NETWORK_META[network];
   const imageRef = useRef<HTMLDivElement>(null);
 
   type VisualTemplate = "post" | "code" | "terminal" | "carousel";
@@ -245,16 +246,17 @@ export function ContentPreview() {
     setRenderError(null);
     setImageUrl(null);
     try {
+      const { width, height } = imageFormat;
       let url: string;
       if (template === "code") {
         if (!code.trim()) { setRenderError("Colle du code d'abord."); setIsRendering(false); return; }
-        url = await renderCodeImage(code, language, filename || undefined);
+        url = await renderCodeImage(code, language, filename || undefined, width, height);
       } else if (template === "terminal") {
         if (!termCommand.trim()) { setRenderError("Saisis une commande d'abord."); setIsRendering(false); return; }
-        url = await renderTerminalImage(termCommand, termOutput || undefined);
+        url = await renderTerminalImage(termCommand, termOutput || undefined, width, height);
       } else {
         if (!result) { setRenderError("Génère du contenu d'abord."); setIsRendering(false); return; }
-        url = await renderPostImage(result.caption, hashtags);
+        url = await renderPostImage(result.caption, hashtags, width, height);
       }
       setImageUrl(url);
       // Persist the data URL in SQLite so publish_post can upload it to imgbb
@@ -361,9 +363,11 @@ export function ContentPreview() {
               <CopyButton text={safeResult.caption} label="la caption" />
             </div>
           </div>
-          <p className="text-sm text-foreground whitespace-pre-line leading-relaxed">
-            {safeResult.caption}
-          </p>
+          <CaptionWithFold
+            text={safeResult.caption}
+            foldLimit={foldLimit}
+            network={networkLabel}
+          />
         </div>
 
         <Separator />
@@ -388,7 +392,10 @@ export function ContentPreview() {
         <div ref={imageRef} className="flex flex-col gap-3">
           {/* Header + generate button (hidden for carousel which has its own) */}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-foreground">Visuel 1080×1080</span>
+            <span className="text-sm font-medium text-foreground">
+            Visuel {imageFormat.width}×{imageFormat.height}
+            <span className="ml-1.5 text-xs font-normal text-muted-foreground">{imageFormat.ratio}</span>
+          </span>
             {template !== "carousel" && (
               <Button
                 variant="outline"
