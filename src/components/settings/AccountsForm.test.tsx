@@ -24,6 +24,9 @@ describe("AccountsForm — compte non connecté", () => {
       if (cmd === "list_accounts") return Promise.resolve([]);
       if (cmd === "get_instagram_app_id") return Promise.resolve(null);
       if (cmd === "get_instagram_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_linkedin_client_id") return Promise.resolve(null);
+      if (cmd === "get_linkedin_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_imgbb_key_status") return Promise.resolve(false);
       return Promise.resolve(null);
     });
   });
@@ -31,7 +34,9 @@ describe("AccountsForm — compte non connecté", () => {
   it("affiche le formulaire de connexion quand aucun compte n'est connecté", async () => {
     renderWithQuery(<AccountsForm />);
     await waitFor(() => {
-      expect(screen.getByText("Non connecté")).toBeInTheDocument();
+      // Both Instagram and LinkedIn show "Non connecté" when no accounts
+      const badges = screen.getAllByText("Non connecté");
+      expect(badges.length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -48,6 +53,9 @@ describe("AccountsForm — compte non connecté", () => {
       if (cmd === "list_accounts") return Promise.resolve([]);
       if (cmd === "get_instagram_app_id") return Promise.resolve("876077775447670");
       if (cmd === "get_instagram_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_linkedin_client_id") return Promise.resolve(null);
+      if (cmd === "get_linkedin_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_imgbb_key_status") return Promise.resolve(false);
       return Promise.resolve(null);
     });
 
@@ -63,6 +71,9 @@ describe("AccountsForm — compte non connecté", () => {
       if (cmd === "list_accounts") return Promise.resolve([]);
       if (cmd === "get_instagram_app_id") return Promise.resolve(null);
       if (cmd === "get_instagram_client_secret_status") return Promise.resolve(true);
+      if (cmd === "get_linkedin_client_id") return Promise.resolve(null);
+      if (cmd === "get_linkedin_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_imgbb_key_status") return Promise.resolve(false);
       return Promise.resolve(null);
     });
 
@@ -78,6 +89,9 @@ describe("AccountsForm — compte non connecté", () => {
       if (cmd === "list_accounts") return Promise.resolve([]);
       if (cmd === "get_instagram_app_id") return Promise.resolve("876077775447670");
       if (cmd === "get_instagram_client_secret_status") return Promise.resolve(true);
+      if (cmd === "get_linkedin_client_id") return Promise.resolve(null);
+      if (cmd === "get_linkedin_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_imgbb_key_status") return Promise.resolve(false);
       return Promise.resolve(null);
     });
 
@@ -94,6 +108,9 @@ describe("AccountsForm — compte non connecté", () => {
       if (cmd === "get_instagram_app_id") return Promise.resolve("876077775447670");
       if (cmd === "get_instagram_client_secret_status") return Promise.resolve(false);
       if (cmd === "save_instagram_app_id") return Promise.resolve();
+      if (cmd === "get_linkedin_client_id") return Promise.resolve(null);
+      if (cmd === "get_linkedin_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_imgbb_key_status") return Promise.resolve(false);
       return Promise.resolve(null);
     });
 
@@ -118,6 +135,9 @@ describe("AccountsForm — compte connecté", () => {
       if (cmd === "list_accounts") return Promise.resolve([mockAccount]);
       if (cmd === "get_instagram_app_id") return Promise.resolve("876077775447670");
       if (cmd === "get_instagram_client_secret_status") return Promise.resolve(true);
+      if (cmd === "get_linkedin_client_id") return Promise.resolve(null);
+      if (cmd === "get_linkedin_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_imgbb_key_status") return Promise.resolve(false);
       return Promise.resolve(null);
     });
   });
@@ -144,6 +164,9 @@ describe("AccountsForm — compte connecté", () => {
       if (cmd === "list_accounts") return Promise.resolve([mockAccount]);
       if (cmd === "get_instagram_app_id") return Promise.resolve("876077775447670");
       if (cmd === "get_instagram_client_secret_status") return Promise.resolve(true);
+      if (cmd === "get_linkedin_client_id") return Promise.resolve(null);
+      if (cmd === "get_linkedin_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_imgbb_key_status") return Promise.resolve(false);
       if (cmd === "disconnect_account") return Promise.resolve();
       return Promise.resolve(null);
     });
@@ -180,6 +203,9 @@ describe("AccountsForm — sécurité IPC", () => {
       if (cmd === "list_accounts") return Promise.resolve([accountWithToken]);
       if (cmd === "get_instagram_app_id") return Promise.resolve(null);
       if (cmd === "get_instagram_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_linkedin_client_id") return Promise.resolve(null);
+      if (cmd === "get_linkedin_client_secret_status") return Promise.resolve(false);
+      if (cmd === "get_imgbb_key_status") return Promise.resolve(false);
       return Promise.resolve(null);
     });
 
