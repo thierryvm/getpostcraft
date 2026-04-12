@@ -364,8 +364,10 @@ pub async fn start_linkedin_oauth_flow(
     let acceptor = build_tls_acceptor()?;
 
     // 5. Build LinkedIn authorization URL
-    // Scopes: openid (OIDC id_token), profile (name/photo), w_member_social (post), r_liteprofile (legacy name)
-    let scope = urlencoding::encode("openid profile w_member_social r_liteprofile");
+    // Scopes: openid + profile (OIDC via "Sign In with LinkedIn using OpenID Connect" product)
+    //         w_member_social ("Share on LinkedIn" product)
+    // r_liteprofile intentionally excluded — legacy API v1 scope, conflicts with OIDC approach
+    let scope = urlencoding::encode("openid profile w_member_social");
     let auth_url = format!(
         "https://www.linkedin.com/oauth/v2/authorization\
          ?response_type=code\
@@ -406,7 +408,7 @@ pub async fn start_linkedin_oauth_flow(
     let display_name = user_info.display_name();
 
     // 10. Store token (never passes to renderer)
-    let token_key = format!("linkedin:{}", user_info.id);
+    let token_key = format!("linkedin:{}", user_info.id());
     crate::token_store::save_token(&token_key, &access_token)?;
 
     // 11. Persist account metadata to SQLite
@@ -414,7 +416,7 @@ pub async fn start_linkedin_oauth_flow(
     let account = crate::db::accounts::upsert_and_get(
         &state.db,
         "linkedin",
-        &user_info.id,
+        user_info.id(),
         &display_name,
         Some(&display_name),
         &token_key,

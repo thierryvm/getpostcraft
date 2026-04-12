@@ -5,24 +5,30 @@ const API_BASE: &str = "https://api.linkedin.com/v2";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+/// Profile returned by the OIDC /v2/userinfo endpoint.
+/// `sub` is the stable LinkedIn member URN ID (e.g. "hBdTzjkE4S").
 #[derive(Debug, Deserialize)]
 pub struct LinkedInUser {
-    pub id: String,
-    #[serde(rename = "localizedFirstName")]
-    pub first_name: Option<String>,
-    #[serde(rename = "localizedLastName")]
-    pub last_name: Option<String>,
+    /// Stable member ID — used to build `urn:li:person:{sub}` author URN.
+    pub sub: String,
+    pub given_name: Option<String>,
+    pub family_name: Option<String>,
 }
 
 impl LinkedInUser {
-    /// Build a display name from first + last names, falling back to the profile ID.
+    /// Build a display name from given + family names, falling back to the member ID.
     pub fn display_name(&self) -> String {
-        match (&self.first_name, &self.last_name) {
+        match (&self.given_name, &self.family_name) {
             (Some(f), Some(l)) => format!("{f} {l}"),
             (Some(f), None) => f.clone(),
             (None, Some(l)) => l.clone(),
-            (None, None) => self.id.clone(),
+            (None, None) => self.sub.clone(),
         }
+    }
+
+    /// The profile ID used in author URNs: `urn:li:person:{id}`.
+    pub fn id(&self) -> &str {
+        &self.sub
     }
 }
 
@@ -81,12 +87,13 @@ pub async fn exchange_code(
 
 // ── User info ──────────────────────────────────────────────────────────────
 
-/// Fetch basic profile info (id, first/last name) to build the author URN.
-/// Requires `openid profile r_liteprofile` scopes.
+/// Fetch profile via the OIDC userinfo endpoint.
+/// Requires `openid profile` scopes (Sign In with LinkedIn using OpenID Connect product).
+/// Returns sub (stable member ID), given_name, family_name.
 pub async fn get_user_info(access_token: &str) -> Result<LinkedInUser, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{API_BASE}/me"))
+        .get(format!("{API_BASE}/userinfo"))
         .bearer_auth(access_token)
         .send()
         .await
