@@ -46,6 +46,22 @@ fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) 
         .collect::<Vec<_>>()
         .join("\n        ");
 
+    // Scale font size down for longer captions so the card stays within the frame.
+    let caption_len = caption.chars().count();
+    let caption_font = if caption_len <= 200 {
+        38
+    } else if caption_len <= 400 {
+        30
+    } else if caption_len <= 700 {
+        24
+    } else {
+        19
+    };
+    let tag_font = (caption_font as f32 * 0.68) as u32;
+    // Vertical padding shrinks for longer text to maximise usable card height.
+    let card_padding = if caption_len <= 400 { 64 } else { 40 };
+    let body_padding = if caption_len <= 400 { 72 } else { 48 };
+
     format!(
         r#"<!DOCTYPE html>
 <html lang="fr">
@@ -59,18 +75,21 @@ fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) 
     font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     display: flex; flex-direction: column;
     justify-content: center; align-items: center;
-    padding: 72px; color: #e6edf3;
+    padding: {body_padding}px; color: #e6edf3;
   }}
   .card {{
-    width: 100%; background: #161b22;
+    width: 100%;
+    max-height: calc({height}px - {body_padding}px * 2);
+    overflow: hidden;
+    background: #161b22;
     border: 1px solid #21262d; border-radius: 20px;
-    padding: 64px; display: flex; flex-direction: column; gap: 36px;
+    padding: {card_padding}px; display: flex; flex-direction: column; gap: 28px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   }}
-  .caption {{ font-size: 38px; line-height: 1.55; color: #e6edf3; font-weight: 400; }}
-  .divider {{ height: 1px; background: #21262d; }}
-  .tags {{ display: flex; flex-wrap: wrap; gap: 14px; }}
-  .tag {{ font-size: 26px; color: #3ddc84; font-weight: 500; }}
+  .caption {{ font-size: {caption_font}px; line-height: 1.55; color: #e6edf3; font-weight: 400; overflow: hidden; }}
+  .divider {{ height: 1px; flex-shrink: 0; background: #21262d; }}
+  .tags {{ display: flex; flex-wrap: wrap; gap: 12px; flex-shrink: 0; }}
+  .tag {{ font-size: {tag_font}px; color: #3ddc84; font-weight: 500; }}
   .branding {{
     position: absolute; bottom: 44px; right: 64px;
     font-size: 22px; color: #3ddc84; opacity: 0.75;
