@@ -21,20 +21,28 @@ export interface ModelOption {
   free?: boolean;
   /** Free-tier endpoints come and go on OpenRouter — may return 404 at any time. */
   unstable?: boolean;
+  /**
+   * Model does not reliably follow JSON-only output instructions.
+   * May produce preamble text or suffix that breaks the sidecar parser.
+   * Validated via sidecar/tests/test_ai_client.py::TestModelOutputPatterns.
+   */
+  jsonUnreliable?: boolean;
 }
 
 export const OPENROUTER_MODELS: ModelOption[] = [
-  { value: "anthropic/claude-3-5-haiku",             label: "Claude 3.5 Haiku (recommandé)", inputPricePer1M: 0.80,  outputPricePer1M: 4.00  },
-  { value: "anthropic/claude-3-5-sonnet",            label: "Claude 3.5 Sonnet",             inputPricePer1M: 3.00,  outputPricePer1M: 15.00 },
-  { value: "openai/gpt-4o-mini",                     label: "GPT-4o Mini",                   inputPricePer1M: 0.15,  outputPricePer1M: 0.60  },
-  { value: "openai/gpt-4o",                          label: "GPT-4o",                        inputPricePer1M: 2.50,  outputPricePer1M: 10.00 },
-  { value: "mistralai/mistral-small",                label: "Mistral Small",                 inputPricePer1M: 0.10,  outputPricePer1M: 0.30  },
-  { value: "google/gemini-flash-1.5",                label: "Gemini Flash 1.5",              inputPricePer1M: 0.075, outputPricePer1M: 0.30  },
-  { value: "deepseek/deepseek-chat",                 label: "DeepSeek V3",                   inputPricePer1M: 0.27,  outputPricePer1M: 1.10  },
-  { value: "deepseek/deepseek-chat-v3-5:free",      label: "DeepSeek V3.5 (gratuit)",       free: true, unstable: true },
-  { value: "google/gemini-2.0-flash-exp:free",        label: "Gemini 2.0 Flash (gratuit)",    free: true, unstable: true },
-  { value: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (gratuit)",       free: true, unstable: true },
-  { value: "qwen/qwen-2.5-72b-instruct:free",        label: "Qwen 2.5 72B (gratuit)",        free: true, unstable: true },
+  // ── Fiables (JSON propre validé) ─────────────────────────────────────────
+  { value: "anthropic/claude-3-5-haiku",              label: "Claude 3.5 Haiku (recommandé)", inputPricePer1M: 0.80,  outputPricePer1M: 4.00  },
+  { value: "anthropic/claude-3-7-sonnet",             label: "Claude 3.7 Sonnet",             inputPricePer1M: 3.00,  outputPricePer1M: 15.00 },
+  { value: "openai/gpt-4o-mini",                      label: "GPT-4o Mini",                   inputPricePer1M: 0.15,  outputPricePer1M: 0.60  },
+  { value: "openai/gpt-4o",                           label: "GPT-4o",                        inputPricePer1M: 2.50,  outputPricePer1M: 10.00 },
+  { value: "deepseek/deepseek-chat",                  label: "DeepSeek V3",                   inputPricePer1M: 0.27,  outputPricePer1M: 1.10  },
+  { value: "google/gemini-2.0-flash-001",             label: "Gemini 2.0 Flash",              inputPricePer1M: 0.10,  outputPricePer1M: 0.40  },
+  // ── JSON peu fiable — peut échouer selon le brief ────────────────────────
+  { value: "mistralai/mistral-small-3.1-24b-instruct", label: "Mistral Small 3.1 ⚠️",          inputPricePer1M: 0.10,  outputPricePer1M: 0.30,  jsonUnreliable: true },
+  // ── Gratuits — instables (endpoint peut retourner 404 à tout moment) ─────
+  { value: "deepseek/deepseek-chat-v3-5:free",        label: "DeepSeek V3.5 (gratuit)",       free: true, unstable: true },
+  { value: "meta-llama/llama-3.3-70b-instruct:free",  label: "Llama 3.3 70B (gratuit)",       free: true, unstable: true },
+  { value: "qwen/qwen-2.5-72b-instruct:free",         label: "Qwen 2.5 72B (gratuit)",        free: true, unstable: true },
 ];
 
 export const PROVIDER_DEFAULT_MODELS: Record<AiProvider, string> = {
