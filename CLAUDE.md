@@ -264,8 +264,9 @@ Source of truth: `sidecar/tests/test_ai_client.py::TestModelOutputPatterns`.
 
 | Model (OpenRouter ID) | JSON fiable | Notes |
 |---|---|---|
-| `anthropic/claude-3-5-haiku` | ✅ | Recommandé — propre, pas de fence |
-| `anthropic/claude-3-7-sonnet` | ✅ | Propre, pas de fence |
+| `anthropic/claude-haiku-4-5-20251001` | ✅ | Recommandé — propre, pas de fence |
+| `anthropic/claude-sonnet-4-6` | ✅ | Propre, pas de fence |
+| `anthropic/claude-opus-4-6` | ✅ | Propre, pas de fence |
 | `openai/gpt-4o-mini` | ✅ | Parfois fence ```json — géré |
 | `openai/gpt-4o` | ✅ | Parfois fence ```json — géré |
 | `deepseek/deepseek-chat` | ✅ | Propre |

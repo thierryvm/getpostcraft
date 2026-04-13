@@ -30,10 +30,10 @@ export interface ModelOption {
 }
 
 export const OPENROUTER_MODELS: ModelOption[] = [
-  // ── Fiables (JSON propre validé) ─────────────────────────────────────────
-  { value: "anthropic/claude-haiku-4-5",              label: "Claude Haiku 4.5 (recommandé)", inputPricePer1M: 0.80,  outputPricePer1M: 4.00  },
-  { value: "anthropic/claude-sonnet-4-5",             label: "Claude Sonnet 4.5",             inputPricePer1M: 3.00,  outputPricePer1M: 15.00 },
+  // ── Anthropic Claude 4.x ─────────────────────────────────────────────────
+  { value: "anthropic/claude-haiku-4-5-20251001",     label: "Claude Haiku 4.5 (recommandé)", inputPricePer1M: 0.80,  outputPricePer1M: 4.00  },
   { value: "anthropic/claude-sonnet-4-6",             label: "Claude Sonnet 4.6",             inputPricePer1M: 3.00,  outputPricePer1M: 15.00 },
+  { value: "anthropic/claude-opus-4-6",               label: "Claude Opus 4.6",               inputPricePer1M: 15.00, outputPricePer1M: 75.00 },
   { value: "openai/gpt-4o-mini",                      label: "GPT-4o Mini",                   inputPricePer1M: 0.15,  outputPricePer1M: 0.60  },
   { value: "openai/gpt-4o",                           label: "GPT-4o",                        inputPricePer1M: 2.50,  outputPricePer1M: 10.00 },
   { value: "deepseek/deepseek-chat",                  label: "DeepSeek V3",                   inputPricePer1M: 0.27,  outputPricePer1M: 1.10  },
@@ -47,7 +47,7 @@ export const OPENROUTER_MODELS: ModelOption[] = [
 ];
 
 export const PROVIDER_DEFAULT_MODELS: Record<AiProvider, string> = {
-  openrouter: "anthropic/claude-haiku-4-5",
+  openrouter: "anthropic/claude-haiku-4-5-20251001",
   anthropic: "claude-haiku-4-5-20251001",
   ollama: "llama3.2",
 };
