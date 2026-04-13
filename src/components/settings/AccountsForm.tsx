@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   disconnectAccount,
   getInstagramAppId,
@@ -19,8 +20,68 @@ import {
   saveLinkedInClientSecret,
   startLinkedInOAuthFlow,
   startOAuthFlow,
+  updateAccountProductTruth,
 } from "@/lib/tauri/oauth";
 import { getImgbbKeyStatus, saveImgbbKey } from "@/lib/tauri/publisher";
+
+function ProductTruthEditor({
+  accountId,
+  initialValue,
+}: {
+  accountId: number;
+  initialValue: string | null;
+}) {
+  const qc = useQueryClient();
+  const [value, setValue] = useState(initialValue ?? "");
+  const [saved, setSaved] = useState(false);
+
+  const save = useMutation({
+    mutationFn: () => updateAccountProductTruth(accountId, value),
+    onSuccess: () => {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
+
+  const isDirty = value !== (initialValue ?? "");
+
+  return (
+    <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-border">
+      <Label className="text-xs text-muted-foreground">
+        Product Truth
+        <span className="ml-1 font-normal opacity-70">
+          — contexte marque injecté dans le prompt IA
+        </span>
+      </Label>
+      <Textarea
+        value={value}
+        onChange={(e) => { setValue(e.target.value); setSaved(false); }}
+        placeholder={
+          "Ex :\n" +
+          "Compte @terminallearning — niche Linux/Terminal/DevOps, communauté francophone.\n" +
+          "Produits réels : formations vidéo Bash, guide Vim, newsletter hebdo.\n" +
+          "Ne pas mentionner de produits qui ne sont pas listés ici."
+        }
+        className="min-h-28 resize-none text-xs font-mono"
+      />
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!isDirty || save.isPending}
+          onClick={() => save.mutate()}
+          className="w-fit"
+        >
+          {save.isPending ? "…" : saved ? "Enregistré ✓" : "Enregistrer"}
+        </Button>
+        {isDirty && (
+          <span className="text-xs text-muted-foreground">Modifications non sauvegardées</span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function AccountsForm() {
   const qc = useQueryClient();
@@ -156,37 +217,43 @@ export function AccountsForm() {
         </div>
 
         {instagramAccount ? (
-          <div className="flex items-center justify-between rounded-lg border border-border p-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary">
-                <User className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-foreground">
-                  @{instagramAccount.username}
-                </p>
-                {instagramAccount.display_name && (
-                  <p className="text-xs text-muted-foreground">
-                    {instagramAccount.display_name}
+          <div className="rounded-lg border border-border p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary">
+                  <User className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    @{instagramAccount.username}
                   </p>
-                )}
+                  {instagramAccount.display_name && (
+                    <p className="text-xs text-muted-foreground">
+                      {instagramAccount.display_name}
+                    </p>
+                  )}
+                </div>
               </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive gap-1.5"
+                disabled={disconnect.isPending}
+                onClick={() =>
+                  disconnect.mutate({
+                    provider: instagramAccount.provider,
+                    userId: instagramAccount.user_id,
+                  })
+                }
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Déconnecter
+              </Button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive gap-1.5"
-              disabled={disconnect.isPending}
-              onClick={() =>
-                disconnect.mutate({
-                  provider: instagramAccount.provider,
-                  userId: instagramAccount.user_id,
-                })
-              }
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              Déconnecter
-            </Button>
+            <ProductTruthEditor
+              accountId={instagramAccount.id}
+              initialValue={instagramAccount.product_truth}
+            />
           </div>
         ) : (
           <div className="flex flex-col gap-4">
@@ -357,33 +424,39 @@ export function AccountsForm() {
         </div>
 
         {linkedInAccount ? (
-          <div className="flex items-center justify-between rounded-lg border border-border p-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary">
-                <User className="h-4 w-4 text-muted-foreground" />
+          <div className="rounded-lg border border-border p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary">
+                  <User className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    {linkedInAccount.display_name ?? linkedInAccount.username}
+                  </p>
+                  <p className="text-xs text-muted-foreground">LinkedIn</p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-medium text-foreground">
-                  {linkedInAccount.display_name ?? linkedInAccount.username}
-                </p>
-                <p className="text-xs text-muted-foreground">LinkedIn</p>
-              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive gap-1.5"
+                disabled={disconnect.isPending}
+                onClick={() =>
+                  disconnect.mutate({
+                    provider: linkedInAccount.provider,
+                    userId: linkedInAccount.user_id,
+                  })
+                }
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Déconnecter
+              </Button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive gap-1.5"
-              disabled={disconnect.isPending}
-              onClick={() =>
-                disconnect.mutate({
-                  provider: linkedInAccount.provider,
-                  userId: linkedInAccount.user_id,
-                })
-              }
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              Déconnecter
-            </Button>
+            <ProductTruthEditor
+              accountId={linkedInAccount.id}
+              initialValue={linkedInAccount.product_truth}
+            />
           </div>
         ) : (
           <div className="flex flex-col gap-4">

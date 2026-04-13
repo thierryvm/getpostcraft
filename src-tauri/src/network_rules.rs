@@ -26,10 +26,28 @@ pub fn get_system_prompt(network: &str) -> &'static str {
     }
 }
 
-/// Returns a tone-specific system prompt for caption variant generation.
-/// tone: "educational" | "casual" | "punchy"
-pub fn get_variant_prompt(network: &str, tone: &str) -> String {
-    let base = get_system_prompt(network);
+/// Appends a BRAND IDENTITY block to any prompt when product_truth is provided.
+/// If product_truth is None or blank, returns the prompt unchanged (as a String).
+pub fn inject_product_truth(base_prompt: &str, product_truth: Option<&str>) -> String {
+    match product_truth {
+        Some(truth) if !truth.trim().is_empty() => {
+            format!(
+                "{base_prompt}\n\n═══ BRAND IDENTITY / PRODUCT TRUTH ═══\n\
+                 Ce contexte décrit ce que le compte publie réellement. \
+                 Contrains ta génération à ce qui est listé ici :\n{truth}"
+            )
+        }
+        _ => base_prompt.to_string(),
+    }
+}
+
+/// Returns a tone-specific system prompt enriched with the account's product truth.
+pub fn get_variant_prompt_with_truth(
+    network: &str,
+    tone: &str,
+    product_truth: Option<&str>,
+) -> String {
+    let base = inject_product_truth(get_system_prompt(network), product_truth);
     let instruction = match tone {
         "educational" => "TON : pédagogique et informatif. Explique clairement, donne des exemples concrets, valeur ajoutée maximale. Commence par 'Savais-tu que…' ou 'Astuce :' ou une question rhétorique.",
         "casual"      => "TON : décontracté et humain. Parle comme à un ami dev. Anecdote personnelle bienvenue. Pas de jargon inutile.",
@@ -128,7 +146,7 @@ mod tests {
     #[test]
     fn get_variant_prompt_contains_base_prompt() {
         let base = get_system_prompt("instagram");
-        let variant = get_variant_prompt("instagram", "educational");
+        let variant = get_variant_prompt_with_truth("instagram", "educational", None);
         assert!(
             variant.contains(base),
             "variant prompt must contain the base prompt"
@@ -137,7 +155,7 @@ mod tests {
 
     #[test]
     fn get_variant_prompt_educational_tone() {
-        let p = get_variant_prompt("instagram", "educational");
+        let p = get_variant_prompt_with_truth("instagram", "educational", None);
         assert!(
             p.to_lowercase().contains("pédagogique") || p.to_lowercase().contains("educational"),
             "educational tone must be present"
@@ -146,7 +164,7 @@ mod tests {
 
     #[test]
     fn get_variant_prompt_casual_tone() {
-        let p = get_variant_prompt("instagram", "casual");
+        let p = get_variant_prompt_with_truth("instagram", "casual", None);
         assert!(
             p.to_lowercase().contains("décontracté") || p.to_lowercase().contains("casual"),
             "casual tone must be present"
@@ -155,7 +173,7 @@ mod tests {
 
     #[test]
     fn get_variant_prompt_punchy_tone() {
-        let p = get_variant_prompt("instagram", "punchy");
+        let p = get_variant_prompt_with_truth("instagram", "punchy", None);
         assert!(
             p.to_lowercase().contains("percutant") || p.to_lowercase().contains("punchy"),
             "punchy tone must be present"
@@ -164,7 +182,7 @@ mod tests {
 
     #[test]
     fn get_variant_prompt_unknown_tone_falls_back_gracefully() {
-        let p = get_variant_prompt("instagram", "unknown_tone");
+        let p = get_variant_prompt_with_truth("instagram", "unknown_tone", None);
         // Must not panic, must still contain base prompt
         let base = get_system_prompt("instagram");
         assert!(p.contains(base));

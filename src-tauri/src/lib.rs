@@ -117,6 +117,7 @@ pub fn run() {
             commands::oauth::get_linkedin_client_id,
             commands::oauth::save_linkedin_client_secret,
             commands::oauth::get_linkedin_client_secret_status,
+            commands::oauth::update_account_product_truth,
             // Logs
             commands::logs::get_app_logs,
             commands::logs::get_log_file_path,

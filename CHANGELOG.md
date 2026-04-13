@@ -12,6 +12,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **Product Truth per account** — a "context / product truth" field per connected account, injected into AI prompts to constrain generation to what actually exists. Prevents publishing content about features that aren't live yet. Inspired by real-world editorial discipline: only show what exists, clearly mark what's in progress or planned. Source: Terminal Learning Instagram strategy (April 2026).
 
 ### Added
+- **Product Truth par compte** — champ texte libre par compte connecté (Instagram, LinkedIn), injecté dans le system prompt IA lors de chaque génération. Contraint la génération aux produits/services réels du compte. Éditable depuis Paramètres → Comptes. Indicateur `✓ Product Truth` dans le sélecteur de compte du Composer.
+- **Sélecteur de compte dans le Composer** — dropdown permettant de choisir le compte cible avant génération ; auto-sélection si un seul compte connecté pour le réseau choisi.
+- Migration `007_product_truth` — colonne `product_truth TEXT` dans la table `accounts` (nullable, préservée lors des re-connexions OAuth).
 - **Journal système (Logs)** — onglet "Logs" dans Paramètres avec `tauri-plugin-log` : fichier de log rotatif (5 Mo × 3), filtre par niveau, copie, ouverture du fichier directement
 - `get_app_logs` / `get_log_file_path` — commandes Tauri pour lire les logs depuis l'UI
 - `log::info/warn/error` sur les points clés : génération IA (provider, modèle, résultat), exchange token OAuth Instagram

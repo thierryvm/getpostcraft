@@ -20,6 +20,7 @@ pub struct ConnectedAccount {
     pub user_id: String,
     pub username: String,
     pub display_name: Option<String>,
+    pub product_truth: Option<String>,
 }
 
 // ── PKCE helpers ──────────────────────────────────────────────────────────
@@ -267,6 +268,7 @@ pub async fn start_oauth_flow(
         user_id: account.user_id,
         username: account.username,
         display_name: account.display_name,
+        product_truth: account.product_truth,
     })
 }
 
@@ -284,6 +286,7 @@ pub async fn list_accounts(
             user_id: a.user_id,
             username: a.username,
             display_name: a.display_name,
+            product_truth: a.product_truth,
         })
         .collect())
 }
@@ -298,6 +301,22 @@ pub async fn disconnect_account(
     let token_key = format!("{provider}:{user_id}");
     crate::token_store::delete_token(&token_key)?;
     crate::db::accounts::delete(&state.db, &provider, &user_id).await
+}
+
+/// Save or clear the product truth text for a connected account.
+/// Passing an empty string clears the field (sets to NULL).
+#[tauri::command]
+pub async fn update_account_product_truth(
+    state: tauri::State<'_, AppState>,
+    account_id: i64,
+    product_truth: String,
+) -> Result<(), String> {
+    let value = if product_truth.trim().is_empty() {
+        None
+    } else {
+        Some(product_truth.trim())
+    };
+    crate::db::accounts::update_product_truth(&state.db, account_id, value).await
 }
 
 /// Save the Instagram Meta App ID to settings.
@@ -440,6 +459,7 @@ pub async fn start_linkedin_oauth_flow(
         user_id: account.user_id,
         username: account.username,
         display_name: account.display_name,
+        product_truth: account.product_truth,
     })
 }
 

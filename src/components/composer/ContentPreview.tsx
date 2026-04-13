@@ -163,7 +163,7 @@ function VariantsPanel({
 }
 
 export function ContentPreview() {
-  const { result, variants, network, brief, imageFormat, draftId, setResult, setIsLoading, setError, setDraftId } = useComposerStore();
+  const { result, variants, network, brief, accountId, imageFormat, draftId, setResult, setIsLoading, setError, setDraftId } = useComposerStore();
   const queryClient = useQueryClient();
   const { captionLimit, hashtagLimit, foldLimit, recommendedLimit, label: networkLabel } = NETWORK_META[network];
   const imageRef = useRef<HTMLDivElement>(null);
@@ -234,7 +234,7 @@ export function ContentPreview() {
     setError(null);
     setResult(null);
     try {
-      const newResult = await generateContent(brief, network);
+      const newResult = await generateContent(brief, network, accountId);
       setResult(newResult);
       saveDraft(network, newResult.caption, newResult.hashtags)
         .then(setDraftId)
@@ -285,7 +285,7 @@ export function ContentPreview() {
     setCarouselImages(null);
     setExportSuccess(null);
     try {
-      const slides = await generateCarousel(brief, network, slideCount);
+      const slides = await generateCarousel(brief, network, slideCount, accountId);
       setCarouselSlides(slides);
       setCarouselIndex(0);
       const images = await renderCarouselSlides(slides);
