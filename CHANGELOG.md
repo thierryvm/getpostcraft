@@ -12,6 +12,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **Product Truth per account** — a "context / product truth" field per connected account, injected into AI prompts to constrain generation to what actually exists. Prevents publishing content about features that aren't live yet. Inspired by real-world editorial discipline: only show what exists, clearly mark what's in progress or planned. Source: Terminal Learning Instagram strategy (April 2026).
 
 ### Added
+- **Journal système (Logs)** — onglet "Logs" dans Paramètres avec `tauri-plugin-log` : fichier de log rotatif (5 Mo × 3), filtre par niveau, copie, ouverture du fichier directement
+- `get_app_logs` / `get_log_file_path` — commandes Tauri pour lire les logs depuis l'UI
+- `log::info/warn/error` sur les points clés : génération IA (provider, modèle, résultat), exchange token OAuth Instagram
+- Script `scripts/free-port.mjs` — libère automatiquement le port 1420 avant le démarrage de Vite (plus d'orphelins de session précédente)
+- Migration `006_update_default_model` — met à jour les anciennes entrées DB vers l'ID de modèle correct au démarrage
+- Tests unitaires sidecar `TestModelOutputPatterns` — matrice de compatibilité JSON par famille de modèle (Claude, GPT-4o, Mistral, LLaMA, Qwen) — 41 tests au total
+
+### Changed
+- Modèles Anthropic mis à jour vers la famille 4.5/4.6 : `claude-haiku-4-5-20251001` (défaut), `claude-sonnet-4-6`, `claude-opus-4-6`
+- Modèles OpenRouter nettoyés : `gemini-flash-1.5` → `gemini-2.0-flash-001`, `mistral-small` → `mistral-small-3.1-24b-instruct` (marqué `jsonUnreliable`)
+- Nouveau champ `ModelOption.jsonUnreliable` pour signaler les modèles qui ne suivent pas les instructions JSON-only de façon fiable
+- Script npm `tauri` : `tauri` → `npx tauri` pour résoudre la résolution du binaire sur Windows
+- `log crate (0.4)` ajouté aux dépendances Rust
+
+### Fixed
+- Exchange token long-lived Instagram : `unwrap_or` silencieux remplacé par `match` explicite avec `log::info/warn`
+- LinkedIn fold 140 → 210 caractères (valeur réelle du feed mobile)
+- Paramètres IA : changement de modèle sans ressaisir la clé API existante
+- UI : suppression du wrapper `max-h-48` autour de la caption (espace mort)
+- UI : indicateur de fold en amber + texte après fold en pleine opacité
+- UI : image rendue remplit la largeur du conteneur (`w-full h-auto`)
+
 - `render_post_image` Tauri command — renders caption + hashtags to a 1080×1080 PNG via Python/Playwright sidecar
 - `warmup_sidecar` command — pre-loads Python interpreter when Composer opens to reduce first-generation latency
 - "Générer l'image" button in ContentPreview with spinner and inline preview (max-h-72)
