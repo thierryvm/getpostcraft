@@ -279,8 +279,9 @@ mod tests {
     }
 }
 
-const LINKEDIN_PROMPT: &str = r#"Tu es un créateur de contenu expert pour un professionnel DevOps/Linux sur LinkedIn (audience : devs, SRE, ingénieurs, recruteurs tech).
-Ton objectif : écrire des posts qui génèrent du DWELL TIME, des commentaires et des partages — le contenu éducatif/pratique obtient 3-5x plus de portée que les autres types.
+const LINKEDIN_PROMPT: &str = r#"Tu es un créateur de contenu expert sur LinkedIn.
+Ton objectif : écrire des posts qui génèrent du DWELL TIME, des commentaires et des partages — le contenu éducatif/pratique et les histoires humaines authentiques obtiennent 3-5x plus de portée que la promo directe.
+Si un contexte BRAND IDENTITY est fourni ci-dessous, la persona, les projets et la situation réelle de l'auteur viennent de là — base-toi UNIQUEMENT sur ces faits, ne les invente pas.
 
 Retourne UNIQUEMENT ce JSON — sans markdown, sans explication, rien d'autre :
 {"caption": "ton post ici", "hashtags": ["tag1", "tag2", "tag3"]}
@@ -302,11 +303,12 @@ Retourne UNIQUEMENT ce JSON — sans markdown, sans explication, rien d'autre :
 Ces 2 lignes s'affichent SEULES dans le feed. Elles doivent arrêter le scroll sans context.
 
 FORMULES ÉPROUVÉES :
-1. Leçon durement apprise : "J'ai perdu 6h sur un incident prod vendredi soir.\nLa cause : une variable d'env qu'on croyait inutilisée depuis 2 ans."
-2. Chiffre provocateur : "Notre pipeline CI/CD est passé de 18 min à 4 min.\nOn a juste supprimé une étape qu'on pensait obligatoire."
-3. Contre-intuitif : "Plus tu automatises, plus tu dois comprendre ce que tu automatises.\nLa plupart des DevOps font l'inverse."
-4. Vérité inconfortable : "La plupart des 'seniors' DevOps ne savent pas lire un strace.\nC'est un vrai problème."
-5. In medias res : "Vendredi 17h. Une alerte. Le service retourne 500 aléatoirement.\nVoici comment on a trouvé en 45 min."
+1. Leçon durement apprise : "J'ai passé 6h à chercher un bug dans mon code.\nLa cause : un espace dans un nom de variable."
+2. Chiffre provocateur : "J'ai réduit le temps de chargement de mon projet de 18s à 4s.\nJe venais de supprimer une étape que je croyais obligatoire."
+3. Contre-intuitif : "Plus tu automatises, plus tu dois comprendre ce que tu automatises.\nLa plupart des devs font l'inverse."
+4. Vérité inconfortable : "Je code 2h par soir, 5 jours sur 7, depuis 18 mois.\nC'est comme ça qu'on construit quelque chose qui compte."
+5. In medias res : "Dimanche matin, 7h. Mon deploy part en erreur 30 min avant une démo.\nVoici comment j'ai réglé ça à chaud."
+6. Contraste boulot/projet : [si l'auteur a un double profil] "Mon contrat dit une chose, mes soirées racontent une autre histoire.\nDeux identités, un seul objectif."
 
 RÈGLE DU HOOK : jamais "Aujourd'hui je veux parler de...", jamais "LinkedIn, j'ai une annonce", jamais "Voici X conseils pour...".
 

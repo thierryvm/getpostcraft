@@ -24,20 +24,18 @@ Tu gères le compte **@terminallearning** sur Instagram.
 Voici ce que tu pourrais écrire comme Product Truth :
 
 ```
-Compte @terminallearning
-Niche : Linux, Terminal, DevOps — communauté francophone.
+Compte @[username] — niche [domaine], communauté [cible].
 
 Ce qui existe aujourd'hui :
-- Newsletter hebdomadaire gratuite (lien en bio)
-- Formation vidéo "Bash en 30 jours" (disponible)
-- Guide PDF Vim (disponible)
+- [produit ou contenu A] (disponible)
+- [produit ou contenu B] (disponible)
 
 Ce qui N'existe PAS encore :
-- Formation Kubernetes (en cours, pas de date)
-- Coaching 1:1 (pas proposé)
+- [sujet X] (ne pas en parler)
+- [offre Y] (pas proposée)
 
-Ton de voix : direct, praticien, pas de jargon inutile.
-Audience : devs, sysadmins, étudiants en informatique.
+Ton de voix : [ex: direct, praticien, pas de jargon inutile]
+Audience : [ex: développeurs débutants, sysadmins francophones]
 ```
 
 Avec ce texte, l'IA ne mentionnera jamais la formation Kubernetes
@@ -71,13 +69,12 @@ Clique dans la zone de texte et écris librement.
 Voici un exemple court qui fonctionne très bien :
 
 ```
-Compte LinkedIn de Thierry — consultant DevOps indépendant.
+Profil LinkedIn — développeur indie, projet passion en parallèle d'un emploi salarié.
 
-Expertises réelles : CI/CD GitLab, Docker, Linux, Ansible.
-Pas expert en : cloud AWS, Kubernetes (en formation).
-
-Je publie des retours d'expérience de mes missions.
-Jamais de théorie pure. Toujours du vécu.
+Ce que je construis : [nom du projet], [description en 1 ligne].
+Ce que je publie : retours d'expérience de construction, pas de théorie.
+Ton : honnête, direct, amateur assumé — pas d'expert qui donne des leçons.
+Ce que je ne prétends PAS être : [compétences que tu n'as pas encore].
 ```
 
 ---
