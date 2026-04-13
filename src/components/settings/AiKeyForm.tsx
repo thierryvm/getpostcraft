@@ -14,7 +14,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { saveAiKey, getAiKeyStatus, deleteAiKey, setActiveProvider } from "@/lib/tauri/settings";
+import { saveAiKey, getAiKeyStatus, deleteAiKey, setActiveProvider, getActiveProvider } from "@/lib/tauri/settings";
 import {
   PROVIDER_META, OPENROUTER_MODELS, PROVIDER_DEFAULT_MODELS,
   type AiProvider, type AiKeyStatus, type KeyValidationResult,
@@ -29,6 +29,14 @@ export function AiKeyForm() {
   const [result, setResult] = useState<KeyValidationResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [validatedAt, setValidatedAt] = useState<Date | null>(null);
+
+  // Load saved provider + model on mount
+  useEffect(() => {
+    getActiveProvider().then((info) => {
+      setProvider(info.provider as AiProvider);
+      setModel(info.model);
+    }).catch(console.error);
+  }, []);
 
   useEffect(() => {
     if (provider !== "ollama") {
@@ -113,7 +121,20 @@ export function AiKeyForm() {
             <SelectTrigger className="w-72"><SelectValue /></SelectTrigger>
             <SelectContent>
               {OPENROUTER_MODELS.map((m) => (
-                <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                <SelectItem key={m.value} value={m.value}>
+                  <div className="flex items-baseline gap-2">
+                    <span>{m.label}</span>
+                    {m.unstable ? (
+                      <span className="text-xs text-amber-500" title="Les endpoints gratuits OpenRouter sont instables et peuvent être indisponibles à tout moment">⚠ instable</span>
+                    ) : m.free ? (
+                      <span className="text-xs text-emerald-500">gratuit</span>
+                    ) : m.inputPricePer1M !== undefined ? (
+                      <span className="text-xs text-muted-foreground">
+                        ${m.inputPricePer1M}/${m.outputPricePer1M} /1M
+                      </span>
+                    ) : null}
+                  </div>
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -124,6 +145,11 @@ export function AiKeyForm() {
             className="w-72 font-mono text-sm"
             placeholder={PROVIDER_DEFAULT_MODELS[provider]}
           />
+        )}
+        {provider === "openrouter" && OPENROUTER_MODELS.find((m) => m.value === model)?.unstable && (
+          <p className="text-xs text-amber-500 w-72">
+            Les modèles gratuits OpenRouter peuvent être désactivés à tout moment. En cas d'erreur 404, passe sur Claude 3.5 Haiku ($0.80/1M).
+          </p>
         )}
       </div>
 

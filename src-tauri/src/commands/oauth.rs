@@ -217,8 +217,8 @@ pub async fn start_oauth_flow(
     .await
     .map_err(|_| "OAuth flow timed out — please try again")??;
 
-    // 8. Exchange code → access token
-    let access_token = crate::adapters::instagram::exchange_code(
+    // 8. Exchange code → short-lived token, then immediately upgrade to long-lived (~60 days)
+    let short_lived = crate::adapters::instagram::exchange_code(
         &client_id,
         &client_secret,
         &code,
@@ -226,6 +226,11 @@ pub async fn start_oauth_flow(
         &redirect_uri,
     )
     .await?;
+
+    let access_token =
+        crate::adapters::instagram::exchange_for_long_lived_token(&short_lived, &client_secret)
+            .await
+            .unwrap_or(short_lived); // fallback to short-lived if exchange fails (e.g. sandbox apps)
 
     // 9. Fetch user profile
     let user_info = crate::adapters::instagram::get_user_info(&access_token).await?;

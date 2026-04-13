@@ -7,6 +7,9 @@ use crate::state::AppState;
 const IG_API: &str = "https://graph.instagram.com/v21.0";
 const IMGBB_API: &str = "https://api.imgbb.com/1/upload";
 const CATBOX_API: &str = "https://catbox.moe/user/api.php";
+const LITTERBOX_API: &str = "https://litterbox.catbox.moe/resources/internals/api.php";
+const TMPFILES_API: &str = "https://tmpfiles.org/api/v1/upload";
+const NULLPTRME_API: &str = "https://0x0.st";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -34,9 +37,10 @@ fn decode_image_bytes(image_source: &str) -> Result<Vec<u8>, String> {
 
 /// Upload an image to catbox.moe (no API key required).
 /// Returns the public URL, e.g. `https://files.catbox.moe/xxxxxx.png`.
-async fn upload_image_to_catbox(image_source: &str) -> Result<String, String> {
-    let bytes = decode_image_bytes(image_source)?;
-
+async fn upload_image_to_catbox(
+    client: &reqwest::Client,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
     let part = reqwest::multipart::Part::bytes(bytes)
         .file_name("image.png")
         .mime_str("image/png")
@@ -46,10 +50,10 @@ async fn upload_image_to_catbox(image_source: &str) -> Result<String, String> {
         .text("reqtype", "fileupload")
         .part("fileToUpload", part);
 
-    let client = reqwest::Client::new();
     let resp = client
         .post(CATBOX_API)
         .multipart(form)
+        .timeout(std::time::Duration::from_secs(20))
         .send()
         .await
         .map_err(|e| format!("Catbox network error: {e}"))?;
@@ -69,6 +73,178 @@ async fn upload_image_to_catbox(image_source: &str) -> Result<String, String> {
     } else {
         Err(format!("Catbox returned unexpected response: {url}"))
     }
+}
+
+/// Upload an image to 0x0.st (no API key required, reliable fallback).
+/// Returns the public URL.
+async fn upload_image_to_nullptrme(
+    client: &reqwest::Client,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name("image.png")
+        .mime_str("image/png")
+        .map_err(|e| format!("0x0.st mime error: {e}"))?;
+
+    let form = reqwest::multipart::Form::new().part("file", part);
+
+    let resp = client
+        .post(NULLPTRME_API)
+        .multipart(form)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("0x0.st network error: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("0x0.st upload failed: HTTP {}", resp.status()));
+    }
+
+    let url = resp
+        .text()
+        .await
+        .map_err(|e| format!("0x0.st response error: {e}"))?;
+    let url = url.trim().to_string();
+
+    if url.starts_with("https://") || url.starts_with("http://") {
+        Ok(url)
+    } else {
+        Err(format!("0x0.st returned unexpected response: {url}"))
+    }
+}
+
+/// Upload an image to Litterbox (catbox.moe temporary CDN — separate endpoint, more reliable).
+/// Files expire after 1 hour, which is fine: Instagram fetches the image immediately.
+async fn upload_image_to_litterbox(
+    client: &reqwest::Client,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name("image.png")
+        .mime_str("image/png")
+        .map_err(|e| format!("Litterbox mime error: {e}"))?;
+
+    let form = reqwest::multipart::Form::new()
+        .text("reqtype", "fileupload")
+        .text("time", "1h")
+        .part("fileToUpload", part);
+
+    let resp = client
+        .post(LITTERBOX_API)
+        .multipart(form)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| format!("Litterbox network error: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Litterbox upload failed: HTTP {}", resp.status()));
+    }
+
+    let url = resp
+        .text()
+        .await
+        .map_err(|e| format!("Litterbox response error: {e}"))?;
+    let url = url.trim().to_string();
+
+    if url.starts_with("https://") {
+        Ok(url)
+    } else {
+        Err(format!("Litterbox returned unexpected response: {url}"))
+    }
+}
+
+/// Upload an image to tmpfiles.org (no API key, files expire after 1 hour).
+async fn upload_image_to_tmpfiles(
+    client: &reqwest::Client,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct TmpFilesData {
+        url: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct TmpFilesResponse {
+        status: String,
+        data: Option<TmpFilesData>,
+    }
+
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name("image.png")
+        .mime_str("image/png")
+        .map_err(|e| format!("tmpfiles mime error: {e}"))?;
+
+    let form = reqwest::multipart::Form::new().part("file", part);
+
+    let resp = client
+        .post(TMPFILES_API)
+        .multipart(form)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| format!("tmpfiles.org network error: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!(
+            "tmpfiles.org upload failed: HTTP {}",
+            resp.status()
+        ));
+    }
+
+    let body: TmpFilesResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("tmpfiles.org response parse error: {e}"))?;
+
+    if body.status != "success" {
+        return Err(format!("tmpfiles.org returned status: {}", body.status));
+    }
+
+    // tmpfiles returns https://tmpfiles.org/XXXXX/file.png
+    // Instagram needs a direct download link → rewrite to /dl/ path
+    let url = body
+        .data
+        .map(|d| d.url.replacen("tmpfiles.org/", "tmpfiles.org/dl/", 1))
+        .ok_or_else(|| "tmpfiles.org returned no URL".to_string())?;
+
+    Ok(url)
+}
+
+/// Upload image with automatic fallback chain:
+///   Catbox → Litterbox → tmpfiles.org → 0x0.st
+/// If all fail, returns a consolidated error with hints to configure imgbb.
+async fn upload_image_free(image_source: &str) -> Result<String, String> {
+    let bytes = decode_image_bytes(image_source)?;
+    let client = reqwest::Client::new();
+
+    let mut errors: Vec<String> = Vec::new();
+
+    macro_rules! try_host {
+        ($name:expr, $fut:expr) => {
+            match $fut.await {
+                Ok(url) => return Ok(url),
+                Err(e) => errors.push(format!("  {}: {}", $name, e)),
+            }
+        };
+    }
+
+    try_host!("Catbox", upload_image_to_catbox(&client, bytes.clone()));
+    try_host!(
+        "Litterbox",
+        upload_image_to_litterbox(&client, bytes.clone())
+    );
+    try_host!(
+        "tmpfiles.org",
+        upload_image_to_tmpfiles(&client, bytes.clone())
+    );
+    try_host!("0x0.st", upload_image_to_nullptrme(&client, bytes));
+
+    Err(format!(
+        "Tous les hébergeurs gratuits sont indisponibles :\n{}\n\n\
+         Solution : configure une clé imgbb dans Paramètres → Publication \
+         (imgbb.com → API, compte gratuit).",
+        errors.join("\n")
+    ))
 }
 
 /// Upload an image to imgbb and return the public URL.
@@ -220,7 +396,8 @@ pub async fn publish_post(
     // 3. Get access token (never leaves Rust)
     let access_token = crate::token_store::get_token(&account.token_key)?;
 
-    // 4. Upload image → get public URL (provider: catbox by default, imgbb if configured)
+    // 4. Upload image → get public URL
+    //    imgbb if explicitly configured, otherwise free tier with auto-fallback (Catbox → 0x0.st)
     let image_host = crate::db::settings_db::get(&state.db, "image_host")
         .await
         .unwrap_or_else(|| "catbox".to_string());
@@ -231,7 +408,7 @@ pub async fn publish_post(
             .ok_or("Clé imgbb non configurée. Ajoute-la dans Paramètres → Publication.")?;
         upload_image_to_imgbb(image_path, &key).await?
     } else {
-        upload_image_to_catbox(image_path).await?
+        upload_image_free(image_path).await?
     };
 
     // 6. Build caption with hashtags

@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 const TOKEN_URL: &str = "https://api.instagram.com/oauth/access_token";
+const LONG_LIVED_URL: &str = "https://graph.instagram.com/access_token";
 const USER_INFO_URL: &str = "https://graph.instagram.com/me";
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +58,47 @@ pub async fn exchange_code(
         .json()
         .await
         .map_err(|e| format!("Failed to parse token response: {e}"))?;
+
+    Ok(token.access_token)
+}
+
+/// Exchange a short-lived token for a long-lived token (valid ~60 days).
+/// Must be called right after exchange_code — short-lived tokens expire in 1-2 hours.
+///
+/// Endpoint: GET https://graph.instagram.com/access_token
+///   ?grant_type=ig_exchange_token
+///   &client_secret={secret}
+///   &access_token={short_lived}
+pub async fn exchange_for_long_lived_token(
+    short_lived_token: &str,
+    client_secret: &str,
+) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct LongLivedResponse {
+        access_token: String,
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(LONG_LIVED_URL)
+        .query(&[
+            ("grant_type", "ig_exchange_token"),
+            ("client_secret", client_secret),
+            ("access_token", short_lived_token),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Network error during long-lived token exchange: {e}"))?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Long-lived token exchange failed: {body}"));
+    }
+
+    let token: LongLivedResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse long-lived token response: {e}"))?;
 
     Ok(token.access_token)
 }
