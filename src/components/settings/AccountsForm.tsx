@@ -63,7 +63,7 @@ function ProductTruthEditor({
           "Produits réels : formations vidéo Bash, guide Vim, newsletter hebdo.\n" +
           "Ne pas mentionner de produits qui ne sont pas listés ici."
         }
-        className="min-h-28 resize-none text-xs font-mono"
+        className="min-h-28 resize-y text-xs font-mono [field-sizing:content]"
       />
       <div className="flex items-center gap-2">
         <Button
