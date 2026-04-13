@@ -78,6 +78,8 @@ pub async fn exchange_for_long_lived_token(
         access_token: String,
     }
 
+    log::info!("Instagram: requesting long-lived token from {LONG_LIVED_URL}");
+
     let client = reqwest::Client::new();
     let resp = client
         .get(LONG_LIVED_URL)
@@ -91,7 +93,9 @@ pub async fn exchange_for_long_lived_token(
         .map_err(|e| format!("Network error during long-lived token exchange: {e}"))?;
 
     if !resp.status().is_success() {
+        let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
+        log::warn!("Instagram: long-lived token exchange returned HTTP {status}: {body}");
         return Err(format!("Long-lived token exchange failed: {body}"));
     }
 

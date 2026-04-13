@@ -227,10 +227,21 @@ pub async fn start_oauth_flow(
     )
     .await?;
 
-    let access_token =
-        crate::adapters::instagram::exchange_for_long_lived_token(&short_lived, &client_secret)
-            .await
-            .unwrap_or(short_lived); // fallback to short-lived if exchange fails (e.g. sandbox apps)
+    let access_token = match crate::adapters::instagram::exchange_for_long_lived_token(
+        &short_lived,
+        &client_secret,
+    )
+    .await
+    {
+        Ok(token) => {
+            log::info!("Instagram: long-lived token obtained successfully");
+            token
+        }
+        Err(e) => {
+            log::warn!("Instagram: long-lived token exchange failed, falling back to short-lived token: {e}");
+            short_lived
+        }
+    };
 
     // 9. Fetch user profile
     let user_info = crate::adapters::instagram::get_user_info(&access_token).await?;

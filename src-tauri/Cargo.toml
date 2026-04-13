@@ -35,4 +35,5 @@ urlencoding = "2"
 rcgen = "0.13"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["ring"] }
+log = "0.4"
 
