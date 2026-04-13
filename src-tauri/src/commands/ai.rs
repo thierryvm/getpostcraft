@@ -71,16 +71,27 @@ pub async fn generate_content(
 
     let request = crate::sidecar::SidecarRequest {
         action: "generate_content".to_string(),
-        provider,
+        provider: provider.clone(),
         api_key,
-        model,
+        model: model.clone(),
         base_url,
         brief,
         network: network.clone(),
         system_prompt: crate::network_rules::get_system_prompt(&network).to_string(),
     };
 
-    let data = crate::sidecar::call_sidecar(request).await?;
+    log::info!("AI: generating content — provider={provider} model={model} network={network}");
+
+    let data = crate::sidecar::call_sidecar(request).await.map_err(|e| {
+        log::error!("AI: generation failed — provider={provider} model={model}: {e}");
+        e
+    })?;
+
+    log::info!(
+        "AI: generation success — caption_len={} hashtags={}",
+        data.caption.len(),
+        data.hashtags.len()
+    );
 
     Ok(GeneratedContent {
         caption: data.caption,
