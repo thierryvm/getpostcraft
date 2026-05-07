@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, RefreshCw, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -48,6 +49,11 @@ export function UpdateChecker() {
   const [version, setVersion] = useState<string>("…");
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const logsRef = useRef<HTMLDivElement>(null);
+  // Hold the Update handle from the last `checkForUpdate` so install uses
+  // the exact version the user saw in the UI. Re-checking inside `handleInstall`
+  // would race with a publish/retraction between the two calls and either
+  // silently abort or download a different version than what was confirmed.
+  const pendingUpdate = useRef<Update | null>(null);
 
   const log: LogSink = (level, message) => {
     const entry: LogEntry = {
@@ -76,9 +82,11 @@ export function UpdateChecker() {
 
   const handleCheck = async () => {
     setStatus({ kind: "checking" });
+    pendingUpdate.current = null;
     try {
       const update = await checkForUpdate(log);
       if (update) {
+        pendingUpdate.current = update;
         setStatus({
           kind: "available",
           version: update.version,
@@ -97,6 +105,14 @@ export function UpdateChecker() {
 
   const handleInstall = async () => {
     if (status.kind !== "available") return;
+    const update = pendingUpdate.current;
+    if (!update) {
+      // Either the user never clicked "Vérifier" or the handle was cleared.
+      // Force a fresh check rather than silently downloading whatever is now
+      // pinned as latest — the user explicitly approved the version they saw.
+      setStatus({ kind: "up-to-date" });
+      return;
+    }
     setStatus({
       kind: "downloading",
       version: status.version,
@@ -104,13 +120,6 @@ export function UpdateChecker() {
       total: null,
     });
     try {
-      // Re-fetch the Update handle — checkForUpdate doesn't return one we can store
-      // because UpdaterStatus is serializable, so we call check() again here.
-      const update = await checkForUpdate(log);
-      if (!update) {
-        setStatus({ kind: "up-to-date" });
-        return;
-      }
       await downloadAndInstall(update, log, (downloaded, total) => {
         setStatus((s) =>
           s.kind === "downloading"
