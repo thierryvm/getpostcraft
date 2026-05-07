@@ -103,7 +103,11 @@ export function LinkedInSection({ account }: { account: ConnectedAccount | undef
               Déconnecter
             </Button>
           </div>
-          <ProductTruthEditor accountId={account.id} initialValue={account.product_truth} />
+          <ProductTruthEditor
+            accountId={account.id}
+            initialValue={account.product_truth}
+            handle={account.display_name ?? account.username}
+          />
           <BrandColorsEditor
             accountId={account.id}
             initialBrand={account.brand_color}

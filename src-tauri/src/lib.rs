@@ -76,6 +76,7 @@ pub fn run() {
             commands::ai::scrape_url_for_brief,
             commands::ai::warmup_sidecar,
             commands::ai::generate_carousel,
+            commands::ai::synthesize_product_truth_from_url,
             // Media
             commands::media::render_post_image,
             commands::media::render_code_image,

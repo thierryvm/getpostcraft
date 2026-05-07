@@ -39,6 +39,51 @@ class AIClient:
             return self._carousel_anthropic(brief, slide_count, system_prompt)
         return self._carousel_openai_compat(brief, slide_count, system_prompt)
 
+    def synthesize_product_truth(
+        self, content: str, system_prompt: str
+    ) -> str:
+        """Synthesize a structured ProductTruth from raw scraped website content.
+
+        Returns plain text (not JSON) — the user pastes it directly into the
+        textarea, so we don't need parsing. Long output budget (1200 tokens)
+        because a good ProductTruth is 200-400 words.
+        """
+        if self.provider == "anthropic":
+            return self._synthesize_anthropic(content, system_prompt)
+        return self._synthesize_openai_compat(content, system_prompt)
+
+    def _synthesize_openai_compat(self, content: str, system_prompt: str) -> str:
+        base_url = self.base_url or "https://openrouter.ai/api/v1"
+        api_key = self.api_key or "ollama"
+        headers: dict[str, str] = {}
+        if self.provider == "openrouter":
+            headers = {
+                "HTTP-Referer": "https://getpostcraft.app",
+                "X-Title": "Getpostcraft",
+            }
+        client = OpenAI(api_key=api_key, base_url=base_url, default_headers=headers)
+        response = client.chat.completions.create(
+            model=self.model,
+            max_tokens=1200,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content},
+            ],
+        )
+        return _sanitize_surrogates((response.choices[0].message.content or "").strip())
+
+    def _synthesize_anthropic(self, content: str, system_prompt: str) -> str:
+        if not self.api_key:
+            raise ValueError("Anthropic requires an API key")
+        client = anthropic.Anthropic(api_key=self.api_key)
+        message = client.messages.create(
+            model=self.model,
+            max_tokens=1200,
+            system=system_prompt,
+            messages=[{"role": "user", "content": content}],
+        )
+        return _sanitize_surrogates(message.content[0].text.strip())
+
     def _carousel_openai_compat(
         self, brief: str, slide_count: int, system_prompt: str
     ) -> list[dict]:
