@@ -121,6 +121,35 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             _respond_error(str(exc))
 
+    elif action == "scrape_url_rendered_with_screenshot":
+        try:
+            from scraper import scrape_url_rendered_with_screenshot
+
+            text, screenshot_b64 = scrape_url_rendered_with_screenshot(
+                req["url"],
+                max_chars=req.get("max_chars", 8000),
+                capture_screenshot=req.get("capture_screenshot", True),
+            )
+            _respond_ok({"text": text, "screenshot": screenshot_b64})
+        except Exception as exc:  # noqa: BLE001
+            _respond_error(str(exc))
+
+    elif action == "extract_visual_profile":
+        try:
+            client = AIClient(
+                provider=req["provider"],
+                api_key=req.get("api_key"),
+                model=req["model"],
+                base_url=req.get("base_url"),
+            )
+            profile = client.extract_visual_profile(
+                screenshot_b64=req["screenshot"],
+                system_prompt=req["system_prompt"],
+            )
+            _respond_ok(profile)
+        except Exception as exc:  # noqa: BLE001
+            _respond_error(str(exc))
+
     elif action == "synthesize_product_truth":
         try:
             client = AIClient(

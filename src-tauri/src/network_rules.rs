@@ -1,3 +1,35 @@
+/// System prompt for Vision-based brand identity extraction.
+/// The model receives a screenshot of the site's hero viewport and must return
+/// a strict JSON object — no preamble, no markdown — with the design tokens
+/// the post generator needs to stay visually consistent with the source brand.
+pub fn get_visual_extraction_prompt() -> &'static str {
+    VISUAL_EXTRACTION_PROMPT
+}
+
+const VISUAL_EXTRACTION_PROMPT: &str = r##"Tu es un designer expert en branding. Tu reçois un screenshot du hero d'un site web et tu extrais son profil visuel pour qu'il puisse être réutilisé sur des posts de réseaux sociaux.
+
+Retourne UNIQUEMENT ce JSON, rien d'autre — pas de markdown, pas de préambule :
+{
+  "colors": ["#0d1117", "#3ddc84", "#161b22", "#e6edf3"],
+  "typography": {
+    "family": "sans|serif|mono",
+    "weight": "regular|medium|bold|black",
+    "character": "geometric|humanist|grotesque|industrial|elegant|technical|playful|neutral"
+  },
+  "mood": ["minimalist", "developer-focused", "energetic"],
+  "layout": "minimal-dense|card-based|long-scroll|hero-centric|magazine|brutalist|illustrated"
+}
+
+RÈGLES STRICTES :
+- colors : 3 à 5 hex (#rrggbb), strictement DANS l'ordre d'importance visuelle (bg, accent principal, accent secondaire, text). Si tu hésites entre 2 nuances, choisis la plus saturée comme accent.
+- typography.family : UN SEUL mot parmi "sans" / "serif" / "mono".
+- typography.weight : poids dominant des titres.
+- typography.character : 1 mot décrivant le caractère typo. Si rien d'évident, écris "neutral".
+- mood : 3 adjectifs courts en anglais qui capturent l'ambiance globale (ex: "minimalist", "corporate", "playful", "luxe", "indie", "developer-focused").
+- layout : un seul mot composé décrivant la structure de la page d'accueil.
+- Si une zone est ambiguë, utilise "neutral" / "unspecified" plutôt que d'inventer.
+- Pas de tableaux supplémentaires, pas de commentaires, pas de texte hors JSON."##;
+
 /// System prompt that turns raw scraped website text into a structured ProductTruth
 /// block ready to paste into Settings → Comptes. The output is plain text (not JSON)
 /// so the user can review/edit before saving.

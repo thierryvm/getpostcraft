@@ -23,6 +23,7 @@ pub struct ConnectedAccount {
     pub product_truth: Option<String>,
     pub brand_color: Option<String>,
     pub accent_color: Option<String>,
+    pub visual_profile: Option<String>,
 }
 
 impl From<crate::db::accounts::Account> for ConnectedAccount {
@@ -36,6 +37,7 @@ impl From<crate::db::accounts::Account> for ConnectedAccount {
             product_truth: a.product_truth,
             brand_color: a.brand_color,
             accent_color: a.accent_color,
+            visual_profile: a.visual_profile,
         }
     }
 }

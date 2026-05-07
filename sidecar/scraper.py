@@ -112,11 +112,28 @@ def scrape_url_rendered(url: str, max_chars: int = 8000) -> str:
     Required for SPAs (React/Vue/Svelte/Next-without-SSR) where ``scrape_url``
     only finds the empty shell. Slower (~3-5 s per call) so this is reserved
     for the explicit "Analyser depuis URL" flow, not every brief extract.
-
-    Returns the rendered visible text, truncated to *max_chars*. The default
-    is generous (8000) because the AI synthesis step that consumes this output
-    benefits from a wider context window than a brief field.
     """
+    text, _ = scrape_url_rendered_with_screenshot(url, max_chars, capture_screenshot=False)
+    return text
+
+
+def scrape_url_rendered_with_screenshot(
+    url: str,
+    max_chars: int = 8000,
+    capture_screenshot: bool = True,
+) -> tuple[str, str | None]:
+    """Render *url* with Playwright and return (text, screenshot_base64).
+
+    Single browser launch for both extractions — Chromium cold start is ~2-3 s
+    so doubling it for separate calls would push the analyzer over the user's
+    spinner tolerance. The screenshot is the hero viewport (1280×800) which
+    is what Vision API needs to assess the brand identity (colors, typography,
+    layout) without paying for a full-page tall image.
+
+    Returns:
+        (rendered_text, screenshot_base64_png_or_None)
+    """
+    import base64
     from playwright.sync_api import sync_playwright  # lazy import
 
     with sync_playwright() as p:
@@ -128,7 +145,8 @@ def scrape_url_rendered(url: str, max_chars: int = 8000) -> str:
                 user_agent=(
                     "Mozilla/5.0 (compatible; Getpostcraft/0.1; "
                     "+https://getpostcraft.app)"
-                )
+                ),
+                viewport={"width": 1280, "height": 800},
             )
             # `networkidle` waits for SPAs to finish their initial fetches.
             # Cap at 30 s so a stuck site doesn't hang the sidecar.
@@ -137,16 +155,23 @@ def scrape_url_rendered(url: str, max_chars: int = 8000) -> str:
             # innerText skips hidden elements and follows display:none. Better
             # signal-to-noise than textContent for analysis.
             text = page.evaluate("() => document.body.innerText || ''")
+
+            screenshot_b64: str | None = None
+            if capture_screenshot:
+                # full_page=False = just the viewport (1280×800, ~50-150 KB),
+                # bounded cost when sent to Vision API. PNG keeps brand colors
+                # faithful (no JPEG artifacts on flat hero backgrounds).
+                png_bytes = page.screenshot(type="png", full_page=False)
+                screenshot_b64 = base64.b64encode(png_bytes).decode("ascii")
         finally:
             browser.close()
 
     if not isinstance(text, str):
         raise ValueError("Renderer returned non-string content")
 
-    # Re-collapse whitespace; the browser preserves it more aggressively than our parser.
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]+", " ", text)
-    return _truncate(text.strip(), max_chars)
+    return _truncate(text.strip(), max_chars), screenshot_b64
 
 
 def _truncate(text: str, max_chars: int) -> str:
