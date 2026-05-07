@@ -6,6 +6,8 @@ import type { CaptionVariant } from "@/lib/tauri/composer";
 interface ComposerState {
   brief: string;
   network: Network;
+  /** ID of the connected account to generate for — injects product_truth into prompt. */
+  accountId: number | null;
   imageFormat: ImageFormat;
   result: GeneratedContent | null;
   variants: CaptionVariant[] | null;
@@ -15,6 +17,7 @@ interface ComposerState {
   draftId: number | null;
   setBrief: (brief: string) => void;
   setNetwork: (network: Network) => void;
+  setAccountId: (id: number | null) => void;
   setImageFormat: (format: ImageFormat) => void;
   setResult: (result: GeneratedContent | null) => void;
   setVariants: (variants: CaptionVariant[] | null) => void;
@@ -26,6 +29,7 @@ interface ComposerState {
 export const useComposerStore = create<ComposerState>((set) => ({
   brief: "",
   network: "instagram",
+  accountId: null,
   imageFormat: getDefaultFormat("instagram"),
   result: null,
   variants: null,
@@ -34,6 +38,7 @@ export const useComposerStore = create<ComposerState>((set) => ({
   draftId: null,
   setBrief: (brief) => set({ brief }),
   setNetwork: (network) => set({ network, imageFormat: getDefaultFormat(network) }),
+  setAccountId: (accountId) => set({ accountId }),
   setImageFormat: (imageFormat) => set({ imageFormat }),
   setResult: (result) => set({ result, variants: null }),
   setVariants: (variants) => set({ variants, result: null }),

@@ -5,6 +5,7 @@ import { AiKeyForm } from "@/components/settings/AiKeyForm";
 import { AccountsForm } from "@/components/settings/AccountsForm";
 import { PublicationForm } from "@/components/settings/PublicationForm";
 import { AboutSection } from "@/components/settings/AboutSection";
+import { LogsPanel } from "@/components/settings/LogsPanel";
 
 export function SettingsPage() {
   const { tab } = useSearch({ from: "/settings" });
@@ -28,6 +29,7 @@ export function SettingsPage() {
           <TabsTrigger value="ai">Intelligence Artificielle</TabsTrigger>
           <TabsTrigger value="accounts">Comptes</TabsTrigger>
           <TabsTrigger value="publication">Publication</TabsTrigger>
+          <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="about">À propos</TabsTrigger>
         </TabsList>
 
@@ -70,6 +72,21 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent>
               <PublicationForm />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="logs" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Journal système</CardTitle>
+              <CardDescription>
+                Événements de l'application — OAuth, génération IA, publication, erreurs.
+                Fichier stocké localement, max 5 Mo × 3 rotations.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <LogsPanel />
             </CardContent>
           </Card>
         </TabsContent>

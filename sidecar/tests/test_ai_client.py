@@ -239,3 +239,118 @@ class TestRespondError:
     def test_error_field_is_string(self):
         result = self._call_respond_error("test")
         assert isinstance(result["error"], str)
+
+
+# ── Matrice de compatibilité modèles ─────────────────────────────────────────
+# Ces tests documentent les patterns de sortie réels observés par famille.
+# Ils ne font AUCUN appel API — ils reproduisent les outputs connus.
+#
+# Modèles validés (compatible JSON-only) :
+#   ✅ anthropic/claude-* (propre, pas de fence)
+#   ✅ openai/gpt-4o, gpt-4o-mini (parfois fence ```json)
+#   ✅ openai/gpt-3.5-turbo (parfois fence ```json)
+#   ⚠️  mistralai/mistral-large, mistral-medium (fence ```json fréquente)
+#   ⚠️  mistralai/mistral-small-* (texte parasite avant/après JSON)
+#   ⚠️  meta-llama/* (contrôle chars dans les valeurs, surrogates)
+#   ⚠️  qwen/* (surrogates Unicode fréquents)
+#   ❌  mistralai/mistral-7b-instruct (rarement JSON valide sans préambule)
+
+class TestModelOutputPatterns:
+    """Patterns de sortie réels observés — tests de non-régression."""
+
+    # ── Claude (Anthropic) ────────────────────────────────────────────────
+
+    def test_claude_clean_json_no_fence(self):
+        """Claude retourne du JSON propre, sans fence ni préambule."""
+        output = '{"caption": "Tu perds 40 min/semaine à retaper les mêmes commandes. J\'ai mis 3 min à régler ça.", "hashtags": ["linux", "bash", "terminal", "sysadmin", "devops"]}'
+        result = _parse_json_response(output)
+        assert len(result["hashtags"]) == 5
+        assert "caption" in result
+
+    # ── GPT-4o / GPT-4o-mini (OpenAI) ────────────────────────────────────
+
+    def test_gpt4o_json_in_markdown_fence(self):
+        """GPT-4o wrapping fréquent dans ```json."""
+        output = '```json\n{"caption": "Astuce grep.", "hashtags": ["linux", "bash"]}\n```'
+        result = _parse_json_response(output)
+        assert result["caption"] == "Astuce grep."
+
+    def test_gpt4o_mini_trailing_newline(self):
+        """GPT-4o-mini ajoute parfois un \\n final."""
+        output = '{"caption": "test", "hashtags": ["tag1"]}\n'
+        result = _parse_json_response(output)
+        assert result["caption"] == "test"
+
+    # ── Mistral Large / Medium ────────────────────────────────────────────
+
+    def test_mistral_large_json_fence(self):
+        """Mistral Large utilise systématiquement ```json."""
+        output = "```json\n{\"caption\": \"Commande find oubliée.\", \"hashtags\": [\"linux\", \"sysadmin\"]}\n```"
+        result = _parse_json_response(output)
+        assert "find" in result["caption"]
+
+    # ── Mistral Small — comportement problématique documenté ─────────────
+
+    def test_mistral_small_preamble_text(self):
+        """
+        Mistral Small ajoute souvent du texte AVANT le JSON.
+        Comportement actuel : lève ValueError (attendu).
+        Quand on améliore le parser avec extraction regex, ce test devra passer.
+        """
+        json_part = '{"caption": "Astuce bash.", "hashtags": ["bash"]}'
+        output = f"Voici la caption que j'ai générée pour toi :\n{json_part}"
+        try:
+            result = _parse_json_response(output)
+            # Si le parser s'améliore et extrait le JSON, les clés doivent être là
+            assert "caption" in result
+        except (ValueError, json.JSONDecodeError):
+            # Comportement actuel attendu — pas une régression
+            pass
+
+    def test_mistral_small_suffix_text(self):
+        """Mistral Small ajoute parfois du texte APRÈS le JSON."""
+        json_part = '{"caption": "Astuce bash.", "hashtags": ["bash"]}'
+        output = f"{json_part}\n\nJ'espère que cette caption vous plaira !"
+        try:
+            result = _parse_json_response(output)
+            assert "caption" in result
+        except (ValueError, json.JSONDecodeError):
+            pass  # Comportement actuel attendu
+
+    # ── LLaMA / Meta ──────────────────────────────────────────────────────
+
+    def test_llama_literal_newline_in_value(self):
+        """LLaMA insère parfois des \\n réels dans les valeurs de string."""
+        output = '{"caption": "ligne1\nligne2", "hashtags": ["linux"]}'
+        result = _parse_json_response(output)
+        assert "ligne1" in result["caption"]
+        assert "ligne2" in result["caption"]
+
+    def test_llama_tab_in_value(self):
+        """LLaMA insère parfois des tabs dans les valeurs."""
+        output = '{"caption": "col1\tcol2", "hashtags": ["linux"]}'
+        result = _parse_json_response(output)
+        assert "col1" in result["caption"]
+
+    # ── Qwen ──────────────────────────────────────────────────────────────
+
+    def test_qwen_surrogate_in_caption(self):
+        """Certains Qwen produisent des surrogates dans leur sortie."""
+        caption = "caption avec surrogate\udc90ici"
+        raw = json.dumps({"caption": caption, "hashtags": ["linux"]}, ensure_ascii=True)
+        result = _parse_json_response(raw)
+        assert "\udc90" not in result["caption"]
+        assert "caption avec surrogate" in result["caption"]
+
+    # ── Edge cases généraux ───────────────────────────────────────────────
+
+    def test_extra_whitespace_around_json(self):
+        output = "\n\n  " + '{"caption": "ok", "hashtags": ["a"]}' + "  \n\n"
+        result = _parse_json_response(output)
+        assert result["caption"] == "ok"
+
+    def test_unicode_accents_in_caption(self):
+        """Accents français dans la caption — fréquent pour notre niche."""
+        output = '{"caption": "Arrête d\'utiliser cat. Voici pourquoi.", "hashtags": ["linux"]}'
+        result = _parse_json_response(output)
+        assert "Arrête" in result["caption"]

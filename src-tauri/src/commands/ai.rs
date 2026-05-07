@@ -26,12 +26,14 @@ pub struct GeneratedContent {
 
 /// Generates content by calling the Python sidecar.
 /// Reads active provider + model from AppState, API key from OS keychain.
+/// If account_id is provided, fetches the account's product_truth and injects it into the prompt.
 /// SECURITY: key is never logged or returned to renderer.
 #[tauri::command]
 pub async fn generate_content(
     state: tauri::State<'_, AppState>,
     brief: String,
     network: String,
+    account_id: Option<i64>,
 ) -> Result<GeneratedContent, String> {
     if brief.trim().len() < 10 {
         return Err("Le brief doit contenir au moins 10 caractères.".to_string());
@@ -69,18 +71,47 @@ pub async fn generate_content(
         _ => None, // sidecar uses defaults
     };
 
+    // Fetch product_truth from the selected account (if any)
+    let product_truth = if let Some(aid) = account_id {
+        crate::db::accounts::get_by_id(&state.db, aid)
+            .await
+            .ok()
+            .and_then(|a| a.product_truth)
+    } else {
+        None
+    };
+
+    let base_prompt = crate::network_rules::get_system_prompt(&network);
+    let system_prompt =
+        crate::network_rules::inject_product_truth(base_prompt, product_truth.as_deref());
+
     let request = crate::sidecar::SidecarRequest {
         action: "generate_content".to_string(),
-        provider,
+        provider: provider.clone(),
         api_key,
-        model,
+        model: model.clone(),
         base_url,
         brief,
         network: network.clone(),
-        system_prompt: crate::network_rules::get_system_prompt(&network).to_string(),
+        system_prompt,
     };
 
-    let data = crate::sidecar::call_sidecar(request).await?;
+    log::info!(
+        "AI: generating content — provider={provider} model={model} network={network} \
+         account_id={account_id:?} product_truth={}",
+        product_truth.is_some()
+    );
+
+    let data = crate::sidecar::call_sidecar(request).await.map_err(|e| {
+        log::error!("AI: generation failed — provider={provider} model={model}: {e}");
+        e
+    })?;
+
+    log::info!(
+        "AI: generation success — caption_len={} hashtags={}",
+        data.caption.len(),
+        data.hashtags.len()
+    );
 
     Ok(GeneratedContent {
         caption: data.caption,
@@ -94,6 +125,7 @@ pub async fn generate_variants(
     state: tauri::State<'_, AppState>,
     brief: String,
     network: String,
+    account_id: Option<i64>,
 ) -> Result<Vec<CaptionVariant>, String> {
     if brief.trim().len() < 10 {
         return Err("Le brief doit contenir au moins 10 caractères.".to_string());
@@ -128,6 +160,15 @@ pub async fn generate_variants(
         _ => None,
     };
 
+    let product_truth: Option<String> = if let Some(aid) = account_id {
+        crate::db::accounts::get_by_id(&state.db, aid)
+            .await
+            .ok()
+            .and_then(|a| a.product_truth)
+    } else {
+        None
+    };
+
     let make_req = |tone: &str| crate::sidecar::SidecarRequest {
         action: "generate_content".to_string(),
         provider: provider.clone(),
@@ -136,7 +177,11 @@ pub async fn generate_variants(
         base_url: base_url.clone(),
         brief: brief.clone(),
         network: network.clone(),
-        system_prompt: crate::network_rules::get_variant_prompt(&network, tone),
+        system_prompt: crate::network_rules::get_variant_prompt_with_truth(
+            &network,
+            tone,
+            product_truth.as_deref(),
+        ),
     };
 
     // Run all 3 in parallel — each spawns its own Python process
@@ -231,6 +276,7 @@ pub async fn generate_carousel(
     brief: String,
     network: String,
     slide_count: u8,
+    account_id: Option<i64>,
 ) -> Result<Vec<CarouselSlide>, String> {
     if brief.trim().len() < 10 {
         return Err("Le brief doit contenir au moins 10 caractères.".to_string());
@@ -266,6 +312,15 @@ pub async fn generate_carousel(
         _ => None,
     };
 
+    let product_truth: Option<String> = if let Some(aid) = account_id {
+        crate::db::accounts::get_by_id(&state.db, aid)
+            .await
+            .ok()
+            .and_then(|a| a.product_truth)
+    } else {
+        None
+    };
+
     #[derive(Serialize)]
     struct CarouselRequest {
         action: &'static str,
@@ -288,7 +343,10 @@ pub async fn generate_carousel(
         brief,
         network: network.clone(),
         slide_count,
-        system_prompt: crate::network_rules::get_carousel_prompt(&network, slide_count),
+        system_prompt: {
+            let base = crate::network_rules::get_carousel_prompt(&network, slide_count);
+            crate::network_rules::inject_product_truth(&base, product_truth.as_deref())
+        },
     };
     let json = serde_json::to_string(&req).map_err(|e| e.to_string())?;
     let stdout = crate::sidecar::run_sidecar_raw(json, 45).await?;

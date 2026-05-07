@@ -6,6 +6,7 @@ export interface ConnectedAccount {
   user_id: string;
   username: string;
   display_name: string | null;
+  product_truth: string | null;
 }
 
 export function listAccounts(): Promise<ConnectedAccount[]> {
@@ -62,4 +63,15 @@ export function saveLinkedInClientSecret(secret: string): Promise<void> {
 /** Returns true if the LinkedIn client_secret is configured. */
 export function getLinkedInClientSecretStatus(): Promise<boolean> {
   return invoke<boolean>("get_linkedin_client_secret_status");
+}
+
+/** Save or clear the product truth for a connected account. */
+export function updateAccountProductTruth(
+  accountId: number,
+  productTruth: string
+): Promise<void> {
+  return invoke<void>("update_account_product_truth", {
+    accountId,
+    productTruth,
+  });
 }

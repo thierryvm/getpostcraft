@@ -2,7 +2,8 @@ import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Loader2, AlertCircle, Link2, FileText } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { useComposerStore } from "@/stores/composer.store";
 import { generateContent, generateVariants, saveDraft, scrapeUrlForBrief } from "@/lib/tauri/composer";
+import { listAccounts } from "@/lib/tauri/oauth";
 import { NETWORK_META, FORMATS_BY_NETWORK, type Network } from "@/types/composer.types";
 
 const briefSchema = z.object({
@@ -28,8 +30,33 @@ const briefSchema = z.object({
 type BriefFormData = z.infer<typeof briefSchema>;
 
 export function BriefForm() {
-  const { brief, network, imageFormat, isLoading, error, setBrief, setNetwork, setImageFormat, setResult, setVariants, setIsLoading, setError, setDraftId } =
-    useComposerStore();
+  const {
+    brief, network, accountId, imageFormat, isLoading, error,
+    setBrief, setNetwork, setAccountId, setImageFormat,
+    setResult, setVariants, setIsLoading, setError, setDraftId,
+  } = useComposerStore();
+
+  const { data: allAccounts = [] } = useQuery({
+    queryKey: ["accounts"],
+    queryFn: listAccounts,
+  });
+
+  // Accounts that match the currently selected network
+  const networkAccounts = allAccounts.filter((a) => a.provider === network);
+
+  // Auto-select when there's exactly one account for the network
+  useEffect(() => {
+    if (networkAccounts.length === 1 && accountId === null) {
+      setAccountId(networkAccounts[0].id);
+    }
+    // Clear selection if the current account doesn't belong to this network
+    if (
+      accountId !== null &&
+      !networkAccounts.some((a) => a.id === accountId)
+    ) {
+      setAccountId(networkAccounts.length === 1 ? networkAccounts[0].id : null);
+    }
+  }, [network, networkAccounts.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [inputMode, setInputMode] = useState<"text" | "url">("text");
   const [urlValue, setUrlValue] = useState("");
@@ -55,7 +82,7 @@ export function BriefForm() {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await generateContent(data.brief, data.network as Network);
+      const result = await generateContent(data.brief, data.network as Network, accountId);
       setResult(result);
       setBrief(data.brief);
       setNetwork(data.network as Network);
@@ -73,7 +100,7 @@ export function BriefForm() {
     setIsLoading(true);
     setError(null);
     try {
-      const variants = await generateVariants(data.brief, data.network as Network);
+      const variants = await generateVariants(data.brief, data.network as Network, accountId);
       setBrief(data.brief);
       setNetwork(data.network as Network);
       setVariants(variants);
@@ -144,6 +171,40 @@ export function BriefForm() {
             </Select>
           )}
         />
+      </div>
+
+      {/* Account selector */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-foreground">Compte</label>
+        {networkAccounts.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            Aucun compte {network} connecté — génération sans Product Truth.
+          </p>
+        ) : (
+          <Select
+            value={accountId !== null ? String(accountId) : "none"}
+            onValueChange={(val) =>
+              setAccountId(val === "none" ? null : Number(val))
+            }
+          >
+            <SelectTrigger className="w-64">
+              <SelectValue placeholder="Choisir un compte…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">
+                <span className="text-muted-foreground">Aucun (générique)</span>
+              </SelectItem>
+              {networkAccounts.map((a) => (
+                <SelectItem key={a.id} value={String(a.id)}>
+                  @{a.username}
+                  {a.product_truth && (
+                    <span className="ml-1.5 text-xs text-primary">✓ Product Truth</span>
+                  )}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       {/* Image format selector */}

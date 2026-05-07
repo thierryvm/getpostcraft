@@ -11,6 +11,7 @@ pub struct Account {
     pub token_key: String,
     pub created_at: String,
     pub updated_at: String,
+    pub product_truth: Option<String>,
 }
 
 fn row_to_account(row: &SqliteRow) -> Account {
@@ -23,6 +24,7 @@ fn row_to_account(row: &SqliteRow) -> Account {
         token_key: row.get("token_key"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+        product_truth: row.get("product_truth"),
     }
 }
 
@@ -42,7 +44,8 @@ pub async fn upsert_and_get(
              display_name = excluded.display_name,
              token_key    = excluded.token_key,
              updated_at   = excluded.updated_at
-         RETURNING id, provider, user_id, username, display_name, token_key, created_at, updated_at",
+         RETURNING id, provider, user_id, username, display_name, token_key,
+                   created_at, updated_at, product_truth",
     )
     .bind(provider)
     .bind(user_id)
@@ -58,7 +61,8 @@ pub async fn upsert_and_get(
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Account>, String> {
     let rows = sqlx::query(
-        "SELECT id, provider, user_id, username, display_name, token_key, created_at, updated_at
+        "SELECT id, provider, user_id, username, display_name, token_key,
+                created_at, updated_at, product_truth
          FROM accounts ORDER BY created_at ASC",
     )
     .fetch_all(pool)
@@ -66,6 +70,34 @@ pub async fn list(pool: &SqlitePool) -> Result<Vec<Account>, String> {
     .map_err(|e| e.to_string())?;
 
     Ok(rows.iter().map(row_to_account).collect())
+}
+
+pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Account, String> {
+    let row = sqlx::query(
+        "SELECT id, provider, user_id, username, display_name, token_key,
+                created_at, updated_at, product_truth
+         FROM accounts WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Account {id} not found: {e}"))?;
+
+    Ok(row_to_account(&row))
+}
+
+pub async fn update_product_truth(
+    pool: &SqlitePool,
+    id: i64,
+    product_truth: Option<&str>,
+) -> Result<(), String> {
+    sqlx::query("UPDATE accounts SET product_truth = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(product_truth)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub async fn delete(pool: &SqlitePool, provider: &str, user_id: &str) -> Result<(), String> {

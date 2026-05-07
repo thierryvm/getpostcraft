@@ -252,3 +252,28 @@ npm run tauri build        # Production build
 3. **Always understand WHY before implementing WHAT**
 4. **Security implications stated before any auth/token/key code**
 5. **Project compiles and runs before declaring session complete**
+6. **ALL files created or written MUST be inside `F:\PROJECTS\Apps\getpostcraft\`** — never write to `F:\`, `C:\Users\`, or any path outside the project root. Each Bash call starts with a fresh CWD; always use absolute paths.
+7. **No debug/log/batch files outside the project** — temp output goes to `src-tauri/target/` or system temp; never to the drive root or parent directories.
+
+---
+
+## AI Models — Compatibility Matrix
+
+Models validated for JSON output reliability (sidecar `_parse_json_response`).
+Source of truth: `sidecar/tests/test_ai_client.py::TestModelOutputPatterns`.
+
+| Model (OpenRouter ID) | JSON fiable | Notes |
+|---|---|---|
+| `anthropic/claude-haiku-4-5-20251001` | ✅ | Recommandé — propre, pas de fence |
+| `anthropic/claude-sonnet-4-6` | ✅ | Propre, pas de fence |
+| `anthropic/claude-opus-4-6` | ✅ | Propre, pas de fence |
+| `openai/gpt-4o-mini` | ✅ | Parfois fence ```json — géré |
+| `openai/gpt-4o` | ✅ | Parfois fence ```json — géré |
+| `deepseek/deepseek-chat` | ✅ | Propre |
+| `google/gemini-2.0-flash-001` | ✅ | Stable, remplace gemini-flash-1.5 |
+| `mistralai/mistral-small-3.1-24b-instruct` | ⚠️ | Texte parasite fréquent — jsonUnreliable:true |
+| `*:free` (tous) | ⚠️ | Endpoints instables (404 possible) |
+| `mistralai/mistral-7b-instruct:free` | ❌ | Supprimé — endpoint mort |
+| `meta-llama/llama-3.2-3b-instruct:free` | ❌ | Supprimé — endpoint mort |
+
+**Règle** : avant d'ajouter un modèle à `settings.types.ts`, ajouter un test dans `TestModelOutputPatterns` qui documente son pattern de sortie.

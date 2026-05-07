@@ -18,6 +18,20 @@ pub fn run() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("app".to_string()),
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                ])
+                .max_file_size(5_000_000) // 5 MB par fichier
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
+                .build(),
+        )
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
@@ -30,7 +44,7 @@ pub fn run() {
                     .unwrap_or_else(|| "openrouter".to_string());
                 let model = db::settings_db::get(&pool, "active_model")
                     .await
-                    .unwrap_or_else(|| "anthropic/claude-3-5-haiku".to_string());
+                    .unwrap_or_else(|| "anthropic/claude-sonnet-4.6".to_string());
 
                 let state = AppState::new(pool);
 
@@ -103,6 +117,10 @@ pub fn run() {
             commands::oauth::get_linkedin_client_id,
             commands::oauth::save_linkedin_client_secret,
             commands::oauth::get_linkedin_client_secret_status,
+            commands::oauth::update_account_product_truth,
+            // Logs
+            commands::logs::get_app_logs,
+            commands::logs::get_log_file_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

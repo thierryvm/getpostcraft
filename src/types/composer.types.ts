@@ -6,6 +6,12 @@ export interface NetworkMeta {
   hashtagLimit: number;
   /** Characters visible before "Voir plus" / "...more" in the feed. 0 = no fold. */
   foldLimit: number;
+  /**
+   * Algo-optimal upper bound for caption length.
+   * Above this the counter turns orange (still valid, but not recommended).
+   * 0 = no recommendation.
+   */
+  recommendedLimit: number;
   v1: boolean;
 }
 
@@ -15,11 +21,19 @@ export const NETWORK_META: Record<Network, NetworkMeta> = {
     captionLimit: 2200,
     hashtagLimit: 30,
     foldLimit: 125,
+    recommendedLimit: 380,   // sweet spot algo : 200–380 chars
     v1: true,
   },
-  linkedin: { label: "LinkedIn", captionLimit: 3000, hashtagLimit: 5, foldLimit: 210, v1: true },
-  twitter: { label: "Twitter / X", captionLimit: 280, hashtagLimit: 2, foldLimit: 0, v1: false },
-  tiktok: { label: "TikTok", captionLimit: 2200, hashtagLimit: 100, foldLimit: 0, v1: false },
+  linkedin: {
+    label: "LinkedIn",
+    captionLimit: 3000,
+    hashtagLimit: 5,
+    foldLimit: 210,
+    recommendedLimit: 2100,  // sweet spot algo : 1300–2100 chars
+    v1: true,
+  },
+  twitter:  { label: "Twitter / X", captionLimit: 280,  hashtagLimit: 2,   foldLimit: 0, recommendedLimit: 0, v1: false },
+  tiktok:   { label: "TikTok",      captionLimit: 2200, hashtagLimit: 100, foldLimit: 0, recommendedLimit: 0, v1: false },
 };
 
 export interface ImageFormat {

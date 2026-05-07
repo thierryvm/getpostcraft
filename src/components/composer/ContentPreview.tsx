@@ -163,9 +163,9 @@ function VariantsPanel({
 }
 
 export function ContentPreview() {
-  const { result, variants, network, brief, imageFormat, draftId, setResult, setIsLoading, setError, setDraftId } = useComposerStore();
+  const { result, variants, network, brief, accountId, imageFormat, draftId, setResult, setIsLoading, setError, setDraftId } = useComposerStore();
   const queryClient = useQueryClient();
-  const { captionLimit, hashtagLimit, foldLimit, label: networkLabel } = NETWORK_META[network];
+  const { captionLimit, hashtagLimit, foldLimit, recommendedLimit, label: networkLabel } = NETWORK_META[network];
   const imageRef = useRef<HTMLDivElement>(null);
 
   type VisualTemplate = "post" | "code" | "terminal" | "carousel";
@@ -234,7 +234,7 @@ export function ContentPreview() {
     setError(null);
     setResult(null);
     try {
-      const newResult = await generateContent(brief, network);
+      const newResult = await generateContent(brief, network, accountId);
       setResult(newResult);
       saveDraft(network, newResult.caption, newResult.hashtags)
         .then(setDraftId)
@@ -285,7 +285,7 @@ export function ContentPreview() {
     setCarouselImages(null);
     setExportSuccess(null);
     try {
-      const slides = await generateCarousel(brief, network, slideCount);
+      const slides = await generateCarousel(brief, network, slideCount, accountId);
       setCarouselSlides(slides);
       setCarouselIndex(0);
       const images = await renderCarouselSlides(slides);
@@ -360,6 +360,12 @@ export function ContentPreview() {
   const safeResult = result!;
   const captionLength = safeResult.caption.length;
   const isOverLimit = captionLength > captionLimit;
+  const isOverRecommended = recommendedLimit > 0 && captionLength > recommendedLimit && !isOverLimit;
+  const counterColor = isOverLimit
+    ? "text-destructive"
+    : isOverRecommended
+    ? "text-orange-400"
+    : "text-muted-foreground";
   const hashtagsText = hashtags.map((t) => `#${t}`).join(" ");
 
   return (
@@ -374,8 +380,9 @@ export function ContentPreview() {
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-foreground">Caption</span>
             <div className="flex items-center gap-1">
-              <span className={`text-xs ${isOverLimit ? "text-destructive" : "text-muted-foreground"}`}>
+              <span className={`text-xs ${counterColor}`}>
                 {captionLength} / {captionLimit}
+                {isOverRecommended && ` · >${recommendedLimit} recommandé`}
               </span>
               {!isEditingCaption && (
                 <>

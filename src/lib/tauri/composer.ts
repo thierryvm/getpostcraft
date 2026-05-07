@@ -15,9 +15,14 @@ export function warmupSidecar(): void {
 
 export async function generateContent(
   brief: string,
-  network: Network
+  network: Network,
+  accountId: number | null
 ): Promise<GeneratedContent> {
-  return invoke<GeneratedContent>("generate_content", { brief, network });
+  return invoke<GeneratedContent>("generate_content", {
+    brief,
+    network,
+    accountId,
+  });
 }
 
 export async function saveDraft(
@@ -40,9 +45,14 @@ export interface CaptionVariant {
 
 export async function generateVariants(
   brief: string,
-  network: string
+  network: string,
+  accountId: number | null
 ): Promise<CaptionVariant[]> {
-  return invoke<CaptionVariant[]>("generate_variants", { brief, network });
+  return invoke<CaptionVariant[]>("generate_variants", {
+    brief,
+    network,
+    accountId,
+  });
 }
 
 export interface CarouselSlide {
@@ -56,11 +66,13 @@ export interface CarouselSlide {
 export async function generateCarousel(
   brief: string,
   network: string,
-  slideCount: number
+  slideCount: number,
+  accountId: number | null
 ): Promise<CarouselSlide[]> {
   return invoke<CarouselSlide[]>("generate_carousel", {
     brief,
     network,
     slideCount,
+    accountId,
   });
 }
