@@ -4,12 +4,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
 
-const IG_API: &str = "https://graph.instagram.com/v21.0";
+const IG_API_DEFAULT: &str = "https://graph.instagram.com/v21.0";
 const IMGBB_API: &str = "https://api.imgbb.com/1/upload";
 const CATBOX_API: &str = "https://catbox.moe/user/api.php";
 const LITTERBOX_API: &str = "https://litterbox.catbox.moe/resources/internals/api.php";
 const TMPFILES_API: &str = "https://tmpfiles.org/api/v1/upload";
 const NULLPTRME_API: &str = "https://0x0.st";
+
+/// Returns the Instagram Graph API base URL. Defaults to the production
+/// endpoint; overridable via `GETPOSTCRAFT_IG_API` so integration tests can
+/// point this at a `wiremock::MockServer` without recompiling.
+fn ig_api_base() -> String {
+    std::env::var("GETPOSTCRAFT_IG_API").unwrap_or_else(|_| IG_API_DEFAULT.to_string())
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -309,7 +316,7 @@ async fn create_ig_container(
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{IG_API}/{ig_user_id}/media"))
+        .post(format!("{}/{ig_user_id}/media", ig_api_base()))
         .form(&[
             ("image_url", image_url),
             ("caption", caption),
@@ -346,7 +353,7 @@ async fn create_ig_carousel_item(
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{IG_API}/{ig_user_id}/media"))
+        .post(format!("{}/{ig_user_id}/media", ig_api_base()))
         .form(&[
             ("image_url", image_url),
             ("is_carousel_item", "true"),
@@ -384,7 +391,7 @@ async fn create_ig_carousel_parent(
     let children = children_ids.join(",");
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{IG_API}/{ig_user_id}/media"))
+        .post(format!("{}/{ig_user_id}/media", ig_api_base()))
         .form(&[
             ("media_type", "CAROUSEL"),
             ("children", &children),
@@ -422,7 +429,7 @@ async fn publish_ig_container(
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{IG_API}/{ig_user_id}/media_publish"))
+        .post(format!("{}/{ig_user_id}/media_publish", ig_api_base()))
         .form(&[
             ("creation_id", container_id),
             ("access_token", access_token),
@@ -447,6 +454,36 @@ async fn publish_ig_container(
 
 /// Resolved uploader configuration. Captured once per publish call so we don't
 /// hit settings_db for every slide of a 5-image carousel.
+/// Orchestrate the Instagram publish flow given pre-uploaded image URLs.
+/// One image → single-image container + publish. Two or more → one carousel-item
+/// container per image + a parent CAROUSEL container + publish. Extracted from
+/// `publish_post` so integration tests can exercise it without an `AppState`,
+/// access token plumbing, or real image hosting.
+async fn publish_ig_flow(
+    ig_user_id: &str,
+    image_urls: &[String],
+    caption: &str,
+    access_token: &str,
+) -> Result<String, String> {
+    if image_urls.is_empty() {
+        return Err("publish_ig_flow requires at least one image URL".to_string());
+    }
+    if image_urls.len() == 1 {
+        let container_id =
+            create_ig_container(ig_user_id, &image_urls[0], caption, access_token).await?;
+        publish_ig_container(ig_user_id, &container_id, access_token).await
+    } else {
+        let mut children_ids: Vec<String> = Vec::with_capacity(image_urls.len());
+        for url in image_urls {
+            let id = create_ig_carousel_item(ig_user_id, url, access_token).await?;
+            children_ids.push(id);
+        }
+        let parent_id =
+            create_ig_carousel_parent(ig_user_id, &children_ids, caption, access_token).await?;
+        publish_ig_container(ig_user_id, &parent_id, access_token).await
+    }
+}
+
 enum ImageUploader {
     /// User configured an imgbb key — direct upload, faster & more reliable.
     Imgbb(String),
@@ -537,32 +574,9 @@ pub async fn publish_post(
     // 5. Build caption with hashtags (used for single OR for carousel parent).
     let full_caption = compose_caption_with_hashtags(&post.caption, &post.hashtags);
 
-    // 6. Branch: single image vs carousel.
-    let media_id = if image_urls.len() == 1 {
-        let container_id = create_ig_container(
-            &account.user_id,
-            &image_urls[0],
-            &full_caption,
-            &access_token,
-        )
-        .await?;
-        publish_ig_container(&account.user_id, &container_id, &access_token).await?
-    } else {
-        // Carousel: container per slide, then parent CAROUSEL container, then publish.
-        let mut children_ids: Vec<String> = Vec::with_capacity(image_urls.len());
-        for url in &image_urls {
-            let id = create_ig_carousel_item(&account.user_id, url, &access_token).await?;
-            children_ids.push(id);
-        }
-        let parent_id = create_ig_carousel_parent(
-            &account.user_id,
-            &children_ids,
-            &full_caption,
-            &access_token,
-        )
-        .await?;
-        publish_ig_container(&account.user_id, &parent_id, &access_token).await?
-    };
+    // 6. Branch + publish via the testable orchestrator.
+    let media_id =
+        publish_ig_flow(&account.user_id, &image_urls, &full_caption, &access_token).await?;
 
     // 7. Update post status in SQLite
     let published_at = Utc::now().to_rfc3339();
@@ -774,4 +788,203 @@ pub async fn publish_linkedin_post(
         media_id: post_urn,
         published_at,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! Integration tests against a `wiremock` mock Graph API.
+    //!
+    //! The production code is unaware of the mock — it just queries the URL
+    //! resolved by `ig_api_base()`, which we override via the env var
+    //! `GETPOSTCRAFT_IG_API` for the duration of each test. `serial_test`
+    //! ensures two tests don't collide on that single global.
+    //!
+    //! These tests would have caught the carousel publish regression PR #11
+    //! fixed: the flow used to call `create_ig_container` with a single URL
+    //! and ignore the rest, silently degrading carousels to single-image
+    //! posts. The `expect(N)` assertions on each mock now make that visible.
+
+    use super::*;
+    use serial_test::serial;
+    use wiremock::matchers::{body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const IG_USER: &str = "12345";
+    const TOKEN: &str = "test-token";
+
+    /// SAFETY: `#[serial]` on every test calling this guarantees no two
+    /// tests touch the env var concurrently, so the unsafe write is sound.
+    async fn boot_ig_mock() -> MockServer {
+        let server = MockServer::start().await;
+        unsafe {
+            std::env::set_var("GETPOSTCRAFT_IG_API", server.uri());
+        }
+        server
+    }
+
+    fn clear_ig_env() {
+        unsafe {
+            std::env::remove_var("GETPOSTCRAFT_IG_API");
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn publish_ig_flow_single_image_calls_one_container_then_publish() {
+        let server = boot_ig_mock().await;
+
+        // Single-image container — body has image_url + caption, NO is_carousel_item.
+        Mock::given(method("POST"))
+            .and(path(format!("/{IG_USER}/media")))
+            .and(body_string_contains("image_url=https"))
+            .and(body_string_contains("caption=Hello"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "container_single_1"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path(format!("/{IG_USER}/media_publish")))
+            .and(body_string_contains("creation_id=container_single_1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "ig_media_99"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let urls = vec!["https://example.com/image.png".to_string()];
+        let media_id = publish_ig_flow(IG_USER, &urls, "Hello world", TOKEN)
+            .await
+            .expect("single-image publish should succeed");
+        assert_eq!(media_id, "ig_media_99");
+
+        drop(server);
+        clear_ig_env();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn publish_ig_flow_carousel_creates_items_then_parent_then_publish() {
+        let server = boot_ig_mock().await;
+
+        // Each carousel-item call returns a deterministic id keyed off the slide URL.
+        // We assert that the parent gets called with all 3 ids in order.
+        let item_ids = ["item_a", "item_b", "item_c"];
+        for id in item_ids {
+            Mock::given(method("POST"))
+                .and(path(format!("/{IG_USER}/media")))
+                .and(body_string_contains("is_carousel_item=true"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": id
+                })))
+                .up_to_n_times(1)
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+
+        // Parent CAROUSEL container.
+        Mock::given(method("POST"))
+            .and(path(format!("/{IG_USER}/media")))
+            .and(body_string_contains("media_type=CAROUSEL"))
+            .and(body_string_contains("children=item_a%2Citem_b%2Citem_c"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "parent_xyz"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Final publish.
+        Mock::given(method("POST"))
+            .and(path(format!("/{IG_USER}/media_publish")))
+            .and(body_string_contains("creation_id=parent_xyz"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "ig_media_carousel"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let urls: Vec<String> = (1..=3)
+            .map(|i| format!("https://example.com/slide-{i}.png"))
+            .collect();
+        let media_id = publish_ig_flow(IG_USER, &urls, "Carousel caption", TOKEN)
+            .await
+            .expect("carousel publish should succeed");
+        assert_eq!(media_id, "ig_media_carousel");
+
+        drop(server);
+        clear_ig_env();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn publish_ig_flow_propagates_500_at_container_creation() {
+        let server = boot_ig_mock().await;
+
+        Mock::given(method("POST"))
+            .and(path(format!("/{IG_USER}/media")))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Graph API down"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let urls = vec!["https://example.com/image.png".to_string()];
+        let result = publish_ig_flow(IG_USER, &urls, "Hello", TOKEN).await;
+
+        assert!(result.is_err(), "500 from container API must propagate");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Graph API down") || err.contains("container creation"),
+            "error should reference upstream cause, got: {err}"
+        );
+
+        drop(server);
+        clear_ig_env();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn publish_ig_flow_aborts_when_first_carousel_item_fails() {
+        let server = boot_ig_mock().await;
+
+        Mock::given(method("POST"))
+            .and(path(format!("/{IG_USER}/media")))
+            .and(body_string_contains("is_carousel_item=true"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("Invalid image"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // No parent or publish mocks — if the code reached them, wiremock
+        // would 404 and the assertion below would still hold (the only error
+        // here would never be the abort signal we expect).
+        let urls: Vec<String> = (1..=3)
+            .map(|i| format!("https://example.com/slide-{i}.png"))
+            .collect();
+        let result = publish_ig_flow(IG_USER, &urls, "Caption", TOKEN).await;
+        assert!(
+            result.is_err(),
+            "carousel must abort when any item creation fails"
+        );
+
+        drop(server);
+        clear_ig_env();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn publish_ig_flow_rejects_empty_url_slice() {
+        // No mock needed — the function fails fast before any HTTP call.
+        let result = publish_ig_flow(IG_USER, &[], "x", TOKEN).await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("at least one image URL"),
+            "should fail fast with a clear message"
+        );
+    }
 }
