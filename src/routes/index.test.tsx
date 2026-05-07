@@ -16,6 +16,9 @@ const mockPost: PostRecord = {
   created_at: "2026-04-12T10:00:00.000Z",
   published_at: null,
   scheduled_at: null,
+  image_path: null,
+  images: [],
+  ig_media_id: null,
 };
 
 function renderSheet(overrides: Partial<Parameters<typeof PostDetailSheet>[0]> = {}) {
