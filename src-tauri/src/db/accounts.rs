@@ -14,10 +14,14 @@ pub struct Account {
     pub product_truth: Option<String>,
     pub brand_color: Option<String>,
     pub accent_color: Option<String>,
+    /// JSON blob produced by the Vision-based analyzer in PR-GPC-7.
+    /// Shape: see migration 012. Read by the post generation flow as a
+    /// secondary style hint on top of `product_truth`. None = no analysis run.
+    pub visual_profile: Option<String>,
 }
 
 const SELECT_COLUMNS: &str = "id, provider, user_id, username, display_name, token_key, \
-     created_at, updated_at, product_truth, brand_color, accent_color";
+     created_at, updated_at, product_truth, brand_color, accent_color, visual_profile";
 
 fn row_to_account(row: &SqliteRow) -> Account {
     Account {
@@ -32,7 +36,24 @@ fn row_to_account(row: &SqliteRow) -> Account {
         product_truth: row.get("product_truth"),
         brand_color: row.get("brand_color"),
         accent_color: row.get("accent_color"),
+        visual_profile: row.try_get("visual_profile").ok().flatten(),
     }
+}
+
+pub async fn update_visual_profile(
+    pool: &SqlitePool,
+    id: i64,
+    visual_profile: Option<&str>,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE accounts SET visual_profile = ?, updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(visual_profile)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub async fn upsert_and_get(

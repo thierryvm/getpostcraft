@@ -84,6 +84,92 @@ class AIClient:
         )
         return _sanitize_surrogates(message.content[0].text.strip())
 
+    def extract_visual_profile(
+        self, screenshot_b64: str, system_prompt: str
+    ) -> dict[str, Any]:
+        """Vision-based extraction of brand identity from a website screenshot.
+
+        Returns a structured dict: { colors, typography, mood, layout }. The
+        system_prompt instructs the model to return ONLY valid JSON; we sanitize
+        lone surrogates and fall back to lenient parsing on the response.
+
+        Both OpenAI-compat (OpenRouter, OpenAI) and Anthropic native accept a
+        base64-encoded screenshot — the format differs slightly per provider.
+        """
+        if self.provider == "anthropic":
+            raw = self._extract_visual_anthropic(screenshot_b64, system_prompt)
+        else:
+            raw = self._extract_visual_openai_compat(screenshot_b64, system_prompt)
+        return _parse_visual_profile(raw)
+
+    def _extract_visual_openai_compat(
+        self, screenshot_b64: str, system_prompt: str
+    ) -> str:
+        base_url = self.base_url or "https://openrouter.ai/api/v1"
+        api_key = self.api_key or "ollama"
+        headers: dict[str, str] = {}
+        if self.provider == "openrouter":
+            headers = {
+                "HTTP-Referer": "https://getpostcraft.app",
+                "X-Title": "Getpostcraft",
+            }
+        client = OpenAI(api_key=api_key, base_url=base_url, default_headers=headers)
+        response = client.chat.completions.create(
+            model=self.model,
+            max_tokens=600,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{screenshot_b64}"
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "Extract the visual brand profile from this screenshot.",
+                        },
+                    ],
+                },
+            ],
+        )
+        return _sanitize_surrogates((response.choices[0].message.content or "").strip())
+
+    def _extract_visual_anthropic(
+        self, screenshot_b64: str, system_prompt: str
+    ) -> str:
+        if not self.api_key:
+            raise ValueError("Anthropic requires an API key")
+        client = anthropic.Anthropic(api_key=self.api_key)
+        message = client.messages.create(
+            model=self.model,
+            max_tokens=600,
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": screenshot_b64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "Extract the visual brand profile from this screenshot.",
+                        },
+                    ],
+                }
+            ],
+        )
+        return _sanitize_surrogates(message.content[0].text.strip())
+
     def _carousel_openai_compat(
         self, brief: str, slide_count: int, system_prompt: str
     ) -> list[dict]:
@@ -206,6 +292,57 @@ def _parse_json_response(text: str) -> dict[str, Any]:
     return {
         "caption": _sanitize_surrogates(str(data["caption"])),
         "hashtags": [_sanitize_surrogates(str(h)) for h in data["hashtags"]],
+    }
+
+
+def _parse_visual_profile(text: str) -> dict[str, Any]:
+    """Extract a {colors, typography, mood, layout} JSON object from Vision output.
+
+    Vision models occasionally wrap JSON in code fences or add a brief preamble.
+    We strip fences, parse, and validate the shape — falling back to defaults
+    when a key is missing so the UI always has something to render.
+    """
+    text = _sanitize_surrogates(text)
+    cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        data = json.loads(_escape_control_chars(cleaned))
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected JSON object, got {type(data).__name__}")
+
+    # Whitelist + sanitize each field. Unknown keys are dropped.
+    colors_raw = data.get("colors", [])
+    colors = [
+        _sanitize_surrogates(str(c))
+        for c in colors_raw
+        if isinstance(c, str) and c.startswith("#")
+    ][:6]  # cap at 6 — UI swatch row only shows ~5
+
+    typography = data.get("typography") or {}
+    if not isinstance(typography, dict):
+        typography = {}
+    typography_clean = {
+        "family": _sanitize_surrogates(str(typography.get("family", ""))).lower() or "sans",
+        "weight": _sanitize_surrogates(str(typography.get("weight", ""))).lower() or "regular",
+        "character": _sanitize_surrogates(str(typography.get("character", ""))).lower() or "neutral",
+    }
+
+    mood_raw = data.get("mood", [])
+    mood = [
+        _sanitize_surrogates(str(m))
+        for m in mood_raw
+        if isinstance(m, str) and m.strip()
+    ][:5]
+
+    layout = _sanitize_surrogates(str(data.get("layout", ""))).lower() or "unspecified"
+
+    return {
+        "colors": colors,
+        "typography": typography_clean,
+        "mood": mood,
+        "layout": layout,
     }
 
 

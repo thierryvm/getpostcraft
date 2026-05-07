@@ -94,3 +94,30 @@ export async function synthesizeProductTruthFromUrl(
 ): Promise<string> {
   return invoke<string>("synthesize_product_truth_from_url", { url, handle });
 }
+
+/** Structured visual brand profile extracted from a website screenshot. */
+export interface VisualProfile {
+  colors: string[];
+  typography: { family: string; weight: string; character: string };
+  mood: string[];
+  layout: string;
+}
+
+export interface WebsiteAnalysis {
+  product_truth: string;
+  visual_profile: VisualProfile;
+}
+
+/**
+ * Single-call URL analyzer that does both: scrape + AI synthesis (text) +
+ * Vision extraction (visual profile). One Playwright launch, ~25-40 s end
+ * to end. If `accountId` is provided the visual_profile is persisted on
+ * the account so future post generations can reuse it.
+ */
+export async function analyzeUrlVisual(
+  url: string,
+  handle: string,
+  accountId: number | null,
+): Promise<WebsiteAnalysis> {
+  return invoke<WebsiteAnalysis>("analyze_url_visual", { url, handle, accountId });
+}

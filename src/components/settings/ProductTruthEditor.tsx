@@ -5,8 +5,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { updateAccountProductTruth } from "@/lib/tauri/oauth";
-import { synthesizeProductTruthFromUrl } from "@/lib/tauri/composer";
+import { updateAccountProductTruth, updateAccountBranding } from "@/lib/tauri/oauth";
+import { analyzeUrlVisual, type WebsiteAnalysis } from "@/lib/tauri/composer";
 
 export function ProductTruthEditor({
   accountId,
@@ -22,13 +22,15 @@ export function ProductTruthEditor({
   const [value, setValue] = useState(initialValue ?? "");
   const [saved, setSaved] = useState(false);
 
-  // URL-analysis flow state. We surface a small inline form rather than a modal
-  // because the synthesis is one-shot and the user wants to review the output
-  // in place before deciding to apply it.
+  // URL-analysis flow state — surfaces a small inline form rather than a modal
+  // because the analyzer is one-shot and the user wants to review in place.
   const [showUrlForm, setShowUrlForm] = useState(false);
   const [url, setUrl] = useState("");
-  const [preview, setPreview] = useState<string | null>(null);
+  /** Preview holds BOTH the textual ProductTruth (editable) and the visual profile (swatches). */
+  const [preview, setPreview] = useState<WebsiteAnalysis | null>(null);
+  const [previewText, setPreviewText] = useState<string>("");
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [colorsApplied, setColorsApplied] = useState(false);
 
   const save = useMutation({
     mutationFn: () => updateAccountProductTruth(accountId, value),
@@ -40,10 +42,12 @@ export function ProductTruthEditor({
   });
 
   const analyze = useMutation({
-    mutationFn: () => synthesizeProductTruthFromUrl(url.trim(), handle),
-    onSuccess: (synthesized) => {
-      setPreview(synthesized);
+    mutationFn: () => analyzeUrlVisual(url.trim(), handle, accountId),
+    onSuccess: (result) => {
+      setPreview(result);
+      setPreviewText(result.product_truth);
       setAnalyzeError(null);
+      setColorsApplied(false);
     },
     onError: (e: unknown) => {
       setAnalyzeError(e instanceof Error ? e.message : String(e));
@@ -51,22 +55,44 @@ export function ProductTruthEditor({
     },
   });
 
+  /** Persist the first 2 extracted colors as brand_color + accent_color on the account. */
+  const applyColors = useMutation({
+    mutationFn: () => {
+      if (!preview) throw new Error("Aucune analyse en cours");
+      const [brand, accent] = preview.visual_profile.colors;
+      // If we got fewer than 2 colors, reuse the first as both — better than empty.
+      return updateAccountBranding(
+        accountId,
+        brand ?? "",
+        accent ?? brand ?? "",
+      );
+    },
+    onSuccess: () => {
+      setColorsApplied(true);
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
+
   const isDirty = value !== (initialValue ?? "");
 
   const applyPreview = () => {
-    if (!preview) return;
-    setValue(preview);
+    if (!previewText) return;
+    setValue(previewText);
     setSaved(false);
     setPreview(null);
+    setPreviewText("");
     setShowUrlForm(false);
     setUrl("");
+    setColorsApplied(false);
   };
 
   const cancelAnalyze = () => {
     setShowUrlForm(false);
     setUrl("");
     setPreview(null);
+    setPreviewText("");
     setAnalyzeError(null);
+    setColorsApplied(false);
   };
 
   return (
@@ -154,13 +180,60 @@ export function ProductTruthEditor({
             </p>
           )}
           {preview && (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3">
+              {/* Visual profile — color swatches + typography hint */}
+              {preview.visual_profile.colors.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-xs font-medium text-foreground">
+                    Identité visuelle extraite
+                    <span className="ml-1 font-normal text-muted-foreground">
+                      — {preview.visual_profile.typography.family} ·{" "}
+                      {preview.visual_profile.mood.slice(0, 3).join(" · ")}
+                    </span>
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {preview.visual_profile.colors.map((c, i) => (
+                      <div
+                        key={`${c}-${i}`}
+                        className="flex flex-col items-center gap-0.5"
+                        title={c}
+                      >
+                        <span
+                          className="block h-8 w-8 rounded border border-border"
+                          style={{ backgroundColor: c }}
+                        />
+                        <span className="text-[10px] font-mono text-muted-foreground">
+                          {c}
+                        </span>
+                      </div>
+                    ))}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        applyColors.isPending ||
+                        colorsApplied ||
+                        preview.visual_profile.colors.length === 0
+                      }
+                      onClick={() => applyColors.mutate()}
+                      className="ml-2 h-8 text-xs"
+                    >
+                      {applyColors.isPending
+                        ? "…"
+                        : colorsApplied
+                          ? "Couleurs appliquées ✓"
+                          : "Appliquer les couleurs"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               <p className="text-xs font-medium text-foreground">
-                Aperçu — relis avant d'appliquer :
+                Aperçu Product Truth — relis avant d'appliquer :
               </p>
               <Textarea
-                value={preview}
-                onChange={(e) => setPreview(e.target.value)}
+                value={previewText}
+                onChange={(e) => setPreviewText(e.target.value)}
                 className="min-h-48 text-xs font-mono [field-sizing:content]"
               />
               <div className="flex gap-2">

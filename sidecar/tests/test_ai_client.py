@@ -19,6 +19,7 @@ from ai_client import (
     _sanitize_surrogates,
     _parse_json_response,
     _parse_carousel_response,
+    _parse_visual_profile,
     _escape_control_chars,
 )
 
@@ -354,3 +355,90 @@ class TestModelOutputPatterns:
         output = '{"caption": "Arrête d\'utiliser cat. Voici pourquoi.", "hashtags": ["linux"]}'
         result = _parse_json_response(output)
         assert "Arrête" in result["caption"]
+
+
+# ── _parse_visual_profile ────────────────────────────────────────────────────
+
+class TestParseVisualProfile:
+    """Vision-based brand extraction returns JSON with colors / typography /
+    mood / layout. Models occasionally wrap in code fences or add preamble —
+    these tests pin our normalization + sanitization behavior so a regression
+    on the parser doesn't silently produce bad ProductTruth blocks."""
+
+    def test_full_clean_response(self):
+        raw = (
+            '{"colors": ["#0d1117", "#3ddc84"], '
+            '"typography": {"family": "mono", "weight": "bold", "character": "technical"}, '
+            '"mood": ["minimalist", "developer-focused"], '
+            '"layout": "minimal-dense"}'
+        )
+        result = _parse_visual_profile(raw)
+        assert result["colors"] == ["#0d1117", "#3ddc84"]
+        assert result["typography"]["family"] == "mono"
+        assert result["typography"]["weight"] == "bold"
+        assert result["typography"]["character"] == "technical"
+        assert result["mood"] == ["minimalist", "developer-focused"]
+        assert result["layout"] == "minimal-dense"
+
+    def test_strips_markdown_fences(self):
+        raw = '```json\n{"colors": ["#fff"], "typography": {}, "mood": [], "layout": "x"}\n```'
+        result = _parse_visual_profile(raw)
+        assert result["colors"] == ["#fff"]
+
+    def test_drops_non_hex_colors(self):
+        # Models sometimes return color names instead of hex — drop them silently.
+        raw = '{"colors": ["#fff", "red", "#ababab", "blue"], "typography": {}, "mood": [], "layout": "x"}'
+        result = _parse_visual_profile(raw)
+        assert result["colors"] == ["#fff", "#ababab"]
+
+    def test_caps_colors_at_six(self):
+        raw = (
+            '{"colors": ["#aaa", "#bbb", "#ccc", "#ddd", "#eee", "#fff", "#012", "#345"], '
+            '"typography": {}, "mood": [], "layout": "x"}'
+        )
+        result = _parse_visual_profile(raw)
+        assert len(result["colors"]) == 6
+
+    def test_typography_defaults_when_missing_keys(self):
+        raw = '{"colors": [], "typography": {}, "mood": [], "layout": "x"}'
+        result = _parse_visual_profile(raw)
+        assert result["typography"]["family"] == "sans"
+        assert result["typography"]["weight"] == "regular"
+        assert result["typography"]["character"] == "neutral"
+
+    def test_typography_lowercases_values(self):
+        raw = '{"colors": [], "typography": {"family": "MONO", "weight": "BOLD", "character": "Technical"}, "mood": [], "layout": "X"}'
+        result = _parse_visual_profile(raw)
+        assert result["typography"]["family"] == "mono"
+        assert result["typography"]["weight"] == "bold"
+        assert result["typography"]["character"] == "technical"
+        assert result["layout"] == "x"
+
+    def test_mood_filters_empty_strings_and_caps_at_five(self):
+        raw = (
+            '{"colors": [], "typography": {}, '
+            '"mood": ["a", "", "b", "  ", "c", "d", "e", "f", "g"], "layout": ""}'
+        )
+        result = _parse_visual_profile(raw)
+        assert result["mood"] == ["a", "b", "c", "d", "e"]
+
+    def test_layout_defaults_to_unspecified(self):
+        raw = '{"colors": [], "typography": {}, "mood": [], "layout": ""}'
+        result = _parse_visual_profile(raw)
+        assert result["layout"] == "unspecified"
+
+    def test_typography_non_dict_falls_back_to_empty(self):
+        # Defensive: model returned a string instead of an object — don't crash.
+        raw = '{"colors": [], "typography": "sans-serif bold", "mood": [], "layout": "x"}'
+        result = _parse_visual_profile(raw)
+        assert result["typography"]["family"] == "sans"
+
+    def test_rejects_non_object_root(self):
+        # Defensive: model returned an array.
+        raw = '["#fff", "#000"]'
+        try:
+            _parse_visual_profile(raw)
+            raised = False
+        except ValueError:
+            raised = True
+        assert raised, "must reject non-object roots"

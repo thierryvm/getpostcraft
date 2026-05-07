@@ -1,0 +1,18 @@
+-- Visual brand profile extracted from the account's website (Claude Vision).
+--
+-- Stored as a JSON object so the schema stays flexible while we iterate on
+-- which design tokens we capture. Current shape (subject to evolution):
+--
+--   {
+--     "colors": ["#0d1117", "#3ddc84", "#161b22"],
+--     "typography": { "family": "sans|serif|mono", "weight": "regular|bold|black",
+--                     "character": "geometric|humanist|grotesque|..." },
+--     "mood": ["minimalist", "developer-focused", "energetic"],
+--     "layout": "minimal-dense" | "card-based" | "long-scroll" | ...,
+--     "extracted_at": "2026-05-07T23:50:00Z",
+--     "source_url": "https://terminallearning.dev/"
+--   }
+--
+-- One-shot per onboarding (or on user-triggered re-analysis) — never read
+-- per-post-generation, so cost stays at ~$0.01 per account, gratuit ensuite.
+ALTER TABLE accounts ADD COLUMN visual_profile TEXT;

@@ -9,6 +9,8 @@ export interface ConnectedAccount {
   product_truth: string | null;
   brand_color: string | null;
   accent_color: string | null;
+  /** JSON-encoded VisualProfile (or null). Parse with JSON.parse before use. */
+  visual_profile: string | null;
 }
 
 export function listAccounts(): Promise<ConnectedAccount[]> {
