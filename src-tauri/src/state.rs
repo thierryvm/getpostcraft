@@ -22,7 +22,7 @@ impl AppState {
         Self {
             active_provider: Mutex::new(ActiveProvider {
                 provider: "openrouter".to_string(),
-                model: "anthropic/claude-3-5-haiku".to_string(),
+                model: "anthropic/claude-sonnet-4.6".to_string(),
             }),
             key_cache: Mutex::new(HashMap::new()),
             db,

@@ -38,6 +38,9 @@ sidecar/*.spec
 api_keys.json
 *.keys.json
 
+# Playwright MCP debug artifacts
+.playwright-mcp/
+
 # Claude Code local settings
 .claude/
 **/.claude/

@@ -29,11 +29,19 @@ export interface ModelOption {
   jsonUnreliable?: boolean;
 }
 
+// OpenRouter slugs use **dots** in version numbers (e.g. `claude-sonnet-4.6`),
+// NOT dashes. The Anthropic-native API uses dashes + date-stamped snapshots
+// (e.g. `claude-haiku-4-5-20251001`) — those are not accepted by OpenRouter.
+// Source of truth: https://openrouter.ai/api/v1/models (verified 2026-05-07).
 export const OPENROUTER_MODELS: ModelOption[] = [
-  // ── Anthropic Claude 4.x ─────────────────────────────────────────────────
-  { value: "anthropic/claude-haiku-4-5-20251001",     label: "Claude Haiku 4.5 (recommandé)", inputPricePer1M: 0.80,  outputPricePer1M: 4.00  },
-  { value: "anthropic/claude-sonnet-4-6",             label: "Claude Sonnet 4.6",             inputPricePer1M: 3.00,  outputPricePer1M: 15.00 },
-  { value: "anthropic/claude-opus-4-6",               label: "Claude Opus 4.6",               inputPricePer1M: 15.00, outputPricePer1M: 75.00 },
+  // ── Anthropic Claude (latest aliases — never break on version bumps) ────
+  { value: "anthropic/claude-haiku-latest",   label: "Claude Haiku (recommandé)", inputPricePer1M: 1.00,  outputPricePer1M: 5.00  },
+  { value: "anthropic/claude-sonnet-4.6",     label: "Claude Sonnet 4.6",         inputPricePer1M: 3.00,  outputPricePer1M: 15.00 },
+  { value: "anthropic/claude-sonnet-latest",  label: "Claude Sonnet (latest)",    inputPricePer1M: 3.00,  outputPricePer1M: 15.00 },
+  { value: "anthropic/claude-opus-4.7",       label: "Claude Opus 4.7",           inputPricePer1M: 5.00,  outputPricePer1M: 25.00 },
+  { value: "anthropic/claude-opus-4.6-fast",  label: "Claude Opus 4.6 Fast",      inputPricePer1M: 30.00, outputPricePer1M: 150.00 },
+  { value: "anthropic/claude-opus-latest",    label: "Claude Opus (latest)",      inputPricePer1M: 5.00,  outputPricePer1M: 25.00 },
+  // ── Other providers (slugs unchanged) ─────────────────────────────────────
   { value: "openai/gpt-4o-mini",                      label: "GPT-4o Mini",                   inputPricePer1M: 0.15,  outputPricePer1M: 0.60  },
   { value: "openai/gpt-4o",                           label: "GPT-4o",                        inputPricePer1M: 2.50,  outputPricePer1M: 10.00 },
   { value: "deepseek/deepseek-chat",                  label: "DeepSeek V3",                   inputPricePer1M: 0.32,  outputPricePer1M: 0.89  },
@@ -47,7 +55,10 @@ export const OPENROUTER_MODELS: ModelOption[] = [
 ];
 
 export const PROVIDER_DEFAULT_MODELS: Record<AiProvider, string> = {
-  openrouter: "anthropic/claude-haiku-4-5-20251001",
+  // Sonnet 4.6 par défaut : meilleur ratio qualité/coût pour la création de
+  // contenu marketing (~$0.30/mois à 30 posts), bien plus créatif que Haiku.
+  openrouter: "anthropic/claude-sonnet-4.6",
+  // L'API Anthropic native garde le format snapshot daté.
   anthropic: "claude-haiku-4-5-20251001",
   ollama: "llama3.2",
 };

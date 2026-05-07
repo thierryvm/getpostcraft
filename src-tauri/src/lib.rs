@@ -44,7 +44,7 @@ pub fn run() {
                     .unwrap_or_else(|| "openrouter".to_string());
                 let model = db::settings_db::get(&pool, "active_model")
                     .await
-                    .unwrap_or_else(|| "anthropic/claude-3-5-haiku".to_string());
+                    .unwrap_or_else(|| "anthropic/claude-sonnet-4.6".to_string());
 
                 let state = AppState::new(pool);
 
