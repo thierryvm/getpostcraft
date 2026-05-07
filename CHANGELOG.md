@@ -8,7 +8,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-07
+
 ### Added
+- **Carousel publishing fix (PR #11)** — Instagram CAROUSEL flow (3+ children → parent → publish) + LinkedIn multi-image gallery (N register/upload + media array). Auparavant seule la 1re slide était publiée silencieusement.
+- **Reload draft from history (PR #12)** — bouton "Ouvrir" sur les drafts du calendrier → recharge dans le Composer avec bouton "Publier" visible. Résout le cas "drafts en historique impossibles à publier".
+- **Wiremock integration tests (PR #13)** — 12 tests qui mockent les API Meta + LinkedIn et assertent l'ordre/body de chaque appel. Total 81 tests Rust (vs 41). Aurait attrapé le bug carousel avant prod.
+- **Auto-updater Tauri (PR #6)** — UI "Mises à jour" dans Settings → À propos avec status badge, progress bar, console log inline. Endpoint manifest sur GitHub Releases.
+- **Release pipeline multi-OS (PR #6)** — workflow GitHub Actions matrix windows/macos/linux, version-check fail-fast, generate-update-manifest, signature Ed25519. 0€ d'infra.
+- **Website analyzer ProductTruth (PR #10)** — bouton "Analyser depuis URL" dans Settings → Comptes. Playwright render le SPA + Sonnet 4.6 synthétise un Product Truth structuré (chiffres, modules, voix). Preview éditable avant apply.
 - **Persona-agnostic prompts + image templates** — handle, niche et hashtags spécifiques à un compte ne sont plus en dur ; tout passe par `ProductTruth` + nouvelles colonnes `brand_color` / `accent_color` par compte. Le compte actif sélectionné dans le Composer fournit automatiquement son handle et sa couleur de marque aux 4 templates HTML→PNG (post, code, terminal, carrousel). Fallback `@yourbrand` + `#3ddc84` si aucun compte sélectionné. Débloque l'utilisation multi-projet (Terminal Learning, Ankora, etc.) sans réécrire le code.
 - Migration `009_account_branding` — colonnes `brand_color TEXT` et `accent_color TEXT` dans `accounts` (nullable).
 - Commande Tauri `update_account_branding` + composant `BrandColorsEditor` (color picker + hex input) dans `InstagramSection` / `LinkedInSection`.
@@ -80,5 +88,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - BUSL-1.1 licence — Change Date 2030-04-11, Change Licence MIT
 - 8 Architecture Decision Records (`docs/adr/`)
 
-[Unreleased]: https://github.com/thierryvm/getpostcraft/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/thierryvm/getpostcraft/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/thierryvm/getpostcraft/releases/tag/v0.2.0
 [0.1.0]: https://github.com/thierryvm/getpostcraft/releases/tag/v0.1.0
