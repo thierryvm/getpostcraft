@@ -90,25 +90,8 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
-
-  # After the matrix has uploaded its bundles, generate a single latest.json manifest
-  # the auto-updater fetches. tauri-action emits per-platform .sig files that we collect.
-  publish-manifest:
-    name: Publish updater manifest
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Generate latest.json from release assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: node scripts/generate-update-manifest.mjs
-      - name: Attach latest.json to the release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: gh release upload "$RELEASE_TAG" latest.json --clobber
+# Note: tauri-action@v0 already writes a complete `latest.json` to the release
+# on its own once the matrix finishes. No separate publish-manifest job is
+# needed — running one would only fight the action's own output. The
+# `scripts/generate-update-manifest.mjs` helper is kept for manual / local
+# regeneration but no longer wired into CI.
