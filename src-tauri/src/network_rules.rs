@@ -15,7 +15,12 @@ pub fn get_carousel_prompt(network: &str, slide_count: u8) -> String {
          - Titres : courts, impactants, max 8 mots\n\
          - Body : 2-3 phrases claires et directes\n\
          - Langue : française\n\
-         - Exactement {slide_count} slides dans le tableau"
+         - Exactement {slide_count} slides dans le tableau\n\n\
+         ACCENTS FRANÇAIS OBLIGATOIRES — utilise TOUS les accents standards \
+         (é è ê à â î ô û ç œ æ). \"evite\" au lieu de \"évite\" est une ERREUR.\n\n\
+         NE PAS INVENTER DE CHIFFRES NI DE FAITS — tout chiffre/fonctionnalité \
+         cité doit provenir explicitement du brief ou du bloc BRAND IDENTITY. \
+         Si l'info n'est pas fournie, reformule en termes généraux."
     )
 }
 
@@ -113,6 +118,22 @@ Vise 250-400 chars total. Assez long pour avoir de la valeur et générer du dwe
 - Les références techniques s'écrivent en ligne sans formatage
 - Toujours en français
 
+═══ ACCENTS FRANÇAIS — OBLIGATOIRES ═══
+Tu DOIS utiliser TOUS les accents et caractères français standards : é è ê à â î ô û ç œ æ.
+Écrire "evite" au lieu de "évite", "francais" au lieu de "français", "ca" au lieu de "ça",
+"deja" au lieu de "déjà", "experience" au lieu de "expérience" est une ERREUR.
+Un caption sans accents est non-publiable — vérifie chaque mot avant de répondre.
+
+═══ NE PAS INVENTER DE CHIFFRES NI DE FAITS ═══
+RÈGLE ABSOLUE : tout chiffre, nom de produit, liste de fonctionnalités, durée, prix, ou
+caractéristique technique citée doit provenir EXPLICITEMENT du brief utilisateur ou du
+bloc BRAND IDENTITY ci-dessous. Si l'info n'y est pas, NE LA CITE PAS.
+- INTERDIT : inventer "52 leçons", "10 modules", "100k utilisateurs" si non fourni
+- INTERDIT : inventer une liste de chapitres ("Navigation, permissions, Git...") si non fournie
+- AUTORISÉ : décrire en termes généraux ("plusieurs leçons interactives", "des modules variés")
+- AUTORISÉ : reformuler ce qui EST dans le contexte (paraphrase fidèle)
+Si tu hésites sur un fait → omets-le ou demande de précision dans le post lui-même.
+
 ═══ CE QU'IL NE FAUT PAS FAIRE ═══
 - Pas de "Dans ce post, je vais vous montrer..."
 - Pas de hooks génériques comme "X est incroyable"
@@ -202,6 +223,16 @@ Posts < 800 chars : sous-distribués. Posts > 2 800 chars : taux de lecture chut
 - Toujours en français
 - AUCUN emoji
 
+═══ ACCENTS FRANÇAIS — OBLIGATOIRES ═══
+Tu DOIS utiliser TOUS les accents français standards : é è ê à â î ô û ç œ æ.
+Écrire "evite" au lieu de "évite", "francais" au lieu de "français", "experience"
+au lieu de "expérience" est une ERREUR. Un post sans accents est non-publiable.
+
+═══ NE PAS INVENTER DE CHIFFRES NI DE FAITS ═══
+RÈGLE ABSOLUE : tout chiffre, durée, métrique, fonctionnalité ou caractéristique
+technique doit provenir EXPLICITEMENT du brief utilisateur ou du bloc BRAND IDENTITY.
+Si l'info n'y est pas → ne la cite pas. Reformule en termes généraux à la place.
+
 ═══ CE QU'IL NE FAUT PAS FAIRE ═══
 - Pas de lien dans le corps (mettre en premier commentaire si besoin)
 - Pas de paragraphes de 3+ lignes collées
@@ -286,6 +317,41 @@ mod tests {
         assert!(
             p.contains("BRAND IDENTITY"),
             "Instagram prompt must reference the BRAND IDENTITY injection mechanism"
+        );
+    }
+
+    #[test]
+    fn all_prompts_enforce_french_accents() {
+        // Models tend to drop accents in casual French — every prompt must call it out explicitly.
+        for net in ["instagram", "linkedin"] {
+            let p = get_system_prompt(net);
+            assert!(
+                p.contains("ACCENTS FRANÇAIS"),
+                "{net} prompt must enforce French accents explicitly"
+            );
+        }
+        let car = get_carousel_prompt("instagram", 5);
+        assert!(
+            car.contains("ACCENTS FRANÇAIS"),
+            "carousel prompt must enforce French accents explicitly"
+        );
+    }
+
+    #[test]
+    fn all_prompts_forbid_hallucinated_facts() {
+        // Without an explicit no-hallucination rule, the model invents lesson counts,
+        // module lists, user numbers — facts that look authoritative but are wrong.
+        for net in ["instagram", "linkedin"] {
+            let p = get_system_prompt(net);
+            assert!(
+                p.contains("NE PAS INVENTER") || p.contains("ne les invente pas"),
+                "{net} prompt must forbid invented numbers/facts"
+            );
+        }
+        let car = get_carousel_prompt("instagram", 5);
+        assert!(
+            car.contains("NE PAS INVENTER") || car.contains("ne les invente pas"),
+            "carousel prompt must forbid invented numbers/facts"
         );
     }
 
