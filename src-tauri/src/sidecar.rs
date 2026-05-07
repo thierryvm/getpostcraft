@@ -8,6 +8,13 @@ const PYTHON: &str = "python";
 #[cfg(not(windows))]
 const PYTHON: &str = "python3";
 
+/// Windows CreateProcess flag that suppresses the console window when a GUI app
+/// spawns a console subprocess. Without it, every sidecar call flashes a black
+/// terminal for ~50ms — visually disruptive for the end user.
+/// Source: <https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags>
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 fn sidecar_script() -> std::path::PathBuf {
     let raw = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.py");
     raw.canonicalize().unwrap_or(raw)
@@ -70,7 +77,8 @@ async fn run_sidecar(json_input: String, timeout_secs: u64) -> Result<String, St
     let script = sidecar_script();
 
     timeout(Duration::from_secs(timeout_secs), async move {
-        let mut child = tokio::process::Command::new(PYTHON)
+        let mut command = tokio::process::Command::new(PYTHON);
+        command
             .arg(&script)
             // Force UTF-8 I/O on all platforms; 'replace' keeps us alive
             // even if something slips through our sanitisation layer.
@@ -78,7 +86,16 @@ async fn run_sidecar(json_input: String, timeout_secs: u64) -> Result<String, St
             .env("PYTHONUTF8", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        // Suppress the flashing terminal window on Windows when the Tauri GUI
+        // spawns a console subprocess. No-op on Unix — there is no console to
+        // hide when the parent has none.
+        // tokio::process::Command exposes `creation_flags` directly on Windows.
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+
+        let mut child = command
             .spawn()
             .map_err(|e| format!("Spawn Python sidecar: {e}"))?;
 
