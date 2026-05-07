@@ -142,6 +142,24 @@ pub async fn update_branding(
 }
 
 pub async fn delete(pool: &SqlitePool, provider: &str, user_id: &str) -> Result<(), String> {
+    // Find the account first so we can clear its id from any post that
+    // references it. SQLite forbids FOREIGN KEY in ALTER TABLE ADD COLUMN
+    // (see migration 013), so the cascade is enforced here in app code.
+    let row = sqlx::query("SELECT id FROM accounts WHERE provider = ? AND user_id = ?")
+        .bind(provider)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(r) = row {
+        let account_id: i64 = r.get("id");
+        sqlx::query("UPDATE post_history SET account_id = NULL WHERE account_id = ?")
+            .bind(account_id)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
     sqlx::query("DELETE FROM accounts WHERE provider = ? AND user_id = ?")
         .bind(provider)
         .bind(user_id)

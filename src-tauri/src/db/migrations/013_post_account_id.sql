@@ -10,8 +10,18 @@
 -- Storing the account_id at draft creation time pins the relationship: the
 -- generation ProductTruth comes from this account, so does the final post.
 --
+-- ⚠ SQLite does NOT allow adding a FOREIGN KEY clause via ALTER TABLE ADD
+-- COLUMN (https://sqlite.org/lang_altertable.html). We add the column without
+-- a `REFERENCES accounts(id)` constraint and enforce the cleanup in app
+-- code: when an account is disconnected, `db::accounts::delete` clears the
+-- column for orphaned posts. The integrity invariant is the same; only the
+-- enforcement layer moves from DB → application.
+--
 -- Nullable because:
 --   1. Existing rows have no account at all (legacy generation flow).
 --   2. Some flows still allow generating without a connected account
 --      (preview-only, no publish path).
-ALTER TABLE post_history ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL;
+--   3. After an account is disconnected, posts that referenced it become
+--      NULL — `resolve_post_account` falls back to provider scan with a
+--      visible log warning.
+ALTER TABLE post_history ADD COLUMN account_id INTEGER;
