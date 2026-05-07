@@ -1,8 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render as rtlRender, screen, fireEvent, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { BriefForm } from "./BriefForm";
 import { invoke } from "@tauri-apps/api/core";
+
+// BriefForm reads `useQuery({queryKey:["accounts"]})` so render() needs a fresh
+// QueryClient per test to avoid cross-test cache bleed.
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 const mockInvoke = vi.mocked(invoke);
 
@@ -12,6 +22,7 @@ import { getDefaultFormat } from "@/types/composer.types";
 const storeFns = {
   setBrief: vi.fn(),
   setNetwork: vi.fn(),
+  setAccountId: vi.fn(),
   setImageFormat: vi.fn(),
   setResult: vi.fn(),
   setVariants: vi.fn(),
@@ -25,6 +36,7 @@ vi.mock("@/stores/composer.store", () => ({
   useComposerStore: vi.fn(() => ({
     brief: "",
     network: "instagram" as const,
+    accountId: null,
     imageFormat: getDefaultFormat("instagram"),
     isLoading: false,
     error: null,
@@ -39,6 +51,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Reset call history on stable refs (clearAllMocks doesn't reach module-scope fns)
   Object.values(storeFns).forEach((fn) => fn.mockClear());
+  // Default invoke responses: list_accounts must return [] so BriefForm renders.
+  // Tests that exercise generate_content override this via mockResolvedValueOnce.
+  mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === "list_accounts") return Promise.resolve([]);
+    return Promise.resolve({ caption: "stub", hashtags: [] });
+  });
 });
 
 describe("BriefForm — validation Zod", () => {
@@ -114,9 +132,11 @@ describe("BriefForm — validation Zod", () => {
 describe("BriefForm — soumission", () => {
   it("appelle generate_content avec le brief et le réseau", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue({
-      caption: "Test caption",
-      hashtags: ["linux", "terminal"],
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_accounts") return Promise.resolve([]);
+      if (cmd === "generate_content")
+        return Promise.resolve({ caption: "Test caption", hashtags: ["linux", "terminal"] });
+      return Promise.resolve({ caption: "stub", hashtags: [] });
     });
 
     render(<BriefForm />);
@@ -136,7 +156,10 @@ describe("BriefForm — soumission", () => {
 
   it("appelle setError avec le message d'erreur Tauri en cas d'échec", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockRejectedValue("No AI key configured");
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_accounts") return Promise.resolve([]);
+      return Promise.reject("No AI key configured");
+    });
 
     render(<BriefForm />);
     const textarea = screen.getByPlaceholderText(/décris ce que tu veux poster/i);
@@ -159,7 +182,9 @@ describe("BriefForm — soumission", () => {
     // Le bouton doit être désactivé → pas de submit possible
     const submitBtn = screen.getByRole("button", { name: /générer/i });
     expect(submitBtn).toBeDisabled();
-    expect(mockInvoke).not.toHaveBeenCalled();
+    // Only list_accounts is allowed at render time; generate_content must not be called.
+    const generateCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "generate_content");
+    expect(generateCalls).toHaveLength(0);
   });
 });
 
