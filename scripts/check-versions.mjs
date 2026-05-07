@@ -98,12 +98,30 @@ export function compareVersions(versions, gitTag) {
   return errors;
 }
 
+/**
+ * Resolve which git tag to verify against, given an env var bag.
+ *
+ * Precedence: `RELEASE_TAG` (explicit input from `workflow_dispatch`) wins
+ * over `GITHUB_REF_NAME` (set by GitHub for any workflow trigger). On a
+ * branch dispatch GITHUB_REF_NAME is "main" even when the operator passed
+ * a v0.x.0 tag — using it would always fail. Empty / whitespace values
+ * are treated as unset.
+ *
+ * Exported separately so tests can pin the precedence without spawning
+ * the script in a child process.
+ */
+export function resolveGitTag(env) {
+  const pick = (k) => {
+    const v = env[k];
+    return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+  };
+  return pick("RELEASE_TAG") ?? pick("GITHUB_REF_NAME") ?? null;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const strict = args.includes("--strict");
-  const gitTag = strict
-    ? process.env.GITHUB_REF_NAME ?? process.env.RELEASE_TAG ?? null
-    : null;
+  const gitTag = strict ? resolveGitTag(process.env) : null;
 
   const versions = await parseAll();
   const errors = compareVersions(versions, gitTag);
