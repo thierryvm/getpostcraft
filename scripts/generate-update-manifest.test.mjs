@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildManifest, pickBundleAsset } from "./generate-update-manifest.mjs";
+import {
+  buildManifest,
+  pickBundleAsset,
+  findReleaseByTag,
+} from "./generate-update-manifest.mjs";
 
 /** Helper to build a fake GitHub release asset object. */
 function asset(name) {
@@ -154,5 +158,68 @@ describe("buildManifest", () => {
       signatures: {},
     });
     expect(manifest.pub_date).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe("findReleaseByTag", () => {
+  /**
+   * Regression: the v0.2.0 workflow failed with `404 on /releases/tags/v0.2.0`
+   * because the release was still a draft. The workflow leaves the release as
+   * draft so the operator can review before promoting — manifest publishing
+   * MUST find drafts. These tests pin that behavior.
+   */
+  it("finds a draft release by tag (regression)", () => {
+    const releases = [
+      { tag_name: "v0.1.0", draft: false },
+      { tag_name: "v0.2.0", draft: true }, // ← the case that failed in CI
+      { tag_name: "v0.3.0-alpha", draft: true },
+    ];
+    expect(findReleaseByTag(releases, "v0.2.0")).toEqual({
+      tag_name: "v0.2.0",
+      draft: true,
+    });
+  });
+
+  it("finds a published release by tag", () => {
+    const releases = [
+      { tag_name: "v0.1.0", draft: false },
+      { tag_name: "v0.2.0", draft: false },
+    ];
+    expect(findReleaseByTag(releases, "v0.1.0")).toEqual({
+      tag_name: "v0.1.0",
+      draft: false,
+    });
+  });
+
+  it("returns null when no matching tag exists", () => {
+    const releases = [{ tag_name: "v0.1.0" }];
+    expect(findReleaseByTag(releases, "v0.99.0")).toBeNull();
+  });
+
+  it("returns null on empty list", () => {
+    expect(findReleaseByTag([], "v0.2.0")).toBeNull();
+  });
+
+  it("returns the first match if duplicates exist (defensive)", () => {
+    // Should never happen on GitHub but guard against weird API responses.
+    const releases = [
+      { tag_name: "v0.2.0", draft: true, id: 1 },
+      { tag_name: "v0.2.0", draft: false, id: 2 },
+    ];
+    expect(findReleaseByTag(releases, "v0.2.0").id).toBe(1);
+  });
+
+  it("ignores null entries in the array (defensive)", () => {
+    const releases = [null, { tag_name: "v0.2.0", draft: true }, null];
+    expect(findReleaseByTag(releases, "v0.2.0")).toEqual({
+      tag_name: "v0.2.0",
+      draft: true,
+    });
+  });
+
+  it("throws on non-array input", () => {
+    expect(() => findReleaseByTag("not an array", "v0.2.0")).toThrow(TypeError);
+    expect(() => findReleaseByTag(null, "v0.2.0")).toThrow(TypeError);
+    expect(() => findReleaseByTag({ releases: [] }, "v0.2.0")).toThrow(TypeError);
   });
 });

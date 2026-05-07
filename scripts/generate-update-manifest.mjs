@@ -89,6 +89,24 @@ async function ghJson(token, urlPath, repo) {
   return res.json();
 }
 
+/**
+ * Find a release by tag, including drafts.
+ *
+ * `/releases/tags/{tag}` only returns published releases — drafts are 404. Our
+ * release.yml workflow leaves the release as a draft after the matrix build so
+ * the operator can review before publishing, so we MUST be able to find drafts
+ * here. Solution: list all releases (the list endpoint includes drafts when
+ * authenticated with `contents: write`) and filter by `tag_name`.
+ *
+ * Exported for unit testing — pure filter, no I/O.
+ */
+export function findReleaseByTag(releases, tag) {
+  if (!Array.isArray(releases)) {
+    throw new TypeError(`Expected array of releases, got ${typeof releases}`);
+  }
+  return releases.find((r) => r && r.tag_name === tag) ?? null;
+}
+
 async function ghDownloadText(token, url) {
   const res = await fetch(url, {
     headers: {
@@ -107,7 +125,16 @@ async function main() {
   if (!tag) throw new Error("RELEASE_TAG env var required");
   if (!token) throw new Error("GITHUB_TOKEN env var required");
 
-  const release = await ghJson(token, `/releases/tags/${tag}`, repo);
+  // List all releases including drafts. The /releases/tags/{tag} endpoint
+  // returns 404 for drafts even with write scope, so we list-then-filter.
+  // 100 releases is plenty: a project would publish that many over years.
+  const releases = await ghJson(token, `/releases?per_page=100`, repo);
+  const release = findReleaseByTag(releases, tag);
+  if (!release) {
+    throw new Error(
+      `Tag ${tag} not found in any release (including drafts) on ${repo}`,
+    );
+  }
   const assets = release.assets ?? [];
 
   // Pull each .sig file content for the platforms we have a bundle for.
