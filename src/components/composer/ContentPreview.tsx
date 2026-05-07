@@ -15,7 +15,7 @@ import type { CaptionVariant, CarouselSlide } from "@/lib/tauri/composer";
 import { renderPostImage, renderCodeImage, renderTerminalImage, renderCarouselSlides, exportCarouselZip } from "@/lib/tauri/media";
 import type { BrandOptions } from "@/lib/tauri/media";
 import { listAccounts } from "@/lib/tauri/oauth";
-import { publishPost, publishLinkedinPost, updateDraftImage } from "@/lib/tauri/publisher";
+import { publishPost, publishLinkedinPost, updateDraftImage, updateDraftImages } from "@/lib/tauri/publisher";
 import { updatePostDraft } from "@/lib/tauri/calendar";
 import { NETWORK_META } from "@/types/composer.types";
 import { CaptionWithFold } from "@/components/shared/CaptionWithFold";
@@ -315,7 +315,10 @@ export function ContentPreview() {
       const id = await saveDraft(network, carouselCaption, hashtags).catch(() => null);
       if (id !== null) {
         setDraftId(id);
-        if (images[0]) updateDraftImage(id, images[0]).catch(() => {});
+        // Save ALL carousel slides — publish flow reads the full array and
+        // posts as Instagram CAROUSEL / LinkedIn gallery. Earlier code only
+        // stored images[0] which silently degraded carousels to single posts.
+        if (images.length > 0) updateDraftImages(id, images).catch(() => {});
       }
     } catch (err) {
       setCarouselError(String(err));

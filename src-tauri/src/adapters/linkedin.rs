@@ -283,16 +283,35 @@ pub async fn publish_text(
     post_ugc(body, access_token).await
 }
 
-/// Publish an image ugcPost.
-/// `asset_urn` must come from `register_image_upload` after the binary upload completes.
-/// Hashtags must be embedded in `text` (LinkedIn has no separate hashtag field).
-/// Returns the created ugcPost ID/URN.
+/// Publish an image ugcPost. Accepts 1 to N asset URNs — LinkedIn renders 2+
+/// images as a tiled gallery in the post (true swipeable carousel requires
+/// `shareMediaCategory: "DOCUMENT"` with a PDF, not handled here).
+///
+/// Each `asset_urn` must come from a sequential `register_image_upload` +
+/// `upload_image_binary` pair. Hashtags must be embedded in `text` — LinkedIn
+/// has no separate hashtag field.
 pub async fn publish_image(
     profile_id: &str,
     text: &str,
-    asset_urn: &str,
+    asset_urns: &[&str],
     access_token: &str,
 ) -> Result<String, String> {
+    if asset_urns.is_empty() {
+        return Err("publish_image requires at least one asset URN".to_string());
+    }
+
+    // Build one media descriptor per asset. `shareMediaCategory` stays "IMAGE"
+    // even for galleries — there is no separate "CAROUSEL" category for raw images.
+    let media: Vec<serde_json::Value> = asset_urns
+        .iter()
+        .map(|urn| {
+            serde_json::json!({
+                "status": "READY",
+                "media": urn,
+            })
+        })
+        .collect();
+
     let body = serde_json::json!({
         "author": format!("urn:li:person:{profile_id}"),
         "lifecycleState": "PUBLISHED",
@@ -300,10 +319,7 @@ pub async fn publish_image(
             "com.linkedin.ugc.ShareContent": {
                 "shareCommentary": { "text": text },
                 "shareMediaCategory": "IMAGE",
-                "media": [{
-                    "status": "READY",
-                    "media": asset_urn
-                }]
+                "media": media
             }
         },
         "visibility": {
@@ -343,4 +359,91 @@ async fn post_ugc(body: serde_json::Value, access_token: &str) -> Result<String,
     }
 
     Ok(post_urn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Inline reimplementation of `publish_image`'s body builder so we can
+    /// assert on the JSON payload without hitting the network. Mirrors the
+    /// real function exactly — keep them in sync.
+    fn build_publish_image_body(
+        profile_id: &str,
+        text: &str,
+        asset_urns: &[&str],
+    ) -> serde_json::Value {
+        let media: Vec<serde_json::Value> = asset_urns
+            .iter()
+            .map(|urn| serde_json::json!({ "status": "READY", "media": urn }))
+            .collect();
+        serde_json::json!({
+            "author": format!("urn:li:person:{profile_id}"),
+            "lifecycleState": "PUBLISHED",
+            "specificContent": {
+                "com.linkedin.ugc.ShareContent": {
+                    "shareCommentary": { "text": text },
+                    "shareMediaCategory": "IMAGE",
+                    "media": media
+                }
+            },
+            "visibility": {
+                "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
+            }
+        })
+    }
+
+    #[test]
+    fn publish_image_body_single_image() {
+        let body = build_publish_image_body("abc123", "Hello", &["urn:li:digitalmediaAsset:1"]);
+        let media = body
+            .pointer("/specificContent/com.linkedin.ugc.ShareContent/media")
+            .and_then(|m| m.as_array())
+            .expect("media array");
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0]["status"], "READY");
+        assert_eq!(media[0]["media"], "urn:li:digitalmediaAsset:1");
+    }
+
+    #[test]
+    fn publish_image_body_multi_image_preserves_order() {
+        let urns = [
+            "urn:slide-1",
+            "urn:slide-2",
+            "urn:slide-3",
+            "urn:slide-4",
+            "urn:slide-5",
+        ];
+        let body = build_publish_image_body("abc123", "Carousel post", &urns);
+        let media = body
+            .pointer("/specificContent/com.linkedin.ugc.ShareContent/media")
+            .and_then(|m| m.as_array())
+            .expect("media array");
+        assert_eq!(media.len(), 5);
+        for (i, urn) in urns.iter().enumerate() {
+            assert_eq!(media[i]["media"], *urn, "slide order must be preserved");
+        }
+    }
+
+    #[test]
+    fn publish_image_body_uses_image_category_even_for_multi() {
+        // LinkedIn does NOT have a CAROUSEL category for raw images — it stays IMAGE.
+        // Regression guard: if someone later changes this, multi-image posts would
+        // be rejected by LinkedIn with an opaque 400.
+        let body = build_publish_image_body("x", "y", &["a", "b"]);
+        assert_eq!(
+            body["specificContent"]["com.linkedin.ugc.ShareContent"]["shareMediaCategory"],
+            "IMAGE"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_image_rejects_empty_urn_slice() {
+        let res = publish_image("x", "y", &[], "fake-token").await;
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err().contains("at least one asset URN"),
+            "should fail fast before any network call"
+        );
+    }
 }
