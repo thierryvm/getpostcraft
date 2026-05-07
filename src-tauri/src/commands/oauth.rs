@@ -21,6 +21,23 @@ pub struct ConnectedAccount {
     pub username: String,
     pub display_name: Option<String>,
     pub product_truth: Option<String>,
+    pub brand_color: Option<String>,
+    pub accent_color: Option<String>,
+}
+
+impl From<crate::db::accounts::Account> for ConnectedAccount {
+    fn from(a: crate::db::accounts::Account) -> Self {
+        Self {
+            id: a.id,
+            provider: a.provider,
+            user_id: a.user_id,
+            username: a.username,
+            display_name: a.display_name,
+            product_truth: a.product_truth,
+            brand_color: a.brand_color,
+            accent_color: a.accent_color,
+        }
+    }
 }
 
 // ── PKCE helpers ──────────────────────────────────────────────────────────
@@ -262,14 +279,7 @@ pub async fn start_oauth_flow(
     )
     .await?;
 
-    Ok(ConnectedAccount {
-        id: account.id,
-        provider: account.provider,
-        user_id: account.user_id,
-        username: account.username,
-        display_name: account.display_name,
-        product_truth: account.product_truth,
-    })
+    Ok(account.into())
 }
 
 /// List all connected accounts (metadata only — no tokens).
@@ -278,17 +288,7 @@ pub async fn list_accounts(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ConnectedAccount>, String> {
     let accounts = crate::db::accounts::list(&state.db).await?;
-    Ok(accounts
-        .into_iter()
-        .map(|a| ConnectedAccount {
-            id: a.id,
-            provider: a.provider,
-            user_id: a.user_id,
-            username: a.username,
-            display_name: a.display_name,
-            product_truth: a.product_truth,
-        })
-        .collect())
+    Ok(accounts.into_iter().map(Into::into).collect())
 }
 
 /// Disconnect an account: remove the token from disk and the record from SQLite.
@@ -317,6 +317,33 @@ pub async fn update_account_product_truth(
         Some(product_truth.trim())
     };
     crate::db::accounts::update_product_truth(&state.db, account_id, value).await
+}
+
+/// Save or clear branding colors (brand + accent) for an account.
+/// Empty strings are treated as "clear" (set to NULL — falls back to app defaults).
+/// Hex strings are validated lightly: must start with '#' and be 4 or 7 chars long.
+#[tauri::command]
+pub async fn update_account_branding(
+    state: tauri::State<'_, AppState>,
+    account_id: i64,
+    brand_color: String,
+    accent_color: String,
+) -> Result<(), String> {
+    fn parse(value: &str) -> Result<Option<&str>, String> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        if !trimmed.starts_with('#') || (trimmed.len() != 4 && trimmed.len() != 7) {
+            return Err(format!(
+                "Couleur invalide « {trimmed} » — utilise un format hex (#rgb ou #rrggbb)."
+            ));
+        }
+        Ok(Some(trimmed))
+    }
+    let brand = parse(&brand_color)?;
+    let accent = parse(&accent_color)?;
+    crate::db::accounts::update_branding(&state.db, account_id, brand, accent).await
 }
 
 /// Save the Instagram Meta App ID to settings.
@@ -453,14 +480,7 @@ pub async fn start_linkedin_oauth_flow(
     )
     .await?;
 
-    Ok(ConnectedAccount {
-        id: account.id,
-        provider: account.provider,
-        user_id: account.user_id,
-        username: account.username,
-        display_name: account.display_name,
-        product_truth: account.product_truth,
-    })
+    Ok(account.into())
 }
 
 /// Save the LinkedIn App Client ID to settings.

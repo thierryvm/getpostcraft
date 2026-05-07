@@ -1,6 +1,6 @@
 import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers, Pencil } from "lucide-react";
-import { useState, useRef, useEffect } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -13,6 +13,8 @@ import { useComposerStore } from "@/stores/composer.store";
 import { generateContent, saveDraft, generateCarousel } from "@/lib/tauri/composer";
 import type { CaptionVariant, CarouselSlide } from "@/lib/tauri/composer";
 import { renderPostImage, renderCodeImage, renderTerminalImage, renderCarouselSlides, exportCarouselZip } from "@/lib/tauri/media";
+import type { BrandOptions } from "@/lib/tauri/media";
+import { listAccounts } from "@/lib/tauri/oauth";
 import { publishPost, publishLinkedinPost, updateDraftImage } from "@/lib/tauri/publisher";
 import { updatePostDraft } from "@/lib/tauri/calendar";
 import { NETWORK_META } from "@/types/composer.types";
@@ -165,8 +167,22 @@ function VariantsPanel({
 export function ContentPreview() {
   const { result, variants, network, brief, accountId, imageFormat, draftId, setResult, setIsLoading, setError, setDraftId } = useComposerStore();
   const queryClient = useQueryClient();
-  const { captionLimit, hashtagLimit, foldLimit, recommendedLimit, label: networkLabel } = NETWORK_META[network];
+  const { captionLimit, hashtagLimit, foldLimit, minRecommendedLength, recommendedLimit, label: networkLabel } = NETWORK_META[network];
   const imageRef = useRef<HTMLDivElement>(null);
+
+  // Resolve the active account to extract handle + brand color for image rendering.
+  // When no account is selected, brand is empty → backend falls back to defaults.
+  const { data: allAccounts = [] } = useQuery({
+    queryKey: ["accounts"],
+    queryFn: listAccounts,
+  });
+  const brand: BrandOptions = useMemo(() => {
+    const account = allAccounts.find((a) => a.id === accountId);
+    return {
+      handle: account?.username ?? null,
+      brandColor: account?.brand_color ?? null,
+    };
+  }, [allAccounts, accountId]);
 
   type VisualTemplate = "post" | "code" | "terminal" | "carousel";
 
@@ -255,13 +271,13 @@ export function ContentPreview() {
       let url: string;
       if (template === "code") {
         if (!code.trim()) { setRenderError("Colle du code d'abord."); setIsRendering(false); return; }
-        url = await renderCodeImage(code, language, filename || undefined, width, height);
+        url = await renderCodeImage(code, language, filename || undefined, width, height, brand);
       } else if (template === "terminal") {
         if (!termCommand.trim()) { setRenderError("Saisis une commande d'abord."); setIsRendering(false); return; }
-        url = await renderTerminalImage(termCommand, termOutput || undefined, width, height);
+        url = await renderTerminalImage(termCommand, termOutput || undefined, width, height, brand);
       } else {
         if (!result) { setRenderError("Génère du contenu d'abord."); setIsRendering(false); return; }
-        url = await renderPostImage(result.caption, hashtags, width, height);
+        url = await renderPostImage(result.caption, hashtags, width, height, brand);
       }
       setImageUrl(url);
       // Persist the data URL in SQLite so publish_post can upload it to imgbb
@@ -288,7 +304,7 @@ export function ContentPreview() {
       const slides = await generateCarousel(brief, network, slideCount, accountId);
       setCarouselSlides(slides);
       setCarouselIndex(0);
-      const images = await renderCarouselSlides(slides);
+      const images = await renderCarouselSlides(slides, brand);
       setCarouselImages(images);
       // Save draft so the publish button becomes available.
       // Caption = first slide title + body; image = first slide render.
@@ -361,9 +377,10 @@ export function ContentPreview() {
   const captionLength = safeResult.caption.length;
   const isOverLimit = captionLength > captionLimit;
   const isOverRecommended = recommendedLimit > 0 && captionLength > recommendedLimit && !isOverLimit;
+  const isUnderRecommended = minRecommendedLength > 0 && captionLength < minRecommendedLength;
   const counterColor = isOverLimit
     ? "text-destructive"
-    : isOverRecommended
+    : isOverRecommended || isUnderRecommended
     ? "text-orange-400"
     : "text-muted-foreground";
   const hashtagsText = hashtags.map((t) => `#${t}`).join(" ");
@@ -382,6 +399,7 @@ export function ContentPreview() {
             <div className="flex items-center gap-1">
               <span className={`text-xs ${counterColor}`}>
                 {captionLength} / {captionLimit}
+                {isUnderRecommended && ` · <${minRecommendedLength} trop court`}
                 {isOverRecommended && ` · >${recommendedLimit} recommandé`}
               </span>
               {!isEditingCaption && (

@@ -2,6 +2,38 @@ use crate::commands::ai::CarouselSlide;
 use base64::Engine as _;
 use std::path::PathBuf;
 
+// ── Branding defaults ─────────────────────────────────────────────────────────
+
+const DEFAULT_HANDLE: &str = "yourbrand";
+const DEFAULT_BRAND_COLOR: &str = "#3ddc84";
+
+/// Resolved branding values used by every template.
+/// `handle` is rendered in titlebars/branding labels (no leading "@" — added in HTML).
+/// `brand_color` paints prompts, cursors, tags, accents, dot indicators.
+struct Brand {
+    handle: String,
+    brand_color: String,
+}
+
+impl Brand {
+    fn resolve(handle: Option<&str>, brand_color: Option<&str>) -> Self {
+        let handle = handle
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim_start_matches('@').to_string())
+            .unwrap_or_else(|| DEFAULT_HANDLE.to_string());
+        let brand_color = brand_color
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| DEFAULT_BRAND_COLOR.to_string());
+        Self {
+            handle,
+            brand_color,
+        }
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn renders_dir() -> PathBuf {
@@ -38,7 +70,13 @@ async fn render_to_base64(html: &str, width: u32, height: u32) -> Result<String,
 
 // ── Template builders ─────────────────────────────────────────────────────────
 
-fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) -> String {
+fn build_post_html(
+    caption: &str,
+    hashtags: &[String],
+    width: u32,
+    height: u32,
+    brand: &Brand,
+) -> String {
     let caption_escaped = html_escape(caption).replace('\n', "<br>");
     let hashtag_html: String = hashtags
         .iter()
@@ -59,6 +97,8 @@ fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) 
     };
     let tag_font = (caption_font as f32 * 0.60) as u32;
     let content_padding = if caption_len <= 320 { 52 } else { 36 };
+    let handle_escaped = html_escape(&brand.handle);
+    let brand_color = &brand.brand_color;
 
     format!(
         r#"<!DOCTYPE html>
@@ -82,7 +122,7 @@ fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) 
     border: 1px solid #30363d;
     border-radius: 14px;
     overflow: hidden;
-    box-shadow: 0 24px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(61,220,132,0.08);
+    box-shadow: 0 24px 64px rgba(0,0,0,0.7), 0 0 0 1px {brand_color}14;
   }}
   .titlebar {{
     background: #21262d;
@@ -110,25 +150,25 @@ fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) 
   .prompt-row {{
     display: flex; align-items: flex-start; gap: 16px;
   }}
-  .prompt {{ color: #3ddc84; font-size: {caption_font}px; line-height: 1.6; flex-shrink: 0; font-weight: 600; }}
+  .prompt {{ color: {brand_color}; font-size: {caption_font}px; line-height: 1.6; flex-shrink: 0; font-weight: 600; }}
   .caption-text {{
     color: #e6edf3; font-size: {caption_font}px; line-height: 1.6;
     word-break: break-word; overflow: hidden;
   }}
   .cursor {{
     display: inline-block; width: 3px; height: {caption_font}px;
-    background: #3ddc84; margin-left: 6px;
+    background: {brand_color}; margin-left: 6px;
     vertical-align: middle; opacity: 0.9;
   }}
   .sep {{
     margin: 28px 0 22px;
-    height: 1px; background: linear-gradient(to right, #3ddc8430, #30363d, transparent);
+    height: 1px; background: linear-gradient(to right, {brand_color}30, #30363d, transparent);
     flex-shrink: 0;
   }}
   .tags {{
     display: flex; flex-wrap: wrap; gap: 10px; flex-shrink: 0;
   }}
-  .tag {{ font-size: {tag_font}px; color: #3ddc84; opacity: 0.75; }}
+  .tag {{ font-size: {tag_font}px; color: {brand_color}; opacity: 0.75; }}
 </style>
 </head>
 <body>
@@ -137,7 +177,7 @@ fn build_post_html(caption: &str, hashtags: &[String], width: u32, height: u32) 
       <div class="dot dot-r"></div>
       <div class="dot dot-y"></div>
       <div class="dot dot-g"></div>
-      <span class="wintitle">@terminallearning — zsh</span>
+      <span class="wintitle">@{handle_escaped} — zsh</span>
     </div>
     <div class="content">
       <div class="prompt-row">
@@ -161,6 +201,7 @@ fn build_code_html(
     filename: Option<&str>,
     width: u32,
     height: u32,
+    brand: &Brand,
 ) -> String {
     let code_escaped = html_escape(code);
     let file_label = html_escape(filename.unwrap_or(language));
@@ -170,6 +211,8 @@ fn build_code_html(
         .map(|n| n.to_string())
         .collect::<Vec<_>>()
         .join("<br>");
+    let handle_escaped = html_escape(&brand.handle);
+    let brand_color = &brand.brand_color;
 
     format!(
         r#"<!DOCTYPE html>
@@ -198,7 +241,7 @@ fn build_code_html(
   .dot {{ width: 14px; height: 14px; border-radius: 50%; }}
   .dot-r {{ background: #ff5f57; }} .dot-y {{ background: #ffbd2e; }} .dot-g {{ background: #28ca41; }}
   .file {{ flex: 1; text-align: center; font-size: 15px; color: #8b949e; font-family: "Consolas", monospace; margin-right: 60px; }}
-  .lang {{ font-size: 13px; color: #3ddc84; background: rgba(61,220,132,0.12); padding: 4px 12px; border-radius: 20px; font-family: monospace; font-weight: 600; }}
+  .lang {{ font-size: 13px; color: {brand_color}; background: {brand_color}1f; padding: 4px 12px; border-radius: 20px; font-family: monospace; font-weight: 600; }}
   .code-wrap {{ padding: 36px 36px 36px 28px; display: flex; gap: 24px; overflow: hidden; }}
   .ln {{ color: #3d444d; font-family: "Consolas", "Courier New", monospace; font-size: 22px; line-height: 1.75; text-align: right; min-width: 36px; user-select: none; }}
   pre {{
@@ -208,7 +251,7 @@ fn build_code_html(
   }}
   .branding {{
     position: absolute; bottom: 36px; right: 52px;
-    font-size: 20px; color: #3ddc84; opacity: 0.6;
+    font-size: 20px; color: {brand_color}; opacity: 0.6;
     font-weight: 600; font-family: monospace; letter-spacing: 0.04em;
   }}
 </style>
@@ -229,7 +272,7 @@ fn build_code_html(
       <pre>{code_escaped}</pre>
     </div>
   </div>
-  <div class="branding">@terminallearning</div>
+  <div class="branding">@{handle_escaped}</div>
 </body>
 </html>"#,
         file_label = file_label,
@@ -239,7 +282,13 @@ fn build_code_html(
     )
 }
 
-fn build_terminal_html(command: &str, output: Option<&str>, width: u32, height: u32) -> String {
+fn build_terminal_html(
+    command: &str,
+    output: Option<&str>,
+    width: u32,
+    height: u32,
+    brand: &Brand,
+) -> String {
     let cmd_escaped = html_escape(command);
     let output_html = output
         .filter(|o| !o.trim().is_empty())
@@ -255,6 +304,8 @@ fn build_terminal_html(command: &str, output: Option<&str>, width: u32, height: 
     } else {
         "<span class=\"cursor\"></span>"
     };
+    let handle_escaped = html_escape(&brand.handle);
+    let brand_color = &brand.brand_color;
 
     format!(
         r#"<!DOCTYPE html>
@@ -285,11 +336,11 @@ fn build_terminal_html(command: &str, output: Option<&str>, width: u32, height: 
   .title {{ flex: 1; text-align: center; font-size: 14px; color: #8b949e; margin-right: 60px; }}
   .body {{ padding: 48px; }}
   .prompt-line {{ display: flex; align-items: baseline; gap: 14px; }}
-  .prompt {{ color: #3ddc84; font-size: 34px; font-weight: bold; white-space: nowrap; }}
+  .prompt {{ color: {brand_color}; font-size: 34px; font-weight: bold; white-space: nowrap; }}
   .cmd {{ color: #e6edf3; font-size: 34px; }}
   .cursor {{
     display: inline-block; width: 20px; height: 36px;
-    background: #3ddc84; margin-left: 6px;
+    background: {brand_color}; margin-left: 6px;
     vertical-align: middle; opacity: 0.85;
     animation: none;
   }}
@@ -300,7 +351,7 @@ fn build_terminal_html(command: &str, output: Option<&str>, width: u32, height: 
   }}
   .branding {{
     position: absolute; bottom: 36px; right: 52px;
-    font-size: 20px; color: #3ddc84; opacity: 0.6;
+    font-size: 20px; color: {brand_color}; opacity: 0.6;
     font-weight: 600; letter-spacing: 0.04em;
   }}
 </style>
@@ -313,7 +364,7 @@ fn build_terminal_html(command: &str, output: Option<&str>, width: u32, height: 
         <div class="dot dot-y"></div>
         <div class="dot dot-g"></div>
       </div>
-      <div class="title">bash — @terminallearning</div>
+      <div class="title">bash — @{handle_escaped}</div>
     </div>
     <div class="body">
       <div class="prompt-line">
@@ -324,7 +375,7 @@ fn build_terminal_html(command: &str, output: Option<&str>, width: u32, height: 
       {output}
     </div>
   </div>
-  <div class="branding">@terminallearning</div>
+  <div class="branding">@{handle_escaped}</div>
 </body>
 </html>"#,
         command = cmd_escaped,
@@ -333,7 +384,7 @@ fn build_terminal_html(command: &str, output: Option<&str>, width: u32, height: 
     )
 }
 
-fn build_carousel_slide_html(slide: &CarouselSlide) -> String {
+fn build_carousel_slide_html(slide: &CarouselSlide, brand: &Brand) -> String {
     let dots: String = (1..=slide.total)
         .map(|i| {
             if i == slide.index {
@@ -345,35 +396,37 @@ fn build_carousel_slide_html(slide: &CarouselSlide) -> String {
         .collect::<Vec<_>>()
         .join("");
 
-    let css = concat!(
-        "*{margin:0;padding:0;box-sizing:border-box}",
-        "body{width:1080px;height:1080px;background:#0d1117;",
-        "font-family:'Segoe UI',system-ui,-apple-system,sans-serif;",
-        "display:flex;flex-direction:column;align-items:center;",
-        "justify-content:center;padding:80px;position:relative}",
-        ".brand{position:absolute;top:40px;right:48px;font-size:22px;",
-        "color:#3ddc84;font-weight:700;letter-spacing:.04em}",
-        ".counter{position:absolute;top:40px;left:48px;font-size:22px;",
-        "color:#8b949e;font-weight:500}",
-        ".content{display:flex;flex-direction:column;align-items:center;",
-        "text-align:center;max-width:900px}",
-        ".emoji{font-size:104px;line-height:1;margin-bottom:48px}",
-        ".title{font-size:58px;font-weight:800;color:#fff;",
-        "line-height:1.15;margin-bottom:28px}",
-        ".accent{width:64px;height:5px;background:#3ddc84;",
-        "border-radius:3px;margin-bottom:36px}",
-        ".body{font-size:30px;color:#c9d1d9;line-height:1.6}",
-        ".dots{position:absolute;bottom:44px;left:50%;",
-        "transform:translateX(-50%);display:flex;gap:10px;align-items:center}",
-        ".dot{width:10px;height:10px;border-radius:50%;background:#30363d}",
-        ".dot.active{width:28px;height:10px;border-radius:5px;background:#3ddc84}",
+    let handle_escaped = html_escape(&brand.handle);
+    let brand_color = &brand.brand_color;
+    let css = format!(
+        "*{{margin:0;padding:0;box-sizing:border-box}}\
+         body{{width:1080px;height:1080px;background:#0d1117;\
+         font-family:'Segoe UI',system-ui,-apple-system,sans-serif;\
+         display:flex;flex-direction:column;align-items:center;\
+         justify-content:center;padding:80px;position:relative}}\
+         .brand{{position:absolute;top:40px;right:48px;font-size:22px;\
+         color:{brand_color};font-weight:700;letter-spacing:.04em}}\
+         .counter{{position:absolute;top:40px;left:48px;font-size:22px;\
+         color:#8b949e;font-weight:500}}\
+         .content{{display:flex;flex-direction:column;align-items:center;\
+         text-align:center;max-width:900px}}\
+         .emoji{{font-size:104px;line-height:1;margin-bottom:48px}}\
+         .title{{font-size:58px;font-weight:800;color:#fff;\
+         line-height:1.15;margin-bottom:28px}}\
+         .accent{{width:64px;height:5px;background:{brand_color};\
+         border-radius:3px;margin-bottom:36px}}\
+         .body{{font-size:30px;color:#c9d1d9;line-height:1.6}}\
+         .dots{{position:absolute;bottom:44px;left:50%;\
+         transform:translateX(-50%);display:flex;gap:10px;align-items:center}}\
+         .dot{{width:10px;height:10px;border-radius:50%;background:#30363d}}\
+         .dot.active{{width:28px;height:10px;border-radius:5px;background:{brand_color}}}",
     );
 
     let mut html = String::with_capacity(3500);
     html.push_str(r#"<!DOCTYPE html><html><head><meta charset="UTF-8"><style>"#);
-    html.push_str(css);
+    html.push_str(&css);
     html.push_str("</style></head><body>");
-    html.push_str(r#"<div class="brand">getpostcraft</div>"#);
+    html.push_str(&format!(r#"<div class="brand">@{handle_escaped}</div>"#));
     html.push_str(&format!(
         r#"<div class="counter">{}/{}</div>"#,
         slide.index, slide.total
@@ -407,10 +460,13 @@ pub async fn render_post_image(
     hashtags: Vec<String>,
     width: Option<u32>,
     height: Option<u32>,
+    handle: Option<String>,
+    brand_color: Option<String>,
 ) -> Result<String, String> {
     let w = width.unwrap_or(1080);
     let h = height.unwrap_or(1080);
-    render_to_base64(&build_post_html(&caption, &hashtags, w, h), w, h).await
+    let brand = Brand::resolve(handle.as_deref(), brand_color.as_deref());
+    render_to_base64(&build_post_html(&caption, &hashtags, w, h, &brand), w, h).await
 }
 
 /// Render a code snippet card to PNG at given dimensions. Returns base64 data URL.
@@ -421,11 +477,14 @@ pub async fn render_code_image(
     filename: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
+    handle: Option<String>,
+    brand_color: Option<String>,
 ) -> Result<String, String> {
     let w = width.unwrap_or(1080);
     let h = height.unwrap_or(1080);
+    let brand = Brand::resolve(handle.as_deref(), brand_color.as_deref());
     render_to_base64(
-        &build_code_html(&code, &language, filename.as_deref(), w, h),
+        &build_code_html(&code, &language, filename.as_deref(), w, h, &brand),
         w,
         h,
     )
@@ -439,11 +498,14 @@ pub async fn render_terminal_image(
     output: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
+    handle: Option<String>,
+    brand_color: Option<String>,
 ) -> Result<String, String> {
     let w = width.unwrap_or(1080);
     let h = height.unwrap_or(1080);
+    let brand = Brand::resolve(handle.as_deref(), brand_color.as_deref());
     render_to_base64(
-        &build_terminal_html(&command, output.as_deref(), w, h),
+        &build_terminal_html(&command, output.as_deref(), w, h, &brand),
         w,
         h,
     )
@@ -452,10 +514,16 @@ pub async fn render_terminal_image(
 
 /// Render each carousel slide to PNG. Returns Vec of base64 data URLs (same order as input).
 #[tauri::command]
-pub async fn render_carousel_slides(slides: Vec<CarouselSlide>) -> Result<Vec<String>, String> {
+pub async fn render_carousel_slides(
+    slides: Vec<CarouselSlide>,
+    handle: Option<String>,
+    brand_color: Option<String>,
+) -> Result<Vec<String>, String> {
+    let brand = Brand::resolve(handle.as_deref(), brand_color.as_deref());
     let mut images = Vec::with_capacity(slides.len());
     for slide in &slides {
-        let data_url = render_to_base64(&build_carousel_slide_html(slide), 1080, 1080).await?;
+        let data_url =
+            render_to_base64(&build_carousel_slide_html(slide, &brand), 1080, 1080).await?;
         images.push(data_url);
     }
     Ok(images)
@@ -495,4 +563,89 @@ pub async fn export_carousel_zip(images: Vec<String>) -> Result<String, String> 
 
     zip.finish().map_err(|e| e.to_string())?;
     Ok(zip_path.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn brand_resolve_uses_defaults_when_inputs_empty() {
+        let b = Brand::resolve(None, None);
+        assert_eq!(b.handle, DEFAULT_HANDLE);
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+
+        let b = Brand::resolve(Some(""), Some(""));
+        assert_eq!(b.handle, DEFAULT_HANDLE);
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+
+        let b = Brand::resolve(Some("   "), Some("   "));
+        assert_eq!(b.handle, DEFAULT_HANDLE);
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_strips_leading_at_sign() {
+        let b = Brand::resolve(Some("@myhandle"), None);
+        assert_eq!(b.handle, "myhandle");
+    }
+
+    #[test]
+    fn brand_resolve_passes_custom_color_through() {
+        let b = Brand::resolve(None, Some("#ff00aa"));
+        assert_eq!(b.brand_color, "#ff00aa");
+    }
+
+    #[test]
+    fn post_html_uses_provided_handle_and_color() {
+        let brand = Brand::resolve(Some("ankora"), Some("#0d9488"));
+        let html = build_post_html("hello", &[], 1080, 1080, &brand);
+        assert!(html.contains("@ankora"), "must render the provided handle");
+        assert!(
+            html.contains("#0d9488"),
+            "must render the provided brand color"
+        );
+        assert!(
+            !html.contains("@yourbrand"),
+            "must not leak the default handle when a custom one is provided"
+        );
+    }
+
+    #[test]
+    fn carousel_html_uses_provided_handle_and_color() {
+        let brand = Brand::resolve(Some("ankora"), Some("#0d9488"));
+        let slide = CarouselSlide {
+            index: 1,
+            total: 3,
+            emoji: "🚀".to_string(),
+            title: "Title".to_string(),
+            body: "Body".to_string(),
+        };
+        let html = build_carousel_slide_html(&slide, &brand);
+        assert!(html.contains("@ankora"));
+        assert!(html.contains("#0d9488"));
+    }
+
+    #[test]
+    fn templates_are_persona_agnostic() {
+        // No template should leak an old hardcoded handle when a different one is supplied.
+        let brand = Brand::resolve(Some("ankora"), Some("#0d9488"));
+        let post = build_post_html("x", &[], 1080, 1080, &brand);
+        let code = build_code_html("x", "rust", None, 1080, 1080, &brand);
+        let term = build_terminal_html("ls", None, 1080, 1080, &brand);
+        let slide = CarouselSlide {
+            index: 1,
+            total: 1,
+            emoji: "x".into(),
+            title: "x".into(),
+            body: "x".into(),
+        };
+        let car = build_carousel_slide_html(&slide, &brand);
+        for html in [&post, &code, &term, &car] {
+            assert!(
+                !html.contains("@terminallearning"),
+                "no template may carry the legacy hardcoded handle"
+            );
+        }
+    }
 }

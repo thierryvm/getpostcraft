@@ -15,6 +15,7 @@ import {
   startLinkedInOAuthFlow,
 } from "@/lib/tauri/oauth";
 import { ProductTruthEditor } from "./ProductTruthEditor";
+import { BrandColorsEditor } from "./BrandColorsEditor";
 import type { ConnectedAccount } from "@/lib/tauri/oauth";
 
 export function LinkedInSection({ account }: { account: ConnectedAccount | undefined }) {
@@ -103,6 +104,11 @@ export function LinkedInSection({ account }: { account: ConnectedAccount | undef
             </Button>
           </div>
           <ProductTruthEditor accountId={account.id} initialValue={account.product_truth} />
+          <BrandColorsEditor
+            accountId={account.id}
+            initialBrand={account.brand_color}
+            initialAccent={account.accent_color}
+          />
         </div>
       ) : (
         <div className="flex flex-col gap-4">

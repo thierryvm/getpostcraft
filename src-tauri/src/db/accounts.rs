@@ -12,7 +12,12 @@ pub struct Account {
     pub created_at: String,
     pub updated_at: String,
     pub product_truth: Option<String>,
+    pub brand_color: Option<String>,
+    pub accent_color: Option<String>,
 }
+
+const SELECT_COLUMNS: &str = "id, provider, user_id, username, display_name, token_key, \
+     created_at, updated_at, product_truth, brand_color, accent_color";
 
 fn row_to_account(row: &SqliteRow) -> Account {
     Account {
@@ -25,6 +30,8 @@ fn row_to_account(row: &SqliteRow) -> Account {
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         product_truth: row.get("product_truth"),
+        brand_color: row.get("brand_color"),
+        accent_color: row.get("accent_color"),
     }
 }
 
@@ -36,7 +43,7 @@ pub async fn upsert_and_get(
     display_name: Option<&str>,
     token_key: &str,
 ) -> Result<Account, String> {
-    let row = sqlx::query(
+    let sql = format!(
         "INSERT INTO accounts (provider, user_id, username, display_name, token_key, updated_at)
          VALUES (?, ?, ?, ?, ?, datetime('now'))
          ON CONFLICT(provider, user_id) DO UPDATE SET
@@ -44,44 +51,38 @@ pub async fn upsert_and_get(
              display_name = excluded.display_name,
              token_key    = excluded.token_key,
              updated_at   = excluded.updated_at
-         RETURNING id, provider, user_id, username, display_name, token_key,
-                   created_at, updated_at, product_truth",
-    )
-    .bind(provider)
-    .bind(user_id)
-    .bind(username)
-    .bind(display_name)
-    .bind(token_key)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+         RETURNING {SELECT_COLUMNS}",
+    );
+    let row = sqlx::query(&sql)
+        .bind(provider)
+        .bind(user_id)
+        .bind(username)
+        .bind(display_name)
+        .bind(token_key)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(row_to_account(&row))
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Account>, String> {
-    let rows = sqlx::query(
-        "SELECT id, provider, user_id, username, display_name, token_key,
-                created_at, updated_at, product_truth
-         FROM accounts ORDER BY created_at ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let sql = format!("SELECT {SELECT_COLUMNS} FROM accounts ORDER BY created_at ASC");
+    let rows = sqlx::query(&sql)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(rows.iter().map(row_to_account).collect())
 }
 
 pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Account, String> {
-    let row = sqlx::query(
-        "SELECT id, provider, user_id, username, display_name, token_key,
-                created_at, updated_at, product_truth
-         FROM accounts WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("Account {id} not found: {e}"))?;
+    let sql = format!("SELECT {SELECT_COLUMNS} FROM accounts WHERE id = ?");
+    let row = sqlx::query(&sql)
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("Account {id} not found: {e}"))?;
 
     Ok(row_to_account(&row))
 }
@@ -97,6 +98,25 @@ pub async fn update_product_truth(
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn update_branding(
+    pool: &SqlitePool,
+    id: i64,
+    brand_color: Option<&str>,
+    accent_color: Option<&str>,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE accounts SET brand_color = ?, accent_color = ?, updated_at = datetime('now') \
+         WHERE id = ?",
+    )
+    .bind(brand_color)
+    .bind(accent_color)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

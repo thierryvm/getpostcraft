@@ -9,6 +9,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [Unreleased]
 
 ### Added
+- **Persona-agnostic prompts + image templates** — handle, niche et hashtags spécifiques à un compte ne sont plus en dur ; tout passe par `ProductTruth` + nouvelles colonnes `brand_color` / `accent_color` par compte. Le compte actif sélectionné dans le Composer fournit automatiquement son handle et sa couleur de marque aux 4 templates HTML→PNG (post, code, terminal, carrousel). Fallback `@yourbrand` + `#3ddc84` si aucun compte sélectionné. Débloque l'utilisation multi-projet (Terminal Learning, Ankora, etc.) sans réécrire le code.
+- Migration `009_account_branding` — colonnes `brand_color TEXT` et `accent_color TEXT` dans `accounts` (nullable).
+- Commande Tauri `update_account_branding` + composant `BrandColorsEditor` (color picker + hex input) dans `InstagramSection` / `LinkedInSection`.
 - **Product Truth par compte** — champ texte libre par compte connecté (Instagram, LinkedIn), injecté dans le system prompt IA lors de chaque génération. Contraint la génération aux produits/services réels du compte. Éditable depuis Paramètres → Comptes. Indicateur `✓ Product Truth` dans le sélecteur de compte du Composer.
 - **Sélecteur de compte dans le Composer** — dropdown permettant de choisir le compte cible avant génération ; auto-sélection si un seul compte connecté pour le réseau choisi.
 - Migration `007_product_truth` — colonne `product_truth TEXT` dans la table `accounts` (nullable, préservée lors des re-connexions OAuth).
