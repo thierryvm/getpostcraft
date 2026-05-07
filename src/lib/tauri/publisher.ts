@@ -30,6 +30,15 @@ export function updateDraftImage(postId: number, imagePath: string): Promise<voi
   return invoke<void>("update_draft_image", { postId, imagePath });
 }
 
+/**
+ * Attach an array of images (carousel slides) to a draft. Order preserved —
+ * slide 1 = images[0] at publish time. Use this instead of updateDraftImage
+ * when generating carousels so all slides are stored in DB.
+ */
+export function updateDraftImages(postId: number, images: string[]): Promise<void> {
+  return invoke<void>("update_draft_images", { postId, images });
+}
+
 export type ImageHostProvider = "catbox" | "imgbb";
 
 /** Save the image host provider ("catbox" | "imgbb"). */

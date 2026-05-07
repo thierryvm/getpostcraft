@@ -103,6 +103,7 @@ pub fn run() {
             commands::publisher::save_image_host,
             commands::publisher::get_image_host,
             commands::publisher::update_draft_image,
+            commands::publisher::update_draft_images,
             // Publisher — LinkedIn
             commands::publisher::publish_linkedin_post,
             // OAuth / Accounts — Instagram

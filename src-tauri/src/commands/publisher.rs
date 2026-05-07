@@ -294,8 +294,8 @@ async fn upload_image_to_imgbb(image_source: &str, api_key: &str) -> Result<Stri
 
 // ── Instagram Graph API ────────────────────────────────────────────────────
 
-/// Step 1: Create a media container.
-/// Returns the container ID to use in the publish step.
+/// Single-image container — used for normal posts AND as the leaf step of the
+/// carousel flow (one container per slide before assembling the parent).
 async fn create_ig_container(
     ig_user_id: &str,
     image_url: &str,
@@ -331,7 +331,85 @@ async fn create_ig_container(
     Ok(r.id)
 }
 
+/// Carousel item container — one per slide. Differs from the single-image
+/// container by `is_carousel_item=true` and the absence of a caption (the
+/// caption lives only on the parent CAROUSEL container).
+async fn create_ig_carousel_item(
+    ig_user_id: &str,
+    image_url: &str,
+    access_token: &str,
+) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct ContainerResponse {
+        id: String,
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{IG_API}/{ig_user_id}/media"))
+        .form(&[
+            ("image_url", image_url),
+            ("is_carousel_item", "true"),
+            ("access_token", access_token),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Instagram carousel item network error: {e}"))?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Instagram carousel item creation failed: {body}"));
+    }
+
+    let r: ContainerResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse carousel item response: {e}"))?;
+    Ok(r.id)
+}
+
+/// Carousel parent container — references the children created by
+/// `create_ig_carousel_item` and carries the post caption.
+async fn create_ig_carousel_parent(
+    ig_user_id: &str,
+    children_ids: &[String],
+    caption: &str,
+    access_token: &str,
+) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct ContainerResponse {
+        id: String,
+    }
+
+    let children = children_ids.join(",");
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{IG_API}/{ig_user_id}/media"))
+        .form(&[
+            ("media_type", "CAROUSEL"),
+            ("children", &children),
+            ("caption", caption),
+            ("access_token", access_token),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Instagram carousel parent network error: {e}"))?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Instagram carousel parent creation failed: {body}"));
+    }
+
+    let r: ContainerResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse carousel parent response: {e}"))?;
+    Ok(r.id)
+}
+
 /// Step 2: Publish the container. Returns the Instagram media ID.
+/// Used for both single-image and carousel parent containers — the Graph API
+/// endpoint is the same.
 async fn publish_ig_container(
     ig_user_id: &str,
     container_id: &str,
@@ -367,8 +445,55 @@ async fn publish_ig_container(
 
 // ── Tauri commands ────────────────────────────────────────────────────────
 
+/// Resolved uploader configuration. Captured once per publish call so we don't
+/// hit settings_db for every slide of a 5-image carousel.
+enum ImageUploader {
+    /// User configured an imgbb key — direct upload, faster & more reliable.
+    Imgbb(String),
+    /// Default: round-robin through Catbox → Litterbox → tmpfiles → 0x0.st.
+    Free,
+}
+
+impl ImageUploader {
+    async fn from_state(state: &AppState) -> Result<Self, String> {
+        let host = crate::db::settings_db::get(&state.db, "image_host")
+            .await
+            .unwrap_or_else(|| "catbox".to_string());
+        if host == "imgbb" {
+            let key = crate::db::settings_db::get(&state.db, "imgbb_api_key")
+                .await
+                .ok_or("Clé imgbb non configurée. Ajoute-la dans Paramètres → Publication.")?;
+            Ok(Self::Imgbb(key))
+        } else {
+            Ok(Self::Free)
+        }
+    }
+
+    async fn upload(&self, source: &str) -> Result<String, String> {
+        match self {
+            Self::Imgbb(key) => upload_image_to_imgbb(source, key).await,
+            Self::Free => upload_image_free(source).await,
+        }
+    }
+}
+
+/// Build the full caption (post body + " " + "#tag1 #tag2 …") used by every
+/// publish flow. Hashtag-free if there are none.
+fn compose_caption_with_hashtags(caption: &str, hashtags: &[String]) -> String {
+    let hashtags_str = hashtags
+        .iter()
+        .map(|h| format!("#{h}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if hashtags_str.is_empty() {
+        caption.to_string()
+    } else {
+        format!("{caption}\n\n{hashtags_str}")
+    }
+}
+
 /// Publish a draft post to Instagram.
-/// The post must have an image_path set (use render_post_image first).
+/// Auto-detects single-image vs carousel from `post.images.len()`.
 #[tauri::command]
 pub async fn publish_post(
     post_id: i64,
@@ -380,11 +505,9 @@ pub async fn publish_post(
     if post.status == "published" {
         return Err("This post is already published".to_string());
     }
-
-    let image_path = post
-        .image_path
-        .as_deref()
-        .ok_or("No image attached to this post. Generate an image first.")?;
+    if post.images.is_empty() {
+        return Err("No image attached to this post. Generate an image first.".to_string());
+    }
 
     // 2. Get connected Instagram account
     let accounts = crate::db::accounts::list(&state.db).await?;
@@ -396,42 +519,52 @@ pub async fn publish_post(
     // 3. Get access token (never leaves Rust)
     let access_token = crate::token_store::get_token(&account.token_key)?;
 
-    // 4. Upload image → get public URL
-    //    imgbb if explicitly configured, otherwise free tier with auto-fallback (Catbox → 0x0.st)
-    let image_host = crate::db::settings_db::get(&state.db, "image_host")
-        .await
-        .unwrap_or_else(|| "catbox".to_string());
+    // 4. Upload every image up-front so we have public URLs for the IG containers.
+    //    imgbb if configured, otherwise free-tier auto-fallback chain.
+    let uploader = ImageUploader::from_state(&state).await?;
+    let mut image_urls: Vec<String> = Vec::with_capacity(post.images.len());
+    for source in &post.images {
+        let url = uploader.upload(source).await.map_err(|e| {
+            format!(
+                "Image upload failed for slide {} of {}: {e}",
+                image_urls.len() + 1,
+                post.images.len()
+            )
+        })?;
+        image_urls.push(url);
+    }
 
-    let image_url = if image_host == "imgbb" {
-        let key = crate::db::settings_db::get(&state.db, "imgbb_api_key")
-            .await
-            .ok_or("Clé imgbb non configurée. Ajoute-la dans Paramètres → Publication.")?;
-        upload_image_to_imgbb(image_path, &key).await?
+    // 5. Build caption with hashtags (used for single OR for carousel parent).
+    let full_caption = compose_caption_with_hashtags(&post.caption, &post.hashtags);
+
+    // 6. Branch: single image vs carousel.
+    let media_id = if image_urls.len() == 1 {
+        let container_id = create_ig_container(
+            &account.user_id,
+            &image_urls[0],
+            &full_caption,
+            &access_token,
+        )
+        .await?;
+        publish_ig_container(&account.user_id, &container_id, &access_token).await?
     } else {
-        upload_image_free(image_path).await?
+        // Carousel: container per slide, then parent CAROUSEL container, then publish.
+        let mut children_ids: Vec<String> = Vec::with_capacity(image_urls.len());
+        for url in &image_urls {
+            let id = create_ig_carousel_item(&account.user_id, url, &access_token).await?;
+            children_ids.push(id);
+        }
+        let parent_id = create_ig_carousel_parent(
+            &account.user_id,
+            &children_ids,
+            &full_caption,
+            &access_token,
+        )
+        .await?;
+        publish_ig_container(&account.user_id, &parent_id, &access_token).await?
     };
 
-    // 6. Build caption with hashtags
-    let hashtags_str = post
-        .hashtags
-        .iter()
-        .map(|h| format!("#{h}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let full_caption = if hashtags_str.is_empty() {
-        post.caption.clone()
-    } else {
-        format!("{}\n\n{}", post.caption, hashtags_str)
-    };
-
-    // 7. Create Instagram media container
-    let container_id =
-        create_ig_container(&account.user_id, &image_url, &full_caption, &access_token).await?;
-
-    // 8. Publish the container
-    let media_id = publish_ig_container(&account.user_id, &container_id, &access_token).await?;
-
-    // 9. Update post status in SQLite
+    // 7. Update post status in SQLite
     let published_at = Utc::now().to_rfc3339();
     crate::db::history::update_status(
         &state.db,
@@ -486,7 +619,9 @@ pub async fn get_image_host(state: tauri::State<'_, AppState>) -> Result<String,
         .unwrap_or_else(|| "catbox".to_string()))
 }
 
-/// Store an image (base64 data URL or file path) on the draft so publish commands can find it.
+/// Store a single image (base64 data URL or file path) on the draft so publish
+/// commands can find it. Sets both `image_path` (legacy) and `images = [path]`
+/// (new column) so the publish flow always sees consistent data.
 #[tauri::command]
 pub async fn update_draft_image(
     post_id: i64,
@@ -494,6 +629,18 @@ pub async fn update_draft_image(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     crate::db::history::update_image_path(&state.db, post_id, &image_path).await
+}
+
+/// Store an array of images (carousel slides) on the draft. The order is
+/// preserved as-is and used at publish time (slide 1 = images[0]).
+/// `image_path` is also updated to `images[0]` for backward-compat readers.
+#[tauri::command]
+pub async fn update_draft_images(
+    post_id: i64,
+    images: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    crate::db::history::update_images(&state.db, post_id, &images).await
 }
 
 // ── LinkedIn publisher ────────────────────────────────────────────────────
@@ -549,49 +696,66 @@ pub async fn publish_linkedin_post(
         format!("{}\n\n{}", post.caption, hashtags_str)
     };
 
-    // 5. Publish — with or without image
-    const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024; // LinkedIn hard limit: 10 MB
+    // 5. Publish — with or without image(s)
+    const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024; // LinkedIn hard limit per image: 10 MB
 
-    let post_urn = if let Some(image_source) = post.image_path.as_deref() {
-        // Decode image bytes from data URL or file path, enforcing the 10 MB limit.
-        let image_bytes = if let Some(b64) = image_source.strip_prefix("data:image/png;base64,") {
-            // base64 overhead: encoded len × 3/4 ≈ decoded len
-            if b64.len() * 3 / 4 > MAX_IMAGE_BYTES {
-                return Err("Image exceeds LinkedIn 10 MB limit".to_string());
-            }
-            STANDARD
-                .decode(b64)
-                .map_err(|e| format!("Failed to decode base64 image: {e}"))?
-        } else {
-            let meta = std::fs::metadata(image_source)
-                .map_err(|e| format!("Cannot stat image file '{image_source}': {e}"))?;
-            if meta.len() > MAX_IMAGE_BYTES as u64 {
-                return Err("Image exceeds LinkedIn 10 MB limit".to_string());
-            }
-            std::fs::read(image_source)
-                .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))?
-        };
+    let post_urn = if post.images.is_empty() {
+        // Text-only post
+        crate::adapters::linkedin::publish_text(&account.user_id, &full_text, &access_token).await?
+    } else {
+        // 1+ image(s): register + upload each, then a single publish_image with all asset URNs.
+        // LinkedIn renders 2+ as a tiled gallery in the same post.
+        let mut asset_urns: Vec<String> = Vec::with_capacity(post.images.len());
+        for (idx, image_source) in post.images.iter().enumerate() {
+            // Decode image bytes from data URL or file path, enforcing the 10 MB limit.
+            let image_bytes = if let Some(b64) = image_source.strip_prefix("data:image/png;base64,")
+            {
+                if b64.len() * 3 / 4 > MAX_IMAGE_BYTES {
+                    return Err(format!(
+                        "Image {} of {} exceeds LinkedIn 10 MB limit",
+                        idx + 1,
+                        post.images.len()
+                    ));
+                }
+                STANDARD
+                    .decode(b64)
+                    .map_err(|e| format!("Failed to decode base64 image {}: {e}", idx + 1))?
+            } else {
+                let meta = std::fs::metadata(image_source)
+                    .map_err(|e| format!("Cannot stat image file '{image_source}': {e}"))?;
+                if meta.len() > MAX_IMAGE_BYTES as u64 {
+                    return Err(format!(
+                        "Image {} of {} exceeds LinkedIn 10 MB limit",
+                        idx + 1,
+                        post.images.len()
+                    ));
+                }
+                std::fs::read(image_source)
+                    .map_err(|e| format!("Cannot read image file '{image_source}': {e}"))?
+            };
 
-        // Step 1: Register upload → upload URL + asset URN
-        let (upload_url, asset_urn) =
-            crate::adapters::linkedin::register_image_upload(&account.user_id, &access_token)
-                .await?;
+            let (upload_url, asset_urn) =
+                crate::adapters::linkedin::register_image_upload(&account.user_id, &access_token)
+                    .await
+                    .map_err(|e| format!("LinkedIn register upload (image {}): {e}", idx + 1))?;
+            crate::adapters::linkedin::upload_image_binary(
+                &upload_url,
+                &image_bytes,
+                &access_token,
+            )
+            .await
+            .map_err(|e| format!("LinkedIn binary upload (image {}): {e}", idx + 1))?;
+            asset_urns.push(asset_urn);
+        }
 
-        // Step 2: Upload binary
-        crate::adapters::linkedin::upload_image_binary(&upload_url, &image_bytes, &access_token)
-            .await?;
-
-        // Step 3: Publish ugcPost with image
+        let urn_refs: Vec<&str> = asset_urns.iter().map(String::as_str).collect();
         crate::adapters::linkedin::publish_image(
             &account.user_id,
             &full_text,
-            &asset_urn,
+            &urn_refs,
             &access_token,
         )
         .await?
-    } else {
-        // Text-only post
-        crate::adapters::linkedin::publish_text(&account.user_id, &full_text, &access_token).await?
     };
 
     // 6. Update post status in SQLite
