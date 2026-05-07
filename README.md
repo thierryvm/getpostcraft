@@ -79,6 +79,22 @@ npm run tauri dev
 npm run tauri build
 ```
 
+Bundles produits dans `src-tauri/target/release/bundle/` :
+- Windows : `.msi` + `.exe` (NSIS) — installer prêt à distribuer
+- macOS : `.dmg` + `.app` (build local impossible depuis Windows/Linux)
+- Linux : `.deb` + `.AppImage` + `.rpm`
+
+### Releases multi-plateforme + auto-update
+
+Voir [`docs/RELEASING.md`](docs/RELEASING.md) — pipeline GitHub Actions matrix
+windows/macos/linux + signature Ed25519 + manifest auto-update, **0€ d'infra**.
+
+```bash
+# Bumper la version puis tagger pour déclencher la release :
+npm run check:versions    # vérifie alignement package.json / Cargo.toml / tauri.conf.json
+git tag v0.2.0 && git push --tags
+```
+
 ---
 
 ## Configuration

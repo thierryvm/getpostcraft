@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.2.0). Must already exist."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # Hard fail before spending CI minutes on a release that would ship mismatched versions.
+  version-check:
+    name: Version sync check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Verify package.json / Cargo.toml / tauri.conf.json versions match the tag
+        run: node scripts/check-versions.mjs --strict
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: version-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # universal-apple-darwin requires both targets so tauri-action can lipo them.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Build + sign + upload to GitHub Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ed25519 keys for the Tauri auto-updater. Never log; never echo.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: "Getpostcraft ${{ github.event.inputs.tag || github.ref_name }}"
+          releaseBody: |
+            See CHANGELOG.md for details.
+
+            **Install warnings expected** (V1 alpha — no OS code signing):
+            - Windows: SmartScreen → "More info" → "Run anyway"
+            - macOS: right-click → Open, or `xattr -d com.apple.quarantine /Applications/getpostcraft.app`
+            - Linux: AppImage needs `chmod +x`
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  # After the matrix has uploaded its bundles, generate a single latest.json manifest
+  # the auto-updater fetches. tauri-action emits per-platform .sig files that we collect.
+  publish-manifest:
+    name: Publish updater manifest
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Generate latest.json from release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: node scripts/generate-update-manifest.mjs
+      - name: Attach latest.json to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: gh release upload "$RELEASE_TAG" latest.json --clobber

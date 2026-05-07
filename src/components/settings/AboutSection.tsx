@@ -1,22 +1,36 @@
+import { useEffect, useState } from "react";
 import { ExternalLink, Globe, Shield, Code2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-
-const APP_VERSION = "0.1.0";
+import { UpdateChecker } from "./UpdateChecker";
+import { appVersion } from "@/lib/tauri/updater";
 
 export function AboutSection() {
+  const [version, setVersion] = useState<string>("…");
+
+  useEffect(() => {
+    appVersion()
+      .then(setVersion)
+      .catch(() => setVersion("inconnu"));
+  }, []);
+
   return (
     <div className="flex flex-col gap-5">
       {/* App identity */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
           <span className="text-lg font-semibold text-foreground">Getpostcraft</span>
-          <Badge variant="secondary" className="font-mono text-xs">v{APP_VERSION}</Badge>
+          <Badge variant="secondary" className="font-mono text-xs">v{version}</Badge>
         </div>
         <p className="text-sm text-muted-foreground">
           AI-assisted social media content creation — desktop app
         </p>
       </div>
+
+      <Separator />
+
+      {/* Auto-updater */}
+      <UpdateChecker />
 
       <Separator />
 
