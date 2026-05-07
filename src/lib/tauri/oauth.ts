@@ -7,6 +7,8 @@ export interface ConnectedAccount {
   username: string;
   display_name: string | null;
   product_truth: string | null;
+  brand_color: string | null;
+  accent_color: string | null;
 }
 
 export function listAccounts(): Promise<ConnectedAccount[]> {
@@ -73,5 +75,21 @@ export function updateAccountProductTruth(
   return invoke<void>("update_account_product_truth", {
     accountId,
     productTruth,
+  });
+}
+
+/**
+ * Save or clear branding colors (brand + accent) for an account.
+ * Empty strings clear the field; hex strings ('#rgb' or '#rrggbb') replace it.
+ */
+export function updateAccountBranding(
+  accountId: number,
+  brandColor: string,
+  accentColor: string
+): Promise<void> {
+  return invoke<void>("update_account_branding", {
+    accountId,
+    brandColor,
+    accentColor,
   });
 }

@@ -15,6 +15,7 @@ import {
   startOAuthFlow,
 } from "@/lib/tauri/oauth";
 import { ProductTruthEditor } from "./ProductTruthEditor";
+import { BrandColorsEditor } from "./BrandColorsEditor";
 import type { ConnectedAccount } from "@/lib/tauri/oauth";
 
 export function InstagramSection({ account }: { account: ConnectedAccount | undefined }) {
@@ -106,6 +107,11 @@ export function InstagramSection({ account }: { account: ConnectedAccount | unde
               </Button>
             </div>
             <ProductTruthEditor accountId={account.id} initialValue={account.product_truth} />
+            <BrandColorsEditor
+              accountId={account.id}
+              initialBrand={account.brand_color}
+              initialAccent={account.accent_color}
+            />
           </div>
         ) : (
           <div className="flex flex-col gap-4">

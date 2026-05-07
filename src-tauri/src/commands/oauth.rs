@@ -21,6 +21,23 @@ pub struct ConnectedAccount {
     pub username: String,
     pub display_name: Option<String>,
     pub product_truth: Option<String>,
+    pub brand_color: Option<String>,
+    pub accent_color: Option<String>,
+}
+
+impl From<crate::db::accounts::Account> for ConnectedAccount {
+    fn from(a: crate::db::accounts::Account) -> Self {
+        Self {
+            id: a.id,
+            provider: a.provider,
+            user_id: a.user_id,
+            username: a.username,
+            display_name: a.display_name,
+            product_truth: a.product_truth,
+            brand_color: a.brand_color,
+            accent_color: a.accent_color,
+        }
+    }
 }
 
 // ── PKCE helpers ──────────────────────────────────────────────────────────
@@ -262,14 +279,7 @@ pub async fn start_oauth_flow(
     )
     .await?;
 
-    Ok(ConnectedAccount {
-        id: account.id,
-        provider: account.provider,
-        user_id: account.user_id,
-        username: account.username,
-        display_name: account.display_name,
-        product_truth: account.product_truth,
-    })
+    Ok(account.into())
 }
 
 /// List all connected accounts (metadata only — no tokens).
@@ -278,17 +288,7 @@ pub async fn list_accounts(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ConnectedAccount>, String> {
     let accounts = crate::db::accounts::list(&state.db).await?;
-    Ok(accounts
-        .into_iter()
-        .map(|a| ConnectedAccount {
-            id: a.id,
-            provider: a.provider,
-            user_id: a.user_id,
-            username: a.username,
-            display_name: a.display_name,
-            product_truth: a.product_truth,
-        })
-        .collect())
+    Ok(accounts.into_iter().map(Into::into).collect())
 }
 
 /// Disconnect an account: remove the token from disk and the record from SQLite.
@@ -317,6 +317,40 @@ pub async fn update_account_product_truth(
         Some(product_truth.trim())
     };
     crate::db::accounts::update_product_truth(&state.db, account_id, value).await
+}
+
+/// Strict hex color whitelist: empty → None (clear), or '#' followed by exactly
+/// 3 or 6 ASCII hex digits. Rejects malformed values (e.g. `#g!;{}`, `#abc"}>`)
+/// so the result can be safely interpolated into `<style>` blocks without
+/// HTML/CSS escaping. Pulled out of the Tauri command so it can be unit-tested.
+fn parse_hex_color(value: &str) -> Result<Option<&str>, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let valid = trimmed.starts_with('#')
+        && (trimmed.len() == 4 || trimmed.len() == 7)
+        && trimmed[1..].chars().all(|c| c.is_ascii_hexdigit());
+    if !valid {
+        return Err(format!(
+            "Couleur invalide « {trimmed} » — utilise un format hex (#rgb ou #rrggbb)."
+        ));
+    }
+    Ok(Some(trimmed))
+}
+
+/// Save or clear branding colors (brand + accent) for an account.
+/// Empty strings are treated as "clear" (set to NULL — falls back to app defaults).
+#[tauri::command]
+pub async fn update_account_branding(
+    state: tauri::State<'_, AppState>,
+    account_id: i64,
+    brand_color: String,
+    accent_color: String,
+) -> Result<(), String> {
+    let brand = parse_hex_color(&brand_color)?;
+    let accent = parse_hex_color(&accent_color)?;
+    crate::db::accounts::update_branding(&state.db, account_id, brand, accent).await
 }
 
 /// Save the Instagram Meta App ID to settings.
@@ -453,14 +487,7 @@ pub async fn start_linkedin_oauth_flow(
     )
     .await?;
 
-    Ok(ConnectedAccount {
-        id: account.id,
-        provider: account.provider,
-        user_id: account.user_id,
-        username: account.username,
-        display_name: account.display_name,
-        product_truth: account.product_truth,
-    })
+    Ok(account.into())
 }
 
 /// Save the LinkedIn App Client ID to settings.
@@ -605,5 +632,61 @@ mod tests {
         // "code_extra" must not match query for "code"
         let line = "GET /callback?code_extra=abc&state=xyz HTTP/1.1";
         assert_eq!(parse_query_param(line, "code"), None);
+    }
+
+    // ── parse_hex_color ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_hex_color_accepts_valid_three_and_six_digit_hex() {
+        assert_eq!(parse_hex_color("#abc").unwrap(), Some("#abc"));
+        assert_eq!(parse_hex_color("#ABC").unwrap(), Some("#ABC"));
+        assert_eq!(parse_hex_color("#3ddc84").unwrap(), Some("#3ddc84"));
+        assert_eq!(parse_hex_color("#0D9488").unwrap(), Some("#0D9488"));
+    }
+
+    #[test]
+    fn parse_hex_color_treats_empty_and_whitespace_as_clear() {
+        assert_eq!(parse_hex_color("").unwrap(), None);
+        assert_eq!(parse_hex_color("   ").unwrap(), None);
+    }
+
+    #[test]
+    fn parse_hex_color_trims_surrounding_whitespace() {
+        assert_eq!(parse_hex_color("  #abc  ").unwrap(), Some("#abc"));
+    }
+
+    #[test]
+    fn parse_hex_color_rejects_non_hex_characters_inside_the_string() {
+        // Critical: these would otherwise be interpolated into <style> blocks
+        // and could break out of the CSS context.
+        for malformed in [
+            "#g00",    // invalid hex digit
+            "#zzzzzz", // all invalid
+            "#ab\"}>", // 6 chars but quote/brace/gt
+            "#a;b}c",  // semicolon — would terminate CSS rule
+            "#'><svg", // angle brackets and quotes
+            "#abc; }", // 7 chars but with space/semi
+        ] {
+            assert!(
+                parse_hex_color(malformed).is_err(),
+                "must reject malformed input {malformed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_hex_color_rejects_wrong_length() {
+        for len_invalid in ["#a", "#ab", "#abcd", "#abcde", "#abcdefg"] {
+            assert!(
+                parse_hex_color(len_invalid).is_err(),
+                "must reject bad length {len_invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_hex_color_rejects_missing_hash_prefix() {
+        assert!(parse_hex_color("3ddc84").is_err());
+        assert!(parse_hex_color("abc").is_err());
     }
 }

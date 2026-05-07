@@ -12,6 +12,12 @@ export interface NetworkMeta {
    * 0 = no recommendation.
    */
   recommendedLimit: number;
+  /**
+   * Algo-optimal lower bound for caption length.
+   * Below this the counter turns orange with a "trop court" warning.
+   * 0 = no minimum recommendation.
+   */
+  minRecommendedLength: number;
   v1: boolean;
 }
 
@@ -21,6 +27,7 @@ export const NETWORK_META: Record<Network, NetworkMeta> = {
     captionLimit: 2200,
     hashtagLimit: 30,
     foldLimit: 125,
+    minRecommendedLength: 0,
     recommendedLimit: 380,   // sweet spot algo : 200–380 chars
     v1: true,
   },
@@ -29,11 +36,12 @@ export const NETWORK_META: Record<Network, NetworkMeta> = {
     captionLimit: 3000,
     hashtagLimit: 5,
     foldLimit: 210,
-    recommendedLimit: 2100,  // sweet spot algo : 1300–2100 chars
+    minRecommendedLength: 1300, // sous 800 = sous-distribué, optimal 1300-2100
+    recommendedLimit: 2100,
     v1: true,
   },
-  twitter:  { label: "Twitter / X", captionLimit: 280,  hashtagLimit: 2,   foldLimit: 0, recommendedLimit: 0, v1: false },
-  tiktok:   { label: "TikTok",      captionLimit: 2200, hashtagLimit: 100, foldLimit: 0, recommendedLimit: 0, v1: false },
+  twitter:  { label: "Twitter / X", captionLimit: 280,  hashtagLimit: 2,   foldLimit: 0, minRecommendedLength: 0, recommendedLimit: 0, v1: false },
+  tiktok:   { label: "TikTok",      captionLimit: 2200, hashtagLimit: 100, foldLimit: 0, minRecommendedLength: 0, recommendedLimit: 0, v1: false },
 };
 
 export interface ImageFormat {
