@@ -46,3 +46,4 @@ api_keys.json
 .env
 .env.local
 .env.*
+.playwright-mcp/
