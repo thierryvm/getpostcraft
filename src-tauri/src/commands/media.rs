@@ -17,10 +17,13 @@ struct Brand {
 
 impl Brand {
     fn resolve(handle: Option<&str>, brand_color: Option<&str>) -> Self {
+        // Filter AFTER stripping the leading '@' so a bare "@" (or "  @  ")
+        // resolves to the default handle instead of an empty string.
         let handle = handle
             .map(str::trim)
+            .map(|s| s.trim_start_matches('@').trim())
             .filter(|s| !s.is_empty())
-            .map(|s| s.trim_start_matches('@').to_string())
+            .map(str::to_string)
             .unwrap_or_else(|| DEFAULT_HANDLE.to_string());
         let brand_color = brand_color
             .map(str::trim)
@@ -588,6 +591,19 @@ mod tests {
     fn brand_resolve_strips_leading_at_sign() {
         let b = Brand::resolve(Some("@myhandle"), None);
         assert_eq!(b.handle, "myhandle");
+    }
+
+    #[test]
+    fn brand_resolve_falls_back_to_default_for_bare_at_sign() {
+        // A handle of just "@" (or "@   ") must NOT produce an empty handle —
+        // that would render the templates as "@ — zsh" with nothing after the @.
+        for handle in ["@", "@   ", "  @  ", "@@"] {
+            let b = Brand::resolve(Some(handle), None);
+            assert_eq!(
+                b.handle, DEFAULT_HANDLE,
+                "input {handle:?} must fall back to default"
+            );
+        }
     }
 
     #[test]
