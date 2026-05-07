@@ -19,6 +19,7 @@ const mockPost: PostRecord = {
   image_path: null,
   images: [],
   ig_media_id: null,
+  account_id: null,
 };
 
 function renderSheet(overrides: Partial<Parameters<typeof PostDetailSheet>[0]> = {}) {

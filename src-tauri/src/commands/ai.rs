@@ -771,6 +771,9 @@ pub async fn generate_carousel(
 }
 
 /// Save a generated post as draft in SQLite history.
+/// `account_id` pins the post to the connected account it was generated for —
+/// the publish flow uses it to target the right credentials when the user has
+/// multiple accounts on the same network.
 #[tauri::command]
 pub async fn save_draft(
     state: tauri::State<'_, AppState>,
@@ -778,6 +781,7 @@ pub async fn save_draft(
     caption: String,
     hashtags: Vec<String>,
     image_path: Option<String>,
+    account_id: Option<i64>,
 ) -> Result<i64, String> {
     crate::db::history::insert_draft(
         &state.db,
@@ -785,6 +789,7 @@ pub async fn save_draft(
         &caption,
         &hashtags,
         image_path.as_deref(),
+        account_id,
     )
     .await
 }

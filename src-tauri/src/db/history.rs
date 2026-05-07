@@ -20,6 +20,11 @@ pub struct PostRecord {
     /// New writers populate this; readers pick single vs carousel based on len.
     pub images: Vec<String>,
     pub ig_media_id: Option<String>,
+    /// Which connected account this post was generated for. The publish flow
+    /// uses this to target the right credentials when the user has multiple
+    /// accounts on the same network. NULL on legacy rows or generation flows
+    /// that ran without an account selection (preview-only).
+    pub account_id: Option<i64>,
 }
 
 pub async fn insert_draft(
@@ -28,6 +33,7 @@ pub async fn insert_draft(
     caption: &str,
     hashtags: &[String],
     image_path: Option<&str>,
+    account_id: Option<i64>,
 ) -> Result<i64, String> {
     let hashtags_json = serde_json::to_string(hashtags).map_err(|e| e.to_string())?;
     let images_json = match image_path {
@@ -39,8 +45,9 @@ pub async fn insert_draft(
     let now = Utc::now().to_rfc3339();
 
     sqlx::query(
-        "INSERT INTO post_history (network, caption, hashtags, status, created_at, image_path, images)
-         VALUES (?, ?, ?, 'draft', ?, ?, ?)",
+        "INSERT INTO post_history \
+            (network, caption, hashtags, status, created_at, image_path, images, account_id)
+         VALUES (?, ?, ?, 'draft', ?, ?, ?, ?)",
     )
     .bind(network)
     .bind(caption)
@@ -48,6 +55,7 @@ pub async fn insert_draft(
     .bind(&now)
     .bind(image_path)
     .bind(&images_json)
+    .bind(account_id)
     .execute(pool)
     .await
     .map(|r| r.last_insert_rowid())
@@ -57,7 +65,7 @@ pub async fn insert_draft(
 pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<PostRecord, String> {
     let row = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id
+                scheduled_at, image_path, images, ig_media_id, account_id
          FROM post_history WHERE id = ?",
     )
     .bind(id)
@@ -90,7 +98,7 @@ pub async fn update_status(
 pub async fn list_recent(pool: &SqlitePool, limit: i64) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id
+                scheduled_at, image_path, images, ig_media_id, account_id
          FROM post_history ORDER BY created_at DESC LIMIT ?",
     )
     .bind(limit)
@@ -109,7 +117,7 @@ pub async fn list_in_range(
 ) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id
+                scheduled_at, image_path, images, ig_media_id, account_id
          FROM post_history
          WHERE (scheduled_at IS NOT NULL AND scheduled_at BETWEEN ? AND ?)
             OR (scheduled_at IS NULL AND created_at BETWEEN ? AND ?)
@@ -245,6 +253,7 @@ fn row_to_post_record(r: &SqliteRow) -> Result<PostRecord, String> {
         image_path,
         images,
         ig_media_id: r.try_get("ig_media_id").map_err(|e| e.to_string())?,
+        account_id: r.try_get("account_id").ok().flatten(),
     })
 }
 

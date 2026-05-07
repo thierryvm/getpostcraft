@@ -1,0 +1,17 @@
+-- Bind each draft / published post to the account it targets.
+--
+-- Until v0.2.0, `publish_post` (and the LinkedIn equivalent) discovered the
+-- target account by scanning all connected accounts and picking the first
+-- whose provider matched the post's network — which silently broke as soon
+-- as a user connected two Instagram or two LinkedIn accounts. A draft
+-- generated for @account-A could then publish under @account-B with no
+-- visible warning.
+--
+-- Storing the account_id at draft creation time pins the relationship: the
+-- generation ProductTruth comes from this account, so does the final post.
+--
+-- Nullable because:
+--   1. Existing rows have no account at all (legacy generation flow).
+--   2. Some flows still allow generating without a connected account
+--      (preview-only, no publish path).
+ALTER TABLE post_history ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL;
