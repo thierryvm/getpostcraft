@@ -24,6 +24,11 @@ jobs:
         with:
           node-version: 20
       - name: Verify package.json / Cargo.toml / tauri.conf.json versions match the tag
+        env:
+          # Workflow_dispatch with `tag` input → use it. Push tag → fall back
+          # to ref_name. Both reach the script as RELEASE_TAG, which it now
+          # prefers over GITHUB_REF_NAME (the latter is "main" on dispatch).
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: node scripts/check-versions.mjs --strict
 
   build:

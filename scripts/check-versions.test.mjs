@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compareVersions, parseAll } from "./check-versions.mjs";
+import { compareVersions, parseAll, resolveGitTag } from "./check-versions.mjs";
 
 describe("compareVersions", () => {
   it("returns no errors when all three versions match", () => {
@@ -114,5 +114,43 @@ describe("parseAll", () => {
     };
     const versions = await parseAll(fakeRead);
     expect(versions.cargoToml).toBe("0.9.9");
+  });
+});
+
+describe("resolveGitTag", () => {
+  it("prefers RELEASE_TAG over GITHUB_REF_NAME (regression — dispatch case)", () => {
+    // Real-world failure that bricked the v0.2.0 workflow_dispatch re-run :
+    // GITHUB_REF_NAME was "main" because we dispatched from main, but the
+    // operator passed `tag=v0.2.0` as input → RELEASE_TAG. The old code
+    // preferred GITHUB_REF_NAME and failed `git tag (main) ≠ 0.2.0`.
+    const env = { RELEASE_TAG: "v0.2.0", GITHUB_REF_NAME: "main" };
+    expect(resolveGitTag(env)).toBe("v0.2.0");
+  });
+
+  it("falls back to GITHUB_REF_NAME when RELEASE_TAG is unset (push tag case)", () => {
+    const env = { GITHUB_REF_NAME: "v0.1.0" };
+    expect(resolveGitTag(env)).toBe("v0.1.0");
+  });
+
+  it("returns null when both env vars are unset", () => {
+    expect(resolveGitTag({})).toBeNull();
+  });
+
+  it("treats empty strings as unset", () => {
+    expect(resolveGitTag({ RELEASE_TAG: "", GITHUB_REF_NAME: "" })).toBeNull();
+    expect(
+      resolveGitTag({ RELEASE_TAG: "", GITHUB_REF_NAME: "v0.1.0" }),
+    ).toBe("v0.1.0");
+  });
+
+  it("treats whitespace-only values as unset", () => {
+    expect(
+      resolveGitTag({ RELEASE_TAG: "   ", GITHUB_REF_NAME: "v0.1.0" }),
+    ).toBe("v0.1.0");
+  });
+
+  it("trims surrounding whitespace from the picked value", () => {
+    // Some CI shells leak trailing newlines through env vars.
+    expect(resolveGitTag({ RELEASE_TAG: " v0.2.0\n" })).toBe("v0.2.0");
   });
 });
