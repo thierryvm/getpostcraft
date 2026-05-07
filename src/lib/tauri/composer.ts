@@ -76,3 +76,16 @@ export async function generateCarousel(
     accountId,
   });
 }
+
+/**
+ * Render a URL with Playwright and synthesize a ProductTruth ready to paste
+ * into Settings → Comptes. Two-step pipeline (scrape + AI) — can take ~15-30 s
+ * on cold runs because Playwright launches Chromium and the AI synthesis budget
+ * is generous (1200 tokens). Caller should show a spinner.
+ */
+export async function synthesizeProductTruthFromUrl(
+  url: string,
+  handle: string,
+): Promise<string> {
+  return invoke<string>("synthesize_product_truth_from_url", { url, handle });
+}

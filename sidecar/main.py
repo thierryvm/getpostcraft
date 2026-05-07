@@ -112,6 +112,31 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             _respond_error(str(exc))
 
+    elif action == "scrape_url_rendered":
+        try:
+            from scraper import scrape_url_rendered
+
+            text = scrape_url_rendered(req["url"], max_chars=req.get("max_chars", 8000))
+            _respond_ok({"text": text})
+        except Exception as exc:  # noqa: BLE001
+            _respond_error(str(exc))
+
+    elif action == "synthesize_product_truth":
+        try:
+            client = AIClient(
+                provider=req["provider"],
+                api_key=req.get("api_key"),
+                model=req["model"],
+                base_url=req.get("base_url"),
+            )
+            text = client.synthesize_product_truth(
+                content=req["content"],
+                system_prompt=req["system_prompt"],
+            )
+            _respond_ok({"product_truth": text})
+        except Exception as exc:  # noqa: BLE001
+            _respond_error(str(exc))
+
     elif action == "warmup":
         # Verify required modules are importable; used for pre-warming on Composer open.
         missing = []

@@ -1,3 +1,41 @@
+/// System prompt that turns raw scraped website text into a structured ProductTruth
+/// block ready to paste into Settings → Comptes. The output is plain text (not JSON)
+/// so the user can review/edit before saving.
+pub fn get_synthesis_prompt(handle: &str) -> String {
+    let handle_label = if handle.trim().is_empty() {
+        "le compte".to_string()
+    } else {
+        format!("@{}", handle.trim_start_matches('@').trim())
+    };
+    format!(
+        "Tu synthétises un bloc « ProductTruth » à partir du contenu d'un site web fourni par l'utilisateur. \
+         Ce bloc sera injecté dans le system prompt de génération de posts pour {handle_label}.\n\n\
+         OBJECTIF : capturer la vérité du produit en 250-400 mots, sans inventer.\n\n\
+         CONTRAINTES ABSOLUES :\n\
+         - N'invente JAMAIS de chiffre, fonctionnalité, durée ou métrique. Si l'info n'est pas dans le contenu fourni, NE LA CITE PAS.\n\
+         - Reste fidèle aux mots du site (paraphrase OK, invention NON).\n\
+         - Texte BRUT — pas de markdown, pas de blocs de code, pas d'emoji.\n\
+         - En français avec TOUS les accents standards (é è ê à â î ô û ç).\n\n\
+         STRUCTURE EXACTE À PRODUIRE :\n\n\
+         Compte {handle_label} — [résumé en une phrase de ce que fait le produit].\n\n\
+         Site : [URL] — [type : open source / SaaS / outil / formation / etc.].\n\n\
+         CHIFFRES VÉRIFIÉS (à utiliser tels quels, ne pas inventer) :\n\
+         - [liste à puces des chiffres EXPLICITEMENT mentionnés sur le site]\n\n\
+         FONCTIONNALITÉS / MODULES (à citer fidèlement) :\n\
+         - [liste à puces — uniquement ce qui apparaît dans le contenu fourni]\n\n\
+         DIFFÉRENCIATEURS :\n\
+         - [3-5 points distinctifs selon le contenu]\n\n\
+         CE QU'IL NE FAUT PAS MENTIONNER :\n\
+         - [features marquées « bientôt », « roadmap », « en cours » sur le site]\n\n\
+         VOIX & STYLE :\n\
+         - Direct, [adjectif déduit du ton du site]\n\
+         - Zéro emoji, accents français obligatoires\n\
+         - Cible : [audience déduite du contenu]\n\n\
+         CIBLE COMMUNAUTÉ : [langue / région / niche déduite].\n\n\
+         RETOURNE UNIQUEMENT CE BLOC TEXTE — pas d'introduction, pas de conclusion, pas de balise."
+    )
+}
+
 /// Returns the AI prompt for carousel slide generation.
 pub fn get_carousel_prompt(network: &str, slide_count: u8) -> String {
     let _ = network; // reserved for future multi-network support

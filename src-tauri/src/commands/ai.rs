@@ -251,6 +251,162 @@ pub async fn scrape_url_for_brief(url: String) -> Result<String, String> {
     }
 }
 
+/// Render a URL with Playwright and synthesize a ProductTruth block from the
+/// page's visible text. Two-step: scrape → AI synthesis. Returns the plain-text
+/// ProductTruth ready to paste into the account's textarea.
+///
+/// Uses the active provider/model. We pick `claude-sonnet-4.6` quality for the
+/// synthesis even on Haiku-default accounts because the cost is one-shot per
+/// onboarding (~$0.005) and the output frames every future post.
+#[tauri::command]
+pub async fn synthesize_product_truth_from_url(
+    state: tauri::State<'_, AppState>,
+    url: String,
+    handle: String,
+) -> Result<String, String> {
+    use serde::Serialize;
+
+    if url.trim().is_empty() {
+        return Err("URL vide.".to_string());
+    }
+
+    // 1. Snapshot provider + key without holding the lock across await.
+    let (provider, model) = {
+        let active = state.active_provider.lock().map_err(|e| e.to_string())?;
+        (active.provider.clone(), active.model.clone())
+    };
+
+    let api_key: Option<String> = if provider == "ollama" {
+        None
+    } else {
+        let cached = state
+            .key_cache
+            .lock()
+            .ok()
+            .and_then(|c| c.get(&provider).cloned());
+        Some(
+            cached
+                .or_else(|| crate::ai_keys::get_key(&provider).ok())
+                .ok_or_else(|| {
+                    format!(
+                        "Aucune clé API pour « {provider} ». Configure-la dans \
+                         Paramètres → Intelligence Artificielle."
+                    )
+                })?,
+        )
+    };
+    let base_url = match provider.as_str() {
+        "ollama" => Some("http://localhost:11434/v1".to_string()),
+        _ => None,
+    };
+
+    // 2. Scrape the page via Playwright (handles SPAs).
+    log::info!("synthesize_product_truth: rendering {url}");
+    #[derive(Serialize)]
+    struct ScrapeRequest<'a> {
+        action: &'a str,
+        url: &'a str,
+        max_chars: u32,
+    }
+    let scrape_req = ScrapeRequest {
+        action: "scrape_url_rendered",
+        url: &url,
+        max_chars: 8000,
+    };
+    let scrape_json = serde_json::to_string(&scrape_req).map_err(|e| e.to_string())?;
+    // Playwright launch + networkidle wait can take ~10-15 s on slow connections.
+    let scrape_stdout = crate::sidecar::run_sidecar_raw(scrape_json, 60).await?;
+
+    #[derive(Deserialize)]
+    struct ScrapeData {
+        text: String,
+    }
+    #[derive(Deserialize)]
+    struct ScrapeResp {
+        ok: bool,
+        data: Option<ScrapeData>,
+        error: Option<String>,
+    }
+    let scrape_resp: ScrapeResp =
+        serde_json::from_str(&scrape_stdout).map_err(|e| format!("Parse scrape response: {e}"))?;
+    let content = if scrape_resp.ok {
+        scrape_resp
+            .data
+            .map(|d| d.text)
+            .ok_or_else(|| "Scraper a retourné une réponse vide".to_string())?
+    } else {
+        return Err(scrape_resp
+            .error
+            .unwrap_or_else(|| "Échec scraping site".to_string()));
+    };
+
+    if content.trim().len() < 50 {
+        return Err(format!(
+            "Le site n'a renvoyé que {} caractères — vérifie l'URL ou le SPA bloque le rendu.",
+            content.trim().len()
+        ));
+    }
+
+    // 3. Synthesize the ProductTruth via the AI provider.
+    log::info!(
+        "synthesize_product_truth: synthesizing with {provider}/{model} \
+         from {} chars of content",
+        content.len()
+    );
+    let system_prompt = crate::network_rules::get_synthesis_prompt(&handle);
+
+    #[derive(Serialize)]
+    struct SynthesisRequest {
+        action: &'static str,
+        provider: String,
+        api_key: Option<String>,
+        model: String,
+        base_url: Option<String>,
+        content: String,
+        system_prompt: String,
+    }
+    let synth_req = SynthesisRequest {
+        action: "synthesize_product_truth",
+        provider: provider.clone(),
+        api_key,
+        model: model.clone(),
+        base_url,
+        content,
+        system_prompt,
+    };
+    let synth_json = serde_json::to_string(&synth_req).map_err(|e| e.to_string())?;
+    let synth_stdout = crate::sidecar::run_sidecar_raw(synth_json, 60).await?;
+
+    #[derive(Deserialize)]
+    struct SynthData {
+        product_truth: String,
+    }
+    #[derive(Deserialize)]
+    struct SynthResp {
+        ok: bool,
+        data: Option<SynthData>,
+        error: Option<String>,
+    }
+    let synth_resp: SynthResp = serde_json::from_str(&synth_stdout)
+        .map_err(|e| format!("Parse synthesis response: {e}"))?;
+
+    if synth_resp.ok {
+        let truth = synth_resp
+            .data
+            .map(|d| d.product_truth)
+            .ok_or_else(|| "Synthèse vide".to_string())?;
+        log::info!(
+            "synthesize_product_truth: success — {} chars produced",
+            truth.len()
+        );
+        Ok(truth)
+    } else {
+        Err(synth_resp
+            .error
+            .unwrap_or_else(|| "Échec synthèse IA".to_string()))
+    }
+}
+
 /// Fire-and-forget sidecar warmup — called when Composer mounts.
 /// Validates Python + module availability so the first generation is faster.
 /// Never returns an error to the UI (failures are silent / logged to stderr).

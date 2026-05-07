@@ -106,7 +106,11 @@ export function InstagramSection({ account }: { account: ConnectedAccount | unde
                 Déconnecter
               </Button>
             </div>
-            <ProductTruthEditor accountId={account.id} initialValue={account.product_truth} />
+            <ProductTruthEditor
+              accountId={account.id}
+              initialValue={account.product_truth}
+              handle={account.username}
+            />
             <BrandColorsEditor
               accountId={account.id}
               initialBrand={account.brand_color}
