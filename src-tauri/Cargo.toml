@@ -40,3 +40,12 @@ tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["ring"] }
 log = "0.4"
 
+[dev-dependencies]
+# HTTP mock server for testing publish_post / publish_linkedin_post without
+# touching the real Meta or LinkedIn endpoints. Returns a localhost URL we
+# point the production code at via the GETPOSTCRAFT_*_API env vars.
+wiremock = "0.6"
+# `serial_test` serialises tests that mutate the same process-wide env var.
+# Without it, two parallel tests setting GETPOSTCRAFT_IG_API would race.
+serial_test = "3"
+

@@ -1,7 +1,20 @@
 use serde::{Deserialize, Serialize};
 
-const TOKEN_URL: &str = "https://www.linkedin.com/oauth/v2/accessToken";
-const API_BASE: &str = "https://api.linkedin.com/v2";
+const TOKEN_URL_DEFAULT: &str = "https://www.linkedin.com/oauth/v2/accessToken";
+const API_BASE_DEFAULT: &str = "https://api.linkedin.com/v2";
+
+/// LinkedIn REST API base URL. Defaults to production; overridable via
+/// `GETPOSTCRAFT_LINKEDIN_API` so integration tests can point this at a
+/// `wiremock::MockServer`.
+fn api_base() -> String {
+    std::env::var("GETPOSTCRAFT_LINKEDIN_API").unwrap_or_else(|_| API_BASE_DEFAULT.to_string())
+}
+
+/// Token exchange URL. Same pattern as `api_base`.
+fn token_url() -> String {
+    std::env::var("GETPOSTCRAFT_LINKEDIN_TOKEN_URL")
+        .unwrap_or_else(|_| TOKEN_URL_DEFAULT.to_string())
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -56,7 +69,7 @@ pub async fn exchange_code(
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(TOKEN_URL)
+        .post(token_url())
         // LinkedIn requires client credentials via HTTP Basic Auth for confidential clients,
         // not in the form body (invalid_client if sent as form params).
         // LinkedIn confidential clients: credentials in form body only, no PKCE verifier.
@@ -97,7 +110,7 @@ pub async fn exchange_code(
 pub async fn get_user_info(access_token: &str) -> Result<LinkedInUser, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{API_BASE}/userinfo"))
+        .get(format!("{}/userinfo", api_base()))
         .bearer_auth(access_token)
         .send()
         .await
@@ -186,7 +199,7 @@ pub async fn register_image_upload(
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{API_BASE}/assets?action=registerUpload"))
+        .post(format!("{}/assets?action=registerUpload", api_base()))
         .bearer_auth(access_token)
         .header("X-Restli-Protocol-Version", "2.0.0")
         .json(&body)
@@ -212,11 +225,20 @@ pub async fn register_image_upload(
 
 /// Validate that an upload URL belongs to LinkedIn's own infrastructure.
 /// Prevents SSRF: the Bearer token must never be sent to an arbitrary host.
+///
+/// In tests, `GETPOSTCRAFT_LINKEDIN_API` points at a wiremock server on
+/// localhost — we allow that prefix too, otherwise integration tests can't
+/// run. Production behavior is unchanged (env var unset → only LinkedIn
+/// hosts pass).
 fn validate_linkedin_upload_url(url: &str) -> Result<(), String> {
-    if url.starts_with("https://www.linkedin.com/")
+    let prod_ok = url.starts_with("https://www.linkedin.com/")
         || url.starts_with("https://media.licdn.com/")
-        || url.starts_with("https://api.linkedin.com/")
-    {
+        || url.starts_with("https://api.linkedin.com/");
+    let test_override_ok = std::env::var("GETPOSTCRAFT_LINKEDIN_API")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_some_and(|base| url.starts_with(&base));
+    if prod_ok || test_override_ok {
         Ok(())
     } else {
         Err(format!(
@@ -336,7 +358,7 @@ pub async fn publish_image(
 async fn post_ugc(body: serde_json::Value, access_token: &str) -> Result<String, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{API_BASE}/ugcPosts"))
+        .post(format!("{}/ugcPosts", api_base()))
         .bearer_auth(access_token)
         .header("X-Restli-Protocol-Version", "2.0.0")
         .json(&body)
@@ -445,5 +467,214 @@ mod tests {
             res.unwrap_err().contains("at least one asset URN"),
             "should fail fast before any network call"
         );
+    }
+
+    // ── Mock-server integration tests ────────────────────────────────────
+    //
+    // These tests stand up a `wiremock` server on localhost, point the
+    // production code at it via `GETPOSTCRAFT_LINKEDIN_API`, and assert
+    // that each LinkedIn flow makes exactly the right calls in the right
+    // order. Like the IG tests, they would have caught any silent
+    // degradation of multi-image publishing.
+
+    use serial_test::serial;
+    use wiremock::matchers::{header, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// SAFETY: `#[serial]` ensures only one test owns the env var at a time.
+    async fn boot_li_mock() -> MockServer {
+        let server = MockServer::start().await;
+        unsafe {
+            std::env::set_var("GETPOSTCRAFT_LINKEDIN_API", server.uri());
+        }
+        server
+    }
+
+    fn clear_li_env() {
+        unsafe {
+            std::env::remove_var("GETPOSTCRAFT_LINKEDIN_API");
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn register_image_upload_returns_url_and_asset_urn() {
+        let server = boot_li_mock().await;
+        // The upload URL must point inside the mock server too — the SSRF
+        // guard accepts the test base URL when GETPOSTCRAFT_LINKEDIN_API is set.
+        let upload_url = format!("{}/upload-target/abc123", server.uri());
+        let body = serde_json::json!({
+            "value": {
+                "uploadMechanism": {
+                    "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest": {
+                        "uploadUrl": upload_url
+                    }
+                },
+                "asset": "urn:li:digitalmediaAsset:42"
+            }
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/assets"))
+            .and(query_param("action", "registerUpload"))
+            .and(header("X-Restli-Protocol-Version", "2.0.0"))
+            .and(header("Authorization", "Bearer test-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (got_url, urn) = register_image_upload("profile_id_xyz", "test-token")
+            .await
+            .expect("register should succeed");
+        assert_eq!(got_url, upload_url);
+        assert_eq!(urn, "urn:li:digitalmediaAsset:42");
+
+        drop(server);
+        clear_li_env();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn upload_image_binary_sends_bytes_with_bearer() {
+        let server = boot_li_mock().await;
+        let upload_path = "/upload-target/abc";
+        let upload_url = format!("{}{}", server.uri(), upload_path);
+
+        Mock::given(method("PUT"))
+            .and(path(upload_path))
+            .and(header("Authorization", "Bearer test-token"))
+            .and(header("Content-Type", "application/octet-stream"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // 1 KB of fake PNG bytes is enough to verify the body reaches the server.
+        let bytes = vec![0u8; 1024];
+        upload_image_binary(&upload_url, &bytes, "test-token")
+            .await
+            .expect("upload should succeed");
+
+        drop(server);
+        clear_li_env();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn upload_image_binary_refuses_evil_host_even_with_env_override() {
+        // SSRF: even when the test override is in play, a URL that doesn't
+        // start with the configured base must be rejected before the Bearer
+        // token is sent.
+        let server = boot_li_mock().await;
+        let evil = "https://evil.example.com/exfil";
+
+        let result = upload_image_binary(evil, &[0u8; 16], "secret-token").await;
+        assert!(
+            result.is_err(),
+            "must refuse non-LinkedIn hosts even in test mode"
+        );
+        assert!(
+            result.unwrap_err().contains("domain validation"),
+            "error should reference the SSRF guard"
+        );
+
+        // wiremock should not have logged any request — assert by giving it
+        // an unmatched mock that would have logged a hit.
+        // (No mock registered → drop the server unmatched.)
+        drop(server);
+        clear_li_env();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn publish_text_posts_ugc_returns_post_urn() {
+        let server = boot_li_mock().await;
+
+        Mock::given(method("POST"))
+            .and(path("/ugcPosts"))
+            .and(header("X-Restli-Protocol-Version", "2.0.0"))
+            .and(header("Authorization", "Bearer test-token"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .insert_header("x-restli-id", "urn:li:share:123")
+                    .set_body_string(""),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let urn = publish_text("profile_id", "Hello LinkedIn", "test-token")
+            .await
+            .expect("text post should succeed");
+        assert_eq!(urn, "urn:li:share:123");
+
+        drop(server);
+        clear_li_env();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn publish_image_multi_sends_all_asset_urns() {
+        let server = boot_li_mock().await;
+
+        // Capture any matching ugcPost request — wiremock by default records
+        // bodies for inspection. We assert the body contains all 3 URNs.
+        Mock::given(method("POST"))
+            .and(path("/ugcPosts"))
+            .and(wiremock::matchers::body_string_contains(
+                "urn:li:digitalmediaAsset:s1",
+            ))
+            .and(wiremock::matchers::body_string_contains(
+                "urn:li:digitalmediaAsset:s2",
+            ))
+            .and(wiremock::matchers::body_string_contains(
+                "urn:li:digitalmediaAsset:s3",
+            ))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .insert_header("x-restli-id", "urn:li:share:multi")
+                    .set_body_string(""),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let urns = [
+            "urn:li:digitalmediaAsset:s1",
+            "urn:li:digitalmediaAsset:s2",
+            "urn:li:digitalmediaAsset:s3",
+        ];
+        let post = publish_image("profile_id", "Carousel post", &urns, "test-token")
+            .await
+            .expect("multi-image post should succeed");
+        assert_eq!(post, "urn:li:share:multi");
+
+        drop(server);
+        clear_li_env();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn publish_text_propagates_400_error() {
+        let server = boot_li_mock().await;
+
+        Mock::given(method("POST"))
+            .and(path("/ugcPosts"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("invalid_author_urn"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = publish_text("profile_id", "x", "test-token").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("invalid_author_urn") || err.contains("400"),
+            "error should reference upstream cause, got: {err}"
+        );
+
+        drop(server);
+        clear_li_env();
     }
 }
