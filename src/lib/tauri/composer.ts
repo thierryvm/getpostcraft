@@ -28,9 +28,10 @@ export async function generateContent(
 export async function saveDraft(
   network: Network,
   caption: string,
-  hashtags: string[]
+  hashtags: string[],
+  accountId: number | null = null,
 ): Promise<number> {
-  return invoke<number>("save_draft", { network, caption, hashtags });
+  return invoke<number>("save_draft", { network, caption, hashtags, accountId });
 }
 
 export async function getPostHistory(limit?: number): Promise<PostRecord[]> {

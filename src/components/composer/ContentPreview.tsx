@@ -180,6 +180,7 @@ export function ContentPreview() {
     setDraftId,
     setNetwork,
     setPendingDraftId,
+    setAccountId,
   } = useComposerStore();
   const queryClient = useQueryClient();
   const { captionLimit, hashtagLimit, foldLimit, minRecommendedLength, recommendedLimit, label: networkLabel } = NETWORK_META[network];
@@ -270,6 +271,12 @@ export function ContentPreview() {
         if (post.network !== network) {
           setNetwork(post.network);
         }
+        // Restore the account this draft was generated for so any subsequent
+        // regeneration uses the same ProductTruth and the publish flow targets
+        // the right credentials. NULL on legacy rows (pre-migration 013).
+        if (post.account_id !== null && post.account_id !== accountId) {
+          setAccountId(post.account_id);
+        }
         // Populate the same state the generation flow produces.
         setResult({ caption: post.caption, hashtags: post.hashtags });
         setHashtags(post.hashtags);
@@ -318,7 +325,7 @@ export function ContentPreview() {
     try {
       const newResult = await generateContent(brief, network, accountId);
       setResult(newResult);
-      saveDraft(network, newResult.caption, newResult.hashtags)
+      saveDraft(network, newResult.caption, newResult.hashtags, accountId)
         .then(setDraftId)
         .catch(() => {});
     } catch (err) {
@@ -378,7 +385,7 @@ export function ContentPreview() {
       const carouselCaption = firstSlide
         ? `${firstSlide.emoji} ${firstSlide.title}\n${firstSlide.body}`
         : brief;
-      const id = await saveDraft(network, carouselCaption, hashtags).catch(() => null);
+      const id = await saveDraft(network, carouselCaption, hashtags, accountId).catch(() => null);
       if (id !== null) {
         setDraftId(id);
         // Save ALL carousel slides — publish flow reads the full array and
@@ -412,7 +419,7 @@ export function ContentPreview() {
     // setResult already clears variants in the store — don't call setVariants(null) after,
     // as it would reset result back to null.
     setResult({ caption: v.caption, hashtags: v.hashtags });
-    saveDraft(network, v.caption, v.hashtags)
+    saveDraft(network, v.caption, v.hashtags, accountId)
       .then(setDraftId)
       .catch(() => {});
   };

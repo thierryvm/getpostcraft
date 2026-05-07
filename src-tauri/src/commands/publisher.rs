@@ -514,6 +514,60 @@ impl ImageUploader {
     }
 }
 
+/// Resolve the connected account this post targets, with fallback for legacy
+/// rows that pre-date migration 013.
+///
+/// Behavior:
+/// 1. If `post.account_id` is set, fetch that account from DB. Validate that
+///    its `provider` matches `expected_provider` (e.g. "instagram") so a draft
+///    cross-posted to a wrong network is caught with a clear error rather
+///    than silently publishing on the wrong platform.
+/// 2. If `post.account_id` is None (legacy row), fall back to the first
+///    connected account on the requested network. This keeps existing drafts
+///    publishable but logs a warning so the issue surfaces.
+async fn resolve_post_account(
+    state: &AppState,
+    post: &crate::db::history::PostRecord,
+    expected_provider: &str,
+) -> Result<crate::db::accounts::Account, String> {
+    if let Some(aid) = post.account_id {
+        let account = crate::db::accounts::get_by_id(&state.db, aid)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Account {aid} attached to post {} could not be loaded: {e}. \
+                 Has the account been disconnected?",
+                    post.id
+                )
+            })?;
+        if account.provider != expected_provider {
+            return Err(format!(
+                "Post {} is attached to a {} account but this publish flow expects {}.",
+                post.id, account.provider, expected_provider
+            ));
+        }
+        return Ok(account);
+    }
+
+    // Legacy fallback for posts created before migration 013.
+    log::warn!(
+        "publisher: post {} has no account_id (legacy row) — falling back to first \
+         {expected_provider} account. This will publish under the wrong account if \
+         multiple {expected_provider} accounts are connected.",
+        post.id
+    );
+    let accounts = crate::db::accounts::list(&state.db).await?;
+    accounts
+        .into_iter()
+        .find(|a| a.provider == expected_provider)
+        .ok_or_else(|| {
+            format!(
+                "No {expected_provider} account connected. Connect one in \
+                 Settings → Comptes."
+            )
+        })
+}
+
 /// Build the full caption (post body + " " + "#tag1 #tag2 …") used by every
 /// publish flow. Hashtag-free if there are none.
 fn compose_caption_with_hashtags(caption: &str, hashtags: &[String]) -> String {
@@ -546,12 +600,11 @@ pub async fn publish_post(
         return Err("No image attached to this post. Generate an image first.".to_string());
     }
 
-    // 2. Get connected Instagram account
-    let accounts = crate::db::accounts::list(&state.db).await?;
-    let account = accounts
-        .iter()
-        .find(|a| a.provider == "instagram")
-        .ok_or("No Instagram account connected. Connect one in Settings → Comptes.")?;
+    // 2. Resolve the account this draft was generated for. The post stores
+    //    `account_id` since migration 013 — using it ensures we publish via
+    //    the same credentials the user picked when drafting, even if they
+    //    have multiple Instagram accounts connected (was a silent bug).
+    let account = resolve_post_account(&state, &post, "instagram").await?;
 
     // 3. Get access token (never leaves Rust)
     let access_token = crate::token_store::get_token(&account.token_key)?;
@@ -678,12 +731,8 @@ pub async fn publish_linkedin_post(
         return Err("This post is already published".to_string());
     }
 
-    // 2. Get connected LinkedIn account
-    let accounts = crate::db::accounts::list(&state.db).await?;
-    let account = accounts
-        .iter()
-        .find(|a| a.provider == "linkedin")
-        .ok_or("No LinkedIn account connected. Connect one in Settings → Comptes.")?;
+    // 2. Resolve the account this draft targets — see `resolve_post_account`.
+    let account = resolve_post_account(&state, &post, "linkedin").await?;
 
     // 3. Access token (never leaves Rust)
     let access_token = crate::token_store::get_token(&account.token_key)?;

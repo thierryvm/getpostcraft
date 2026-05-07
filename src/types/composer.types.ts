@@ -100,4 +100,10 @@ export interface PostRecord {
   /** All carousel slides (or a 1-image array). Empty for text-only posts. */
   images: string[];
   ig_media_id: string | null;
+  /**
+   * Connected account this post targets. Used by `publish_post` to pick the
+   * right credentials when multiple accounts on the same network are linked.
+   * NULL on legacy rows (pre-migration 013).
+   */
+  account_id: number | null;
 }

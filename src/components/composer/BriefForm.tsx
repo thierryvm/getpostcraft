@@ -86,7 +86,7 @@ export function BriefForm() {
       setResult(result);
       setBrief(data.brief);
       setNetwork(data.network as Network);
-      saveDraft(data.network as Network, result.caption, result.hashtags)
+      saveDraft(data.network as Network, result.caption, result.hashtags, accountId)
         .then(setDraftId)
         .catch(() => {});
     } catch (err) {
