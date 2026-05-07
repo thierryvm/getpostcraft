@@ -36,7 +36,7 @@ pub async fn get_app_logs(
     let reader = BufReader::new(file);
     let all_lines: Vec<String> = reader
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
         .filter(|l| !l.trim().is_empty())
         .collect();
 
