@@ -39,6 +39,10 @@ rcgen = "0.13"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["ring"] }
 log = "0.4"
+# OS-native secret storage — Windows Credential Manager (DPAPI-backed),
+# macOS Keychain, Linux Secret Service (gnome-keyring / KWallet).
+# Replaces the previous plain-text api_keys.json. ADR-009 documents the choice.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 [dev-dependencies]
 # HTTP mock server for testing publish_post / publish_linkedin_post without
