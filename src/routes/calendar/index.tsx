@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Calendar, CalendarDays, Loader2, X, Pencil, Trash2, Check } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar, CalendarDays, Loader2, X, Pencil, Trash2, Check, FileEdit } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { getCalendarPosts, schedulePost, unschedulePost, deletePost, updatePostDraft } from "@/lib/tauri/calendar";
+import { useComposerStore } from "@/stores/composer.store";
 import type { PostRecord } from "@/types/composer.types";
 import { NETWORK_META } from "@/types/composer.types";
 import { cn } from "@/lib/utils";
@@ -85,6 +87,8 @@ function PostModal({
   onDelete: (id: number) => void;
   onUpdate: (updated: PostRecord) => void;
 }) {
+  const navigate = useNavigate();
+  const setPendingDraftId = useComposerStore((s) => s.setPendingDraftId);
   const [isRemoving, setIsRemoving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -94,6 +98,15 @@ function PostModal({
   const [editHashtags, setEditHashtags] = useState(post.hashtags.join(" "));
 
   const isDraft = post.status === "draft";
+
+  /** Hand the draft id to the composer route. The ContentPreview useEffect
+   *  picks it up on mount, fetches the full post (including images), and
+   *  populates state so the publish button reappears. */
+  const handleOpenInComposer = () => {
+    setPendingDraftId(post.id);
+    onClose();
+    navigate({ to: "/composer" });
+  };
 
   const handleUnschedule = async () => {
     setIsRemoving(true);
@@ -225,15 +238,27 @@ function PostModal({
               ) : (
                 <>
                   {isDraft && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                      title="Modifier"
-                      onClick={() => { setIsEditing(true); setConfirmDelete(false); }}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs gap-1 text-primary hover:text-primary"
+                        title="Charger le brouillon dans le Composer pour publier"
+                        onClick={handleOpenInComposer}
+                      >
+                        <FileEdit className="h-3 w-3" />
+                        Ouvrir
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                        title="Modifier"
+                        onClick={() => { setIsEditing(true); setConfirmDelete(false); }}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                    </>
                   )}
                   {post.scheduled_at && (
                     <Button

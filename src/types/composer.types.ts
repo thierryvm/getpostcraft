@@ -95,4 +95,9 @@ export interface PostRecord {
   created_at: string;
   published_at: string | null;
   scheduled_at: string | null;
+  /** Legacy single image (file path or base64 data URL). Equals `images[0]` after migration 011. */
+  image_path: string | null;
+  /** All carousel slides (or a 1-image array). Empty for text-only posts. */
+  images: string[];
+  ig_media_id: string | null;
 }

@@ -10,7 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useComposerStore } from "@/stores/composer.store";
-import { generateContent, saveDraft, generateCarousel } from "@/lib/tauri/composer";
+import { generateContent, saveDraft, generateCarousel, getPostById } from "@/lib/tauri/composer";
 import type { CaptionVariant, CarouselSlide } from "@/lib/tauri/composer";
 import { renderPostImage, renderCodeImage, renderTerminalImage, renderCarouselSlides, exportCarouselZip } from "@/lib/tauri/media";
 import type { BrandOptions } from "@/lib/tauri/media";
@@ -165,7 +165,22 @@ function VariantsPanel({
 }
 
 export function ContentPreview() {
-  const { result, variants, network, brief, accountId, imageFormat, draftId, setResult, setIsLoading, setError, setDraftId } = useComposerStore();
+  const {
+    result,
+    variants,
+    network,
+    brief,
+    accountId,
+    imageFormat,
+    draftId,
+    pendingDraftId,
+    setResult,
+    setIsLoading,
+    setError,
+    setDraftId,
+    setNetwork,
+    setPendingDraftId,
+  } = useComposerStore();
   const queryClient = useQueryClient();
   const { captionLimit, hashtagLimit, foldLimit, minRecommendedLength, recommendedLimit, label: networkLabel } = NETWORK_META[network];
   const imageRef = useRef<HTMLDivElement>(null);
@@ -236,6 +251,57 @@ export function ContentPreview() {
       setIsEditingCaption(false);
     }
   }, [result]);
+
+  // When the calendar/history view sets `pendingDraftId`, load that post into
+  // the composer state so the existing publish/edit UI works on it just like
+  // a freshly-generated draft. Without this, drafts in history have no
+  // "Publier" button (the in-session image state is empty on a fresh mount).
+  useEffect(() => {
+    if (pendingDraftId === null) return;
+    const idToLoad = pendingDraftId;
+    let cancelled = false;
+    (async () => {
+      try {
+        const post = await getPostById(idToLoad);
+        if (cancelled) return;
+        // Network must match before populating images, otherwise the format
+        // selector would show wrong defaults. Switching also reapplies brand
+        // for image rendering.
+        if (post.network !== network) {
+          setNetwork(post.network);
+        }
+        // Populate the same state the generation flow produces.
+        setResult({ caption: post.caption, hashtags: post.hashtags });
+        setHashtags(post.hashtags);
+        setDraftId(post.id);
+        setPublishedInSession(post.status === "published");
+        // Carousel vs single decided by image count, mirrors the publish backend.
+        if (post.images.length > 1) {
+          setTemplate("carousel");
+          setCarouselImages(post.images);
+          setCarouselIndex(0);
+          setImageUrl(null);
+        } else if (post.images.length === 1) {
+          setTemplate("post");
+          setImageUrl(post.images[0]);
+          setCarouselImages(null);
+        } else {
+          // text-only LinkedIn draft, leave both null
+          setImageUrl(null);
+          setCarouselImages(null);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setPendingDraftId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // network/setters are intentionally excluded — we only react to a new id arriving.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDraftId]);
 
   // Scroll image into view once it loads
   useEffect(() => {

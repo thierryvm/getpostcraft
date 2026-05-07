@@ -37,6 +37,11 @@ export async function getPostHistory(limit?: number): Promise<PostRecord[]> {
   return invoke<PostRecord[]>("get_post_history", { limit });
 }
 
+/** Fetch a single post by id — used to reload a draft into the composer. */
+export async function getPostById(postId: number): Promise<PostRecord> {
+  return invoke<PostRecord>("get_post_by_id", { postId });
+}
+
 export interface CaptionVariant {
   tone: "educational" | "casual" | "punchy";
   caption: string;

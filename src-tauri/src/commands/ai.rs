@@ -423,3 +423,13 @@ pub async fn get_post_history(
 ) -> Result<Vec<PostRecord>, String> {
     crate::db::history::list_recent(&state.db, limit.unwrap_or(50)).await
 }
+
+/// Fetch a single post by id — used by the composer when reloading a draft
+/// or a published post selected from the calendar/history view.
+#[tauri::command]
+pub async fn get_post_by_id(
+    state: tauri::State<'_, AppState>,
+    post_id: i64,
+) -> Result<PostRecord, String> {
+    crate::db::history::get_by_id(&state.db, post_id).await
+}
