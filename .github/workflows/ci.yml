@@ -8,7 +8,7 @@ on:
 
 jobs:
   frontend:
-    name: Frontend (typecheck + lint)
+    name: Frontend (typecheck + tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,9 +18,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run check:versions
+      - run: npm test
 
   rust:
-    name: Rust (check + clippy + fmt)
+    name: Rust (check + clippy + fmt + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,9 +39,10 @@ jobs:
       - run: cargo check --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
   python:
-    name: Python sidecar
+    name: Python sidecar (import + tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,5 +50,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r sidecar/requirements.txt
+      - run: pip install pytest
       - run: python -c "import sidecar.ai_client; print('sidecar OK')"
         working-directory: .
+      - run: pytest sidecar/tests/ -v
