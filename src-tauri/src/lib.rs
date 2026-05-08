@@ -188,6 +188,9 @@ pub fn run() {
             // Auto-backup — first-launch restore prompt + manual list
             commands::auto_backup::get_restore_offer,
             commands::auto_backup::list_auto_backups,
+            // Python deps — in-app pip install for the sidecar packages
+            commands::python_deps::check_python_deps,
+            commands::python_deps::install_python_deps,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

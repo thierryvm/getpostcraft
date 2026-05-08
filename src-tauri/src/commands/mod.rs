@@ -6,4 +6,5 @@ pub mod logs;
 pub mod media;
 pub mod oauth;
 pub mod publisher;
+pub mod python_deps;
 pub mod settings;
