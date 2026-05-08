@@ -1729,6 +1729,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "tokio-rustls",
+ "url",
  "urlencoding",
  "wiremock",
  "zip 8.5.1",
