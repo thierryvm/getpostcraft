@@ -75,6 +75,7 @@ pub fn run() {
             commands::ai::save_draft,
             commands::ai::get_post_history,
             commands::ai::get_post_by_id,
+            commands::ai::get_ai_usage_summary,
             commands::ai::scrape_url_for_brief,
             commands::ai::warmup_sidecar,
             commands::ai::generate_carousel,

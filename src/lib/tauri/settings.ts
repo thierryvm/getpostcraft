@@ -35,3 +35,27 @@ export async function setActiveProvider(
 export async function getActiveProvider(): Promise<ProviderInfo> {
   return invoke<ProviderInfo>("get_active_provider");
 }
+
+// ── AI usage / cost tracker ──────────────────────────────────────────────
+
+export interface UsageByModel {
+  model: string;
+  provider: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  /** True when the cost was estimated from a fallback price rather than a known model entry. */
+  price_estimated: boolean;
+}
+
+export interface UsageSummary {
+  calls_30d: number;
+  cost_usd_30d: number;
+  cost_usd_month: number;
+  by_model_30d: UsageByModel[];
+}
+
+export async function getAiUsageSummary(): Promise<UsageSummary> {
+  return invoke<UsageSummary>("get_ai_usage_summary");
+}

@@ -113,6 +113,25 @@ pub async fn generate_content(
         data.hashtags.len()
     );
 
+    // Cost tracker: persist the token counts the sidecar returned so the
+    // user can see their BYOK spending in Settings → IA. Failures here
+    // are intentionally swallowed — we'd rather miss a row than fail the
+    // user-facing AI call over a bookkeeping issue.
+    if let Some(usage) = data.usage {
+        if let Err(e) = crate::db::ai_usage::insert(
+            &state.db,
+            &provider,
+            &model,
+            "generate_content",
+            usage.input_tokens,
+            usage.output_tokens,
+        )
+        .await
+        {
+            log::warn!("ai_usage: insert failed (non-fatal): {e}");
+        }
+    }
+
     Ok(GeneratedContent {
         caption: data.caption,
         hashtags: data.hashtags,
@@ -811,4 +830,16 @@ pub async fn get_post_by_id(
     post_id: i64,
 ) -> Result<PostRecord, String> {
     crate::db::history::get_by_id(&state.db, post_id).await
+}
+
+/// Aggregated AI usage for the Settings → IA cost panel.
+/// Returns 30-day calls, 30-day cost USD, month-to-date cost USD, and a
+/// per-model breakdown sorted by cost desc. Cost is computed at query time
+/// from `network_rules::price_for` so updates to the pricing table re-price
+/// historical data automatically.
+#[tauri::command]
+pub async fn get_ai_usage_summary(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::db::ai_usage::UsageSummary, String> {
+    crate::db::ai_usage::summarise(&state.db).await
 }

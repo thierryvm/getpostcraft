@@ -35,10 +35,23 @@ pub struct SidecarRequest {
     pub system_prompt: String,
 }
 
+#[derive(Deserialize, Default, Clone, Copy)]
+pub struct TokenUsage {
+    #[serde(default)]
+    pub input_tokens: i64,
+    #[serde(default)]
+    pub output_tokens: i64,
+}
+
 #[derive(Deserialize)]
 pub struct SidecarData {
     pub caption: String,
     pub hashtags: Vec<String>,
+    /// Populated by the sidecar's `generate_content` action so the Rust
+    /// side can persist token counts into `ai_usage` (PR cost-tracker).
+    /// None for older sidecar builds that don't yet emit usage.
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Deserialize)]

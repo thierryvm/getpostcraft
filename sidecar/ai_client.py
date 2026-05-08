@@ -237,7 +237,12 @@ class AIClient:
         )
 
         raw = response.choices[0].message.content or ""
-        return _parse_json_response(raw)
+        parsed = _parse_json_response(raw)
+        # Cost tracker: surface the token counts the SDK already collected
+        # so the Rust side can persist them. Both OpenRouter and OpenAI
+        # populate `response.usage`; Ollama does too in recent builds.
+        parsed["usage"] = _openai_compat_usage(response)
+        return parsed
 
     # ── Anthropic native ───────────────────────────────────────────────────
 
@@ -255,10 +260,43 @@ class AIClient:
         )
 
         raw = message.content[0].text
-        return _parse_json_response(raw)
+        parsed = _parse_json_response(raw)
+        parsed["usage"] = _anthropic_usage(message)
+        return parsed
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+def _openai_compat_usage(response: Any) -> dict[str, int]:
+    """Extract `{input_tokens, output_tokens}` from an OpenAI-SDK response.
+
+    The SDK exposes `response.usage` as a `CompletionUsage` object with
+    `prompt_tokens` and `completion_tokens`. OpenRouter's proxy and most
+    OpenAI-compatible servers (Ollama, LM Studio) follow the same shape.
+    Defensive against the rare provider that omits usage entirely — a
+    {0, 0} record still anchors the call in the ledger so the user sees
+    that an attempt happened.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {"input_tokens": 0, "output_tokens": 0}
+    return {
+        "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+        "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+    }
+
+
+def _anthropic_usage(message: Any) -> dict[str, int]:
+    """Extract `{input_tokens, output_tokens}` from an Anthropic Messages
+    SDK response. Field names are already the canonical ones."""
+    usage = getattr(message, "usage", None)
+    if usage is None:
+        return {"input_tokens": 0, "output_tokens": 0}
+    return {
+        "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+        "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+    }
+
 
 def _sanitize_surrogates(s: str) -> str:
     """Remove lone surrogates that some AI models produce (e.g. \\udc90).
