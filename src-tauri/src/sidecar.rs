@@ -79,14 +79,20 @@ fn sidecar_script() -> std::path::PathBuf {
     // instead of a confusing CI-runner-path message.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            // Tauri's `_up_` mangling for resources whose source path
-            // starts with `..` — see Tauri 2 bundle docs.
+            // NSIS .exe installer (Tauri 2 default on Windows): files land
+            // DIRECTLY under the install root with the `_up_` mangling.
+            // Confirmed on a fresh v0.3.2 install at
+            // `C:\Program Files\getpostcraft\_up_\sidecar\main.py`. This
+            // candidate was missing in v0.3.2 — every AI command failed
+            // because we only looked under `resources/` like the .msi.
+            candidates.push(dir.join("_up_/sidecar/main.py"));
+            candidates.push(dir.join("sidecar/main.py"));
+            // MSI installer + Linux: resources live under `resources/`,
+            // again with the `_up_` prefix for `..`-rooted source paths.
             candidates.push(dir.join("resources/_up_/sidecar/main.py"));
-            // Same shape without the mangle — covers older Tauri versions
-            // and any future change to the convention.
             candidates.push(dir.join("resources/sidecar/main.py"));
-            // macOS .app bundles place the binary in Contents/MacOS/
-            // and resources in Contents/Resources/.
+            // macOS .app bundles: binary in Contents/MacOS/, resources
+            // in Contents/Resources/.
             candidates.push(dir.join("../Resources/_up_/sidecar/main.py"));
             candidates.push(dir.join("../Resources/sidecar/main.py"));
         }
