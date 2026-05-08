@@ -129,6 +129,8 @@ pub fn run() {
             // Logs
             commands::logs::get_app_logs,
             commands::logs::get_log_file_path,
+            // Data export — backup local SQLite as a `.gpcbak` ZIP
+            commands::data_export::export_backup_zip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
