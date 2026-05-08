@@ -1,31 +1,37 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
-import { Download, FolderOpen, Loader2 } from "lucide-react";
-import { exportBackupZip } from "@/lib/tauri/dataExport";
+import { Database, FileJson, FolderOpen, Loader2 } from "lucide-react";
+import { exportBackupZip, exportPortableZip } from "@/lib/tauri/dataExport";
 
 /**
- * Settings section that lets the user export a `.gpcbak` backup of their
- * local SQLite database to the Downloads folder. The format is documented
- * in `src-tauri/src/commands/data_export.rs` — anyone with `sqlite3` can
- * open the contained `app.db` directly, which is the explicit anti-lock-in
- * promise.
+ * Settings section that lets the user export their local data in two
+ * complementary formats:
+ *
+ *   - `.gpcbak` (backup): a ZIP wrapping the live SQLite database. Best for
+ *     restoring on another GPC install or auditing with `sqlite3`.
+ *   - `.zip` (portable): JSON tables + decoded media + Postgres `schema.sql`.
+ *     Best for migrating to Supabase, Postgres, n8n, or any tool outside
+ *     the GPC ecosystem.
+ *
+ * Both formats deliberately omit secrets; see `src-tauri/src/commands/data_export.rs`.
  */
 export function BackupSection() {
-  const [busy, setBusy] = useState(false);
+  const [busyKind, setBusyKind] = useState<"backup" | "portable" | null>(null);
   const [exportedPath, setExportedPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleExport() {
-    setBusy(true);
+  async function runExport(kind: "backup" | "portable") {
+    setBusyKind(kind);
     setError(null);
     try {
-      const path = await exportBackupZip();
+      const path =
+        kind === "backup" ? await exportBackupZip() : await exportPortableZip();
       setExportedPath(path);
     } catch (e) {
       setError(String(e));
     } finally {
-      setBusy(false);
+      setBusyKind(null);
     }
   }
 
@@ -45,54 +51,92 @@ export function BackupSection() {
     }
   }
 
-  return (
-    <div className="space-y-4">
-      <div className="text-sm text-muted-foreground space-y-2">
-        <p>
-          Crée une archive <code className="px-1 py-0.5 rounded bg-muted text-xs">.gpcbak</code> contenant
-          un instantané de ta base de données locale. L'archive est un ZIP
-          standard que tu peux ouvrir avec n'importe quel outil et explorer
-          directement avec <code className="px-1 py-0.5 rounded bg-muted text-xs">sqlite3 app.db</code>.
-        </p>
-        <p>
-          <span className="font-medium text-foreground">Inclus :</span> tous les
-          comptes connectés, brouillons, posts publiés, paramètres, branding,
-          ProductTruth.
-        </p>
-        <p>
-          <span className="font-medium text-foreground">Exclu volontairement :</span> tes
-          clés API et tokens OAuth — ils restent dans le trousseau système et
-          ne quittent jamais la machine. Sur un nouveau PC, recolle simplement
-          ta clé API et reconnecte tes comptes.
-        </p>
-      </div>
+  const busy = busyKind !== null;
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <Button onClick={handleExport} disabled={busy} className="gap-2">
-          {busy ? (
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">Exclu volontairement</span> des
+        deux formats : tes clés API et tokens OAuth. Ils restent dans le
+        trousseau système et ne quittent jamais la machine. Sur un nouveau PC,
+        recolle ta clé et reconnecte tes comptes.
+      </p>
+
+      {/* Backup .gpcbak */}
+      <div className="rounded border border-border p-4 space-y-3">
+        <div className="flex items-start gap-3">
+          <Database className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+          <div className="flex-1 space-y-1">
+            <h3 className="font-medium text-foreground text-sm">
+              Sauvegarde complète <code className="px-1 py-0.5 rounded bg-muted text-xs">.gpcbak</code>
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Snapshot fidèle de la base SQLite. Ouvre-le avec{" "}
+              <code className="px-1 py-0.5 rounded bg-muted">sqlite3 app.db</code> ou n'importe
+              quel outil ZIP. Idéal pour restaurer sur un autre poste.
+            </p>
+          </div>
+        </div>
+        <Button
+          onClick={() => runExport("backup")}
+          disabled={busy}
+          className="gap-2"
+          size="sm"
+        >
+          {busyKind === "backup" ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            <Download className="h-4 w-4" />
+            <Database className="h-4 w-4" />
           )}
-          {busy ? "Export en cours…" : "Exporter une sauvegarde"}
+          {busyKind === "backup" ? "Export en cours…" : "Exporter en .gpcbak"}
         </Button>
+      </div>
 
-        {exportedPath && !busy && (
+      {/* Portable .zip */}
+      <div className="rounded border border-border p-4 space-y-3">
+        <div className="flex items-start gap-3">
+          <FileJson className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+          <div className="flex-1 space-y-1">
+            <h3 className="font-medium text-foreground text-sm">
+              Format portable (Supabase / Postgres / n8n)
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              JSON par table + médias en PNG + <code className="px-1 py-0.5 rounded bg-muted">schema.sql</code>{" "}
+              Postgres prêt-à-charger. Pour migrer vers Supabase ou tout outil
+              externe à GPC.
+            </p>
+          </div>
+        </div>
+        <Button
+          onClick={() => runExport("portable")}
+          disabled={busy}
+          variant="secondary"
+          className="gap-2"
+          size="sm"
+        >
+          {busyKind === "portable" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <FileJson className="h-4 w-4" />
+          )}
+          {busyKind === "portable" ? "Export en cours…" : "Exporter en .zip portable"}
+        </Button>
+      </div>
+
+      {/* Result */}
+      {exportedPath && !error && (
+        <div className="text-xs rounded border border-border bg-muted/30 p-3 space-y-2">
+          <p className="text-foreground font-medium">Archive créée :</p>
+          <p className="font-mono break-all text-muted-foreground">{exportedPath}</p>
           <Button
             variant="ghost"
             onClick={revealInFolder}
-            className="gap-2 text-muted-foreground"
+            className="gap-2 text-muted-foreground h-7 px-2"
+            size="sm"
           >
-            <FolderOpen className="h-4 w-4" />
+            <FolderOpen className="h-3.5 w-3.5" />
             Ouvrir le dossier
           </Button>
-        )}
-      </div>
-
-      {exportedPath && !error && (
-        <div className="text-xs rounded border border-border bg-muted/30 p-3 space-y-1">
-          <p className="text-foreground font-medium">Sauvegarde créée :</p>
-          <p className="font-mono break-all text-muted-foreground">{exportedPath}</p>
         </div>
       )}
 

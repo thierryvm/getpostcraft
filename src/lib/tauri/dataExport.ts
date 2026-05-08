@@ -19,3 +19,22 @@ import { invoke } from "@tauri-apps/api/core";
 export async function exportBackupZip(): Promise<string> {
   return invoke<string>("export_backup_zip");
 }
+
+/**
+ * Exports the user's data in a multi-tool, portable format suitable for
+ * loading into Supabase, vanilla Postgres, n8n, or any other tool that
+ * speaks JSON. Saved to the Downloads folder.
+ *
+ * Archive contents:
+ *   - `accounts.json`, `posts.json`, `settings.json` — flat JSON tables
+ *   - `media/*.png` — base64 images decoded to actual PNG files
+ *   - `schema.sql` — Postgres CREATE TABLEs (Supabase-ready)
+ *   - `manifest.json` — format identifier + counts + restore notes
+ *
+ * Secrets are excluded for the same reason as `exportBackupZip`.
+ *
+ * Returns the absolute path of the created archive.
+ */
+export async function exportPortableZip(): Promise<string> {
+  return invoke<string>("export_portable_zip");
+}
