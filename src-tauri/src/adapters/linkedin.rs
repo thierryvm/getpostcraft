@@ -96,10 +96,19 @@ pub async fn exchange_code(
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
+        // Try the structured error first; fall back to a redacted raw body so
+        // we never bubble an unscrubbed upstream payload up to the user
+        // (matches the IG path in `instagram.rs` — defense-in-depth).
         if let Ok(err) = serde_json::from_str::<ErrorResponse>(&body) {
-            return Err(err.error_description.or(err.error).unwrap_or(body));
+            return Err(err
+                .error_description
+                .or(err.error)
+                .unwrap_or_else(|| crate::log_redact::redact_secrets(&body)));
         }
-        return Err(format!("LinkedIn token exchange failed: {body}"));
+        return Err(format!(
+            "LinkedIn token exchange failed: {}",
+            crate::log_redact::redact_secrets(&body)
+        ));
     }
 
     let token: TokenResponse = resp
@@ -126,7 +135,10 @@ pub async fn get_user_info(access_token: &str) -> Result<LinkedInUser, String> {
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Failed to get LinkedIn user info: {body}"));
+        return Err(format!(
+            "Failed to get LinkedIn user info: {}",
+            crate::log_redact::redact_secrets(&body)
+        ));
     }
 
     resp.json()
