@@ -26,8 +26,16 @@ class AIClient:
     def generate_caption(
         self, brief: str, network: str, system_prompt: str
     ) -> dict[str, Any]:
-        # LinkedIn posts target 1300-2100 chars; Instagram ~400 — adjust token budget
-        max_tokens = 1200 if network == "linkedin" else 600
+        # LinkedIn posts target 1300-2500 chars per LINKEDIN_PROMPT.
+        # Budget calculation:
+        #   2500 chars French (verbose: accents, longer conjunctions) ≈
+        #   ~700-800 caption tokens. Plus the JSON wrapper and the model's
+        #   internal self-check pass costs another ~200-400. 1200 was
+        #   the v0.3.x ceiling — too tight, posts at the upper bound were
+        #   silently truncated mid-sentence. 1800 leaves comfortable margin
+        #   without paying for tokens we won't use.
+        # Instagram targets 250-400 chars → 600 stays generous.
+        max_tokens = 1800 if network == "linkedin" else 600
         if self.provider == "anthropic":
             return self._generate_anthropic(brief, system_prompt, max_tokens)
         return self._generate_openai_compat(brief, system_prompt, max_tokens)

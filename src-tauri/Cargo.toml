@@ -35,6 +35,9 @@ zip = "8.5.1"
 sha2 = "0.10"
 rand = "0.8"
 urlencoding = "2"
+# Direct dep so the SSRF guard in `commands/ai.rs::validate_external_url`
+# doesn't depend on a transitive promise from reqwest.
+url = "2"
 rcgen = "0.13"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["ring"] }

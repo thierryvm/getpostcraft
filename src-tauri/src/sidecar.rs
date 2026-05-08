@@ -139,11 +139,19 @@ fn sidecar_script() -> std::path::PathBuf {
 
     candidates.push(dev_mode_candidate());
 
+    // First existing wins. The fallback uses `.first()` instead of indexing
+    // so an unexpected empty `candidates` (theoretically possible if both
+    // `current_exe()` fails AND `dev_mode_candidate()` somehow panics
+    // before push) doesn't add a startup panic on top of whatever already
+    // went wrong. The empty case can never happen today — `dev_mode_candidate`
+    // is unconditionally pushed — but defending the unwrap costs zero runtime
+    // and removes one source of crashes-with-no-log.
     candidates
         .iter()
         .find(|p| p.exists())
         .cloned()
-        .unwrap_or_else(|| candidates[0].clone())
+        .or_else(|| candidates.first().cloned())
+        .unwrap_or_else(|| std::path::PathBuf::from("sidecar/main.py"))
 }
 
 // ── AI generation request / response ─────────────────────────────────────────

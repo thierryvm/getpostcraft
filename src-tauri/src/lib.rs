@@ -35,9 +35,19 @@ pub fn run() {
         )
         .setup(|app| {
             let handle = app.handle().clone();
-            tauri::async_runtime::block_on(async move {
+            // Wrap the async setup in a block that returns Result so we can
+            // propagate `init_pool()` failures up through `setup` instead of
+            // panicking. A panic in `block_on` inside `setup` produces an
+            // unhandled process abort with no user-facing error; surfacing
+            // the error gives Tauri a chance to log it before the window
+            // closes, and gives the user a fighting chance at diagnosing
+            // (e.g. "data dir not writable" → check permissions, OneDrive,
+            // etc.).
+            let setup_result: Result<(), String> = tauri::async_runtime::block_on(async move {
                 // Init SQLite pool
-                let pool = db::init_pool().await.expect("Failed to init SQLite");
+                let pool = db::init_pool()
+                    .await
+                    .map_err(|e| format!("Failed to init SQLite: {e}"))?;
 
                 // Load provider from DB (falls back to default if not set)
                 let provider = db::settings_db::get(&pool, "active_provider")
@@ -62,7 +72,13 @@ pub fn run() {
                 }
 
                 handle.manage(state);
+                Ok(())
             });
+
+            if let Err(e) = setup_result {
+                log::error!("Tauri setup failed: {e}");
+                return Err(e.into());
+            }
 
             // Spawn the daily auto-backup as a background task. Runs once
             // shortly after startup (so the user gets a backup the first

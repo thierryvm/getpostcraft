@@ -227,9 +227,74 @@ pub async fn generate_variants(
     Ok(variants)
 }
 
+/// SSRF guard for the URL-accepting commands. Rejects schemes other than
+/// http(s), explicit private/loopback IP literals, and the AWS IMDS
+/// address. Hostnames that *resolve* to private IPs (DNS rebinding) are
+/// not blocked here — full mitigation would require resolving the host
+/// before the sidecar dials it. For a desktop app whose attacker model
+/// is "the renderer is somehow doing something I didn't want it to," a
+/// string-level check raises the bar enough that the scraper can't be
+/// pointed at `127.0.0.1`, `192.168.1.1`, or `169.254.169.254`.
+///
+/// V0.4 followup: resolve via `tokio::net::lookup_host` and re-check
+/// against the same blocklist to defeat DNS rebinding.
+fn validate_external_url(url: &str) -> Result<(), String> {
+    let parsed = ::url::Url::parse(url).map_err(|e| format!("URL invalide : {e}"))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        s => return Err(format!("Schéma non autorisé : {s} (attendu http/https)")),
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "URL sans hôte".to_string())?;
+
+    // Reject obvious local hostnames immediately, before IP-literal parse
+    // (which would miss them).
+    let host_lc = host.to_ascii_lowercase();
+    if matches!(
+        host_lc.as_str(),
+        "localhost" | "ip6-localhost" | "ip6-loopback"
+    ) {
+        return Err("Cible locale non autorisée".to_string());
+    }
+
+    // IP-literal block. `Url::host_str()` returns IPv6 hosts with the
+    // surrounding `[ ]` (e.g. `"[::1]"`), which `IpAddr::parse` rejects.
+    // Strip the brackets so v6 literals are actually checked.
+    let host_for_ip = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+    if let Ok(ip) = host_for_ip.parse::<std::net::IpAddr>() {
+        if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+            return Err("Cible interne non autorisée".to_string());
+        }
+        if let std::net::IpAddr::V4(v4) = ip {
+            if v4.is_private() || v4.is_link_local() || v4.is_broadcast() {
+                return Err("Cible privée non autorisée".to_string());
+            }
+        }
+        if let std::net::IpAddr::V6(v6) = ip {
+            // ULA fc00::/7 and link-local fe80::/10 — `is_unique_local` /
+            // `is_unicast_link_local` are unstable on older rustc, so we
+            // do the segment check by hand.
+            let segs = v6.segments();
+            let first = segs[0];
+            if (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80 {
+                return Err("IPv6 interne non autorisée".to_string());
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Scrape a URL and return extracted text suitable for use as a brief.
 #[tauri::command]
 pub async fn scrape_url_for_brief(url: String) -> Result<String, String> {
+    validate_external_url(&url)?;
     use serde::Serialize;
 
     #[derive(Serialize)]
@@ -288,6 +353,7 @@ pub async fn synthesize_product_truth_from_url(
     if url.trim().is_empty() {
         return Err("URL vide.".to_string());
     }
+    validate_external_url(&url)?;
 
     // 1. Snapshot provider + key without holding the lock across await.
     let (provider, model) = {
@@ -451,6 +517,7 @@ pub async fn analyze_url_visual(
     if url.trim().is_empty() {
         return Err("URL vide.".to_string());
     }
+    validate_external_url(&url)?;
 
     // Snapshot provider + key (single resolution shared by both AI calls).
     let (provider, model) = {
@@ -842,4 +909,104 @@ pub async fn get_ai_usage_summary(
     state: tauri::State<'_, AppState>,
 ) -> Result<crate::db::ai_usage::UsageSummary, String> {
     crate::db::ai_usage::summarise(&state.db).await
+}
+
+#[cfg(test)]
+mod ssrf_guard_tests {
+    use super::validate_external_url;
+
+    #[test]
+    fn accepts_a_normal_https_url() {
+        assert!(validate_external_url("https://terminallearning.dev/").is_ok());
+        assert!(validate_external_url("http://example.com/page?a=1").is_ok());
+    }
+
+    #[test]
+    fn rejects_non_http_schemes() {
+        // file://, ftp://, javascript: etc. — none should ever reach
+        // the sidecar's URL-fetch path.
+        for url in [
+            "file:///etc/passwd",
+            "ftp://example.com/",
+            "javascript:alert(1)",
+            "data:text/html,<script>",
+        ] {
+            assert!(
+                validate_external_url(url).is_err(),
+                "must reject scheme: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_localhost_and_loopback() {
+        for url in [
+            "http://localhost/",
+            "http://127.0.0.1/",
+            "http://127.255.255.255/",
+            "http://[::1]/",
+        ] {
+            assert!(
+                validate_external_url(url).is_err(),
+                "must reject loopback: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_rfc1918_private_ranges() {
+        for url in [
+            "http://10.0.0.1/",
+            "http://10.255.255.255/",
+            "http://172.16.0.1/",
+            "http://172.31.255.255/",
+            "http://192.168.0.1/",
+            "http://192.168.1.254/",
+        ] {
+            assert!(
+                validate_external_url(url).is_err(),
+                "must reject RFC-1918 private: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_link_local_and_imds() {
+        // 169.254.0.0/16 is link-local; 169.254.169.254 specifically is the
+        // AWS / GCP / Azure IMDS endpoint — most prized SSRF target.
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://169.254.0.1/",
+        ] {
+            assert!(
+                validate_external_url(url).is_err(),
+                "must reject link-local / IMDS: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_ipv6_unique_local_and_link_local() {
+        for url in [
+            "http://[fc00::1]/",
+            "http://[fd00::1]/",
+            "http://[fe80::1]/",
+        ] {
+            assert!(
+                validate_external_url(url).is_err(),
+                "must reject IPv6 internal: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unspecified_addresses() {
+        assert!(validate_external_url("http://0.0.0.0/").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_input() {
+        assert!(validate_external_url("not a url").is_err());
+        assert!(validate_external_url("").is_err());
+    }
 }
