@@ -147,7 +147,10 @@ pub async fn get_user_info(access_token: &str) -> Result<InstagramUser, String> 
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Failed to get Instagram user info: {body}"));
+        return Err(format!(
+            "Failed to get Instagram user info: {}",
+            crate::log_redact::redact_secrets(&body)
+        ));
     }
 
     resp.json()

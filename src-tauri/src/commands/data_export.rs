@@ -99,16 +99,32 @@ pub async fn export_backup_zip(state: tauri::State<'_, AppState>) -> Result<Stri
         .replace('\\', "/")
         .replace('\'', "''"); // defense in depth even though path is system-controlled
 
+    // RAII guard: deletes the snapshot when the guard drops, including on
+    // panic between VACUUM and `write_archive`. Manual `remove_file` after
+    // a successful read would leak the file if any code in between unwound.
+    // The snapshot contains the full DB (accounts, posts, settings) and we
+    // don't want it lingering in the OS temp dir on a crash.
+    struct TempFileGuard<'a>(&'a std::path::Path);
+    impl Drop for TempFileGuard<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(self.0);
+        }
+    }
+
     sqlx::query(&format!("VACUUM INTO '{path_for_sql}'"))
         .execute(&state.db)
         .await
         .map_err(|e| format!("VACUUM INTO failed: {e}"))?;
 
-    // 3. Read the snapshot, then delete the temp file immediately —
-    //    we don't want the snapshot lingering in /tmp where other
-    //    processes could read it.
+    // Guard is constructed AFTER `VACUUM INTO` succeeds — before that,
+    // there's nothing to clean up. From here onwards any early return,
+    // panic, or `?` propagation will trigger the cleanup.
+    let _temp_guard = TempFileGuard(&temp_db);
+
+    // 3. Read the snapshot. The guard handles deletion on the way out.
+    //    A signal-9 kill is still uncoverable without a startup sweep, but
+    //    the panic / `?` paths are now safe.
     let db_bytes = std::fs::read(&temp_db).map_err(|e| format!("Read snapshot: {e}"))?;
-    let _ = std::fs::remove_file(&temp_db);
 
     // 4. Manifest with checksum computed over the DB bytes that will
     //    actually land in the archive — verifies post-extraction.
