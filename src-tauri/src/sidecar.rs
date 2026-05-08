@@ -44,6 +44,65 @@ fn python_executable() -> &'static str {
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Tauri 2 mangles `bundle.resources` paths starting with `..` by
+/// replacing the `..` segment with this literal in the deployed bundle.
+/// Centralised so the convention is documented in one place and the
+/// repeated string doesn't drift between platform-specific helpers.
+const TAURI_UP_DIR_MARKER: &str = "_up_";
+
+/// Build a candidate path of the form `{root}/[segments...]/sidecar/main.py`.
+/// Per-component `.join()` chain so the path separator is always OS-native
+/// regardless of how the segments were declared in source.
+fn make_candidate(root: &std::path::Path, segments: &[&str]) -> std::path::PathBuf {
+    let mut path = root.to_path_buf();
+    for s in segments {
+        path = path.join(s);
+    }
+    path.join("sidecar").join("main.py")
+}
+
+/// NSIS .exe installer layout (Windows-only). Files land DIRECTLY under
+/// the install root with the `_up_` mangling — confirmed on a fresh
+/// v0.3.2 install at `C:\Program Files\getpostcraft\_up_\sidecar\main.py`.
+/// The Windows MSI uses a different layout (`resources/_up_/...`) handled
+/// by `bundled_resource_candidates`.
+#[cfg(target_os = "windows")]
+fn nsis_candidates(exe_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    vec![
+        make_candidate(exe_dir, &[TAURI_UP_DIR_MARKER]),
+        make_candidate(exe_dir, &[]),
+    ]
+}
+
+/// MSI (Windows) and Linux installer layout: resources live under
+/// `resources/` with the `_up_` prefix for `..`-rooted source paths.
+/// Always checked — both Windows MSI and every Linux installer use it.
+fn bundled_resource_candidates(exe_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    vec![
+        make_candidate(exe_dir, &["resources", TAURI_UP_DIR_MARKER]),
+        make_candidate(exe_dir, &["resources"]),
+    ]
+}
+
+/// macOS .app bundle layout. The binary sits in `Contents/MacOS/` and
+/// resources in `Contents/Resources/`, so we walk up from the executable.
+#[cfg(target_os = "macos")]
+fn macos_app_candidates(exe_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    vec![
+        make_candidate(exe_dir, &["..", "Resources", TAURI_UP_DIR_MARKER]),
+        make_candidate(exe_dir, &["..", "Resources"]),
+    ]
+}
+
+/// Dev mode: `cargo run` and `npm run tauri dev` resolve
+/// `CARGO_MANIFEST_DIR` to the actual project root. Last-resort
+/// candidate so a CI-built binary running on a user machine, where this
+/// path points at the GitHub Actions runner filesystem, never silently
+/// becomes the answer.
+fn dev_mode_candidate() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.py")
+}
+
 /// Locate `sidecar/main.py` at runtime.
 ///
 /// `env!("CARGO_MANIFEST_DIR")` resolves at *compile* time. In dev mode
@@ -53,92 +112,33 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// exist on the user's machine — we shipped this bug in v0.3.x and the
 /// owner hit it on `analyze_url_visual` (2026-05-08).
 ///
-/// Strategy: try a list of candidates and return the first that exists.
-/// The dev path stays first so `npm run tauri dev` keeps working without
-/// re-bundling resources every change.
+/// Strategy: try a list of candidates and return the first that exists,
+/// production layouts first. If every check misses we fall back to the
+/// FIRST production candidate so the resulting "No such file" error
+/// mentions an install-shaped path rather than a CI-runner one.
 ///
-/// Production layout (Tauri 2 puts `bundle.resources` under
-/// `{install}/resources/`, prefixing relative `..` paths with `_up_`):
-///   - Windows MSI/NSIS:  `{install}/resources/_up_/sidecar/main.py`
+/// Production layouts (per-platform helpers above):
+///   - Windows NSIS .exe: `{install}/_up_/sidecar/main.py`
+///   - Windows MSI:       `{install}/resources/_up_/sidecar/main.py`
+///   - Linux installers:  `{install}/resources/_up_/sidecar/main.py`
 ///   - macOS .app:        `{App}/Contents/Resources/_up_/sidecar/main.py`
-///   - Linux AppImage:    `{install}/resources/_up_/sidecar/main.py`
 fn sidecar_script() -> std::path::PathBuf {
-    use std::path::PathBuf;
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
 
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    // Production paths first — if we're running from an installed binary
-    // these are the shapes the Tauri bundle produces. Putting them before
-    // the dev path means the CI-baked CARGO_MANIFEST_DIR (which points to
-    // the runner's filesystem and never exists on a user machine) is the
-    // ABSOLUTE last resort, not the silent default. The earlier order had
-    // a subtle hole: if every prod candidate failed `.exists()` we fell
-    // back to candidates[0] which was the broken dev path — same class
-    // of bug as v0.3.x. Flipping the order means a misconfigured bundle
-    // surfaces as a clear "main.py not found at <prod path>" error
-    // instead of a confusing CI-runner-path message.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            // Per-component `.join()` calls instead of a single string —
-            // PathBuf::join with embedded `/` would still work on Windows
-            // (Rust converts) but joining one segment at a time is more
-            // idiomatic and removes any "is the separator right?" doubt.
-
-            // NSIS .exe installer (Tauri 2 default on Windows): files
-            // land DIRECTLY under the install root with the `_up_`
-            // mangling. Confirmed on a fresh v0.3.2 install at
-            // `C:\Program Files\getpostcraft\_up_\sidecar\main.py`. This
-            // candidate was missing in v0.3.2 — every AI command failed
-            // because we only looked under `resources/` like the .msi.
-            // Gated on Windows: the `_up_` directly-under-exe layout
-            // only happens with NSIS, never on other platforms.
             #[cfg(target_os = "windows")]
-            {
-                candidates.push(dir.join("_up_").join("sidecar").join("main.py"));
-                candidates.push(dir.join("sidecar").join("main.py"));
-            }
+            candidates.extend(nsis_candidates(dir));
 
-            // MSI installer + Linux AppImage / .deb / .rpm: resources
-            // live under `resources/`, again with the `_up_` prefix for
-            // `..`-rooted source paths.
-            candidates.push(
-                dir.join("resources")
-                    .join("_up_")
-                    .join("sidecar")
-                    .join("main.py"),
-            );
-            candidates.push(dir.join("resources").join("sidecar").join("main.py"));
+            candidates.extend(bundled_resource_candidates(dir));
 
-            // macOS .app bundles: binary in Contents/MacOS/, resources
-            // in Contents/Resources/. Gated to macOS so we don't bother
-            // checking these on other platforms.
             #[cfg(target_os = "macos")]
-            {
-                candidates.push(
-                    dir.join("..")
-                        .join("Resources")
-                        .join("_up_")
-                        .join("sidecar")
-                        .join("main.py"),
-                );
-                candidates.push(
-                    dir.join("..")
-                        .join("Resources")
-                        .join("sidecar")
-                        .join("main.py"),
-                );
-            }
+            candidates.extend(macos_app_candidates(dir));
         }
     }
 
-    // Dev mode last — alongside the source tree, only used when running
-    // via `npm run tauri dev` or `cargo run` from the project root.
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.py"));
+    candidates.push(dev_mode_candidate());
 
-    // First existing wins. If absolutely none exist (broken install),
-    // return the FIRST production candidate so the eventual "No such
-    // file" error mentions a path the user might recognise as install-
-    // shaped rather than a CI runner path.
     candidates
         .iter()
         .find(|p| p.exists())
