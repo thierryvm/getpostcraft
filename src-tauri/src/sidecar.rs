@@ -79,22 +79,55 @@ fn sidecar_script() -> std::path::PathBuf {
     // instead of a confusing CI-runner-path message.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            // NSIS .exe installer (Tauri 2 default on Windows): files land
-            // DIRECTLY under the install root with the `_up_` mangling.
-            // Confirmed on a fresh v0.3.2 install at
+            // Per-component `.join()` calls instead of a single string —
+            // PathBuf::join with embedded `/` would still work on Windows
+            // (Rust converts) but joining one segment at a time is more
+            // idiomatic and removes any "is the separator right?" doubt.
+
+            // NSIS .exe installer (Tauri 2 default on Windows): files
+            // land DIRECTLY under the install root with the `_up_`
+            // mangling. Confirmed on a fresh v0.3.2 install at
             // `C:\Program Files\getpostcraft\_up_\sidecar\main.py`. This
             // candidate was missing in v0.3.2 — every AI command failed
             // because we only looked under `resources/` like the .msi.
-            candidates.push(dir.join("_up_/sidecar/main.py"));
-            candidates.push(dir.join("sidecar/main.py"));
-            // MSI installer + Linux: resources live under `resources/`,
-            // again with the `_up_` prefix for `..`-rooted source paths.
-            candidates.push(dir.join("resources/_up_/sidecar/main.py"));
-            candidates.push(dir.join("resources/sidecar/main.py"));
+            // Gated on Windows: the `_up_` directly-under-exe layout
+            // only happens with NSIS, never on other platforms.
+            #[cfg(target_os = "windows")]
+            {
+                candidates.push(dir.join("_up_").join("sidecar").join("main.py"));
+                candidates.push(dir.join("sidecar").join("main.py"));
+            }
+
+            // MSI installer + Linux AppImage / .deb / .rpm: resources
+            // live under `resources/`, again with the `_up_` prefix for
+            // `..`-rooted source paths.
+            candidates.push(
+                dir.join("resources")
+                    .join("_up_")
+                    .join("sidecar")
+                    .join("main.py"),
+            );
+            candidates.push(dir.join("resources").join("sidecar").join("main.py"));
+
             // macOS .app bundles: binary in Contents/MacOS/, resources
-            // in Contents/Resources/.
-            candidates.push(dir.join("../Resources/_up_/sidecar/main.py"));
-            candidates.push(dir.join("../Resources/sidecar/main.py"));
+            // in Contents/Resources/. Gated to macOS so we don't bother
+            // checking these on other platforms.
+            #[cfg(target_os = "macos")]
+            {
+                candidates.push(
+                    dir.join("..")
+                        .join("Resources")
+                        .join("_up_")
+                        .join("sidecar")
+                        .join("main.py"),
+                );
+                candidates.push(
+                    dir.join("..")
+                        .join("Resources")
+                        .join("sidecar")
+                        .join("main.py"),
+                );
+            }
         }
     }
 
