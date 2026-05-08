@@ -258,7 +258,13 @@ pub async fn start_oauth_flow(
             token
         }
         Err(e) => {
-            log::warn!("Instagram: long-lived token exchange failed, falling back to short-lived token: {e}");
+            // `e` is already scrubbed inside `exchange_for_long_lived_token`,
+            // but pass it through `redact_secrets` again as belt-and-braces in
+            // case a future caller forwards a raw upstream body here.
+            let safe = crate::log_redact::redact_secrets(&e);
+            log::warn!(
+                "Instagram: long-lived token exchange failed, falling back to short-lived token: {safe}"
+            );
             short_lived
         }
     };

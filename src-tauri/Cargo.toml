@@ -39,6 +39,10 @@ rcgen = "0.13"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["ring"] }
 log = "0.4"
+# Used by `log_redact` to scrub secret-bearing fields from upstream
+# response bodies before they reach the logger. Already a transitive
+# dep via sqlx — declaring it explicitly costs nothing.
+regex = "1"
 # OS-native secret storage — Windows Credential Manager (DPAPI-backed),
 # macOS Keychain, Linux Secret Service (gnome-keyring / KWallet).
 # Replaces the previous plain-text api_keys.json. ADR-009 documents the choice.

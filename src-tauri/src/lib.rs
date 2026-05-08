@@ -2,6 +2,7 @@ mod adapters;
 mod ai_keys;
 mod commands;
 mod db;
+mod log_redact;
 mod network_rules;
 mod sidecar;
 mod state;
