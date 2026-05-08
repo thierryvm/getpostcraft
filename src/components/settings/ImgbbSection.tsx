@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Upload } from "lucide-react";
+import { Check, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,10 @@ import { getImgbbKeyStatus, saveImgbbKey } from "@/lib/tauri/publisher";
 export function ImgbbSection() {
   const qc = useQueryClient();
   const [imgbbInput, setImgbbInput] = useState("");
+  // Local "saved" flag → shows the success check on the button for ~2s
+  // after a successful save. Pattern matches `PublicationForm` and
+  // `AiKeyForm` so feedback is consistent across panels.
+  const [savedFlash, setSavedFlash] = useState(false);
 
   const { data: imgbbConfigured = false } = useQuery({
     queryKey: ["imgbb_key_status"],
@@ -20,9 +24,18 @@ export function ImgbbSection() {
     mutationFn: (key: string) => saveImgbbKey(key),
     onSuccess: () => {
       setImgbbInput("");
+      setSavedFlash(true);
       qc.invalidateQueries({ queryKey: ["imgbb_key_status"] });
     },
   });
+
+  // Reset the success flash after 2.5 s. Long enough to be noticed,
+  // short enough to clear before the user types a new value.
+  useEffect(() => {
+    if (!savedFlash) return;
+    const t = setTimeout(() => setSavedFlash(false), 2500);
+    return () => clearTimeout(t);
+  }, [savedFlash]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -62,10 +75,25 @@ export function ImgbbSection() {
             size="sm"
             disabled={!imgbbInput.trim() || saveImgbb.isPending}
             onClick={() => saveImgbb.mutate(imgbbInput.trim())}
+            className="gap-1.5"
           >
-            {saveImgbb.isPending ? "…" : "Enregistrer"}
+            {saveImgbb.isPending ? (
+              "…"
+            ) : savedFlash ? (
+              <>
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                Enregistré
+              </>
+            ) : (
+              "Enregistrer"
+            )}
           </Button>
         </div>
+        {saveImgbb.isError && (
+          <p className="text-xs text-destructive bg-destructive/10 rounded p-2">
+            Échec de l'enregistrement : {String(saveImgbb.error)}
+          </p>
+        )}
       </div>
     </div>
   );

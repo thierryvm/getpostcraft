@@ -70,7 +70,11 @@ export function LinkedInSection({ account }: { account: ConnectedAccount | undef
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <Link2 className="h-5 w-5 text-[#0A66C2]" />
+        {/* `text-primary` matches the design token (`#3ddc84`) used on
+            every other network icon in this tab — `InstagramSection` etc.
+            Hardcoded LinkedIn brand blue would have rendered the two
+            sections visually inconsistent for no semantic reason. */}
+        <Link2 className="h-5 w-5 text-primary" />
         <span className="text-sm font-semibold text-foreground">LinkedIn</span>
         {account ? (
           <Badge className="text-xs bg-primary/20 text-primary border-0">Connecté</Badge>
