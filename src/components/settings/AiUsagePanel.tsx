@@ -123,10 +123,14 @@ function Stat({
   value: string;
   accent?: boolean;
 }) {
+  // Accent uses the design-system `primary` token (`#3ddc84`) instead of
+  // raw `emerald-*` so a future theme change cascades automatically and
+  // the highlighted stat matches the brand colour everywhere else
+  // (badges, links, focus rings).
   return (
-    <div className={`rounded border ${accent ? "border-emerald-500/30 bg-emerald-500/5" : "border-border bg-muted/20"} p-3`}>
+    <div className={`rounded border ${accent ? "border-primary/30 bg-primary/5" : "border-border bg-muted/20"} p-3`}>
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`text-lg font-semibold tabular-nums ${accent ? "text-emerald-400" : "text-foreground"}`}>
+      <p className={`text-lg font-semibold tabular-nums ${accent ? "text-primary" : "text-foreground"}`}>
         {value}
       </p>
     </div>

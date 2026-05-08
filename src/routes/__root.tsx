@@ -16,11 +16,16 @@ import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/ui.store";
 import { cn } from "@/lib/utils";
 
+// Navigation labels in French to match the rest of the UI — the previous
+// "Settings" / "Dashboard" mix-and-match contradicted the page headers
+// ("Paramètres", "Tableau de bord") visible at the same time when the
+// sidebar is expanded. "Composer" stays — it's used as a product-name
+// concept throughout the codebase, not a verb.
 const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/", label: "Tableau de bord", icon: LayoutDashboard },
   { to: "/composer", label: "Composer", icon: PenLine },
   { to: "/calendar", label: "Calendrier", icon: CalendarDays },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/settings", label: "Paramètres", icon: Settings },
   { to: "/guide", label: "Guide", icon: BookOpen },
 ] as const;
 

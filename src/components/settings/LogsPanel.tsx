@@ -120,9 +120,10 @@ export function LogsPanel() {
                 size="sm"
                 variant="ghost"
                 onClick={() => { setEntries([]); setLoaded(false); }}
+                aria-label="Effacer les logs affichés"
                 className="gap-1.5 h-7 px-2 text-muted-foreground"
               >
-                <Trash2 className="h-3 w-3" />
+                <Trash2 className="h-3 w-3" aria-hidden="true" />
               </Button>
             </div>
           </>
