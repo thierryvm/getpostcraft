@@ -87,7 +87,15 @@ jobs:
             - Windows: SmartScreen → "More info" → "Run anyway"
             - macOS: right-click → Open, or `xattr -d com.apple.quarantine /Applications/getpostcraft.app`
             - Linux: AppImage needs `chmod +x`
-          releaseDraft: true
+          # `releaseDraft: false` — auto-publish on tag push so the
+          # `releases/latest` endpoint (and the auto-updater that depends
+          # on it) actually sees the release. With `true`, every release
+          # stayed as a Draft until a human clicked "Publish" in the
+          # GitHub UI, which silently broke auto-update from v0.2.0 → v0.3.0
+          # → v0.3.1 (caught 2026-05-08). If we ever need a manual review
+          # gate again, do it via a `workflow_dispatch` input rather than
+          # this default.
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
 # Note: tauri-action@v0 already writes a complete `latest.json` to the release
