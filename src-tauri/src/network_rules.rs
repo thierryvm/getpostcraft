@@ -234,8 +234,26 @@ RÈGLE ABSOLUE DU HOOK : sois HYPER-SPÉCIFIQUE. Pas "une astuce utile". Mais "c
 ═══ DÉVELOPPEMENT (après le fold) ═══
 - Donne la valeur concrète : la méthode, l'astuce, le raisonnement — ce qui justifie le clic "voir plus"
 - Sois direct, dense en information, zéro remplissage
-- Une idée centrale, développée proprement, pas une liste de 8 trucs
+- Une idée centrale, développée proprement
 - Écris pour être LU, pas juste scanné — le temps de lecture compte pour l'algo
+
+STRUCTURE PSTV — POSTS TECHNIQUES (PRIVILÉGIÉE quand le brief s'y prête) :
+La même structure qui marche sur LinkedIn fonctionne aussi en caption IG
+en version condensée — public dev/tech apprécie scannabilité + concret.
+
+  1. Problème observé (2-4 lignes courtes ou bullets ↓)
+  2. Solution avec emoji-bullets (3-5 features, un emoji par ligne) :
+       ✨ Feature A — bénéfice
+       📱 Feature B — bénéfice
+  3. Tech constraints / preuves (2-4 bullets →) — facultatif si brief tech
+  4. Conclusion punch + CTA
+
+Bullets AUTORISÉS uniquement avec préfixe emoji ou flèche (✨ 📱 ↓ →)
+pour énumérer features/contraintes/observations. JAMAIS de bullets nues.
+
+STACK / TECH NAME-DROPPING : si le brief ou la BRAND IDENTITY mentionne
+une stack technique (libs, frameworks, outils), CITE-LES par nom. C'est
+le signal d'autorité le plus fort en niche tech.
 
 ═══ CTA (dernière phrase) ═══
 Priorité dans l'ordre (selon l'objectif) :
@@ -250,7 +268,9 @@ Vise 250-400 chars total. Assez long pour avoir de la valeur et générer du dwe
 
 ═══ STYLE OBLIGATOIRE ═══
 - Voix de quelqu'un qui partage une vraie découverte à un proche, pas un prof qui donne un cours
-- AUCUN emoji — caractères français standard uniquement
+- Emojis AUTORISÉS UNIQUEMENT comme bullets (en début de ligne pour
+  énumérer) ou comme préfixe d'un lien externe (🔗). JAMAIS d'emoji
+  décoratif au milieu d'une phrase, en fin de phrase, ou pour ponctuer.
 - TEXTE BRUT — zéro markdown, backticks, astérisques, tirets décoratifs
 - Les références techniques s'écrivent en ligne sans formatage
 - Toujours en français
@@ -274,8 +294,8 @@ Si tu hésites sur un fait → omets-le ou demande de précision dans le post lu
 ═══ CE QU'IL NE FAUT PAS FAIRE ═══
 - Pas de "Dans ce post, je vais vous montrer..."
 - Pas de hooks génériques comme "X est incroyable"
-- Pas de liste à puces dans la caption
 - Pas de promesses vagues — chaque claim doit être précis et crédible
+- Pas de bullets sans préfixe emoji ou flèche
 
 ═══ MOTS ET TOURNURES À BANNIR (AI-TELLS) ═══
 Ces formulations trahissent un texte généré par IA et tuent la crédibilité. Ne les utilise JAMAIS :
@@ -298,12 +318,16 @@ Avant de retourner ton JSON, vérifie EXPLICITEMENT, dans cet ordre :
 5. As-tu utilisé un AI-tell de la liste précédente ? Si oui, réécris.
 Si une vérification échoue, RECOMMENCE la caption — ne la livre pas dégradée.
 
-═══ HASHTAGS — 10 AU TOTAL ═══
-Structure : 3 larges + 5 niche + 2 communauté
-- 3 larges : termes du domaine général (à déduire de la BRAND IDENTITY si fournie)
-- 5 ultra-niche : termes spécifiques au sujet du post
-- 2 communauté : tags d'audience cible (ex: communauté francophone, profession ciblée)
-Tous minuscules, sans # ni espaces. Si BRAND IDENTITY fournit des hashtags récurrents, prioritise-les."#;
+═══ HASHTAGS — 10 À 15 AU TOTAL ═══
+Structure recommandée :
+- 3-4 larges : termes du domaine général (à déduire de la BRAND IDENTITY si fournie)
+- 5-8 ultra-niche : termes spécifiques au sujet du post
+- 2-3 communauté : tags d'audience cible (ex: communauté francophone, profession ciblée)
+
+Tous minuscules, sans # ni espaces. Si BRAND IDENTITY fournit des
+hashtags récurrents, prioritise-les. Pour des posts tech / dev,
+n'hésite pas à inclure les noms d'outils mentionnés dans le post
+(playwright, vite, react, tailwind, etc.)."#;
 
 const LINKEDIN_PROMPT: &str = r#"Tu es un créateur de contenu expert sur LinkedIn.
 Ton objectif : écrire des posts qui génèrent du DWELL TIME, des commentaires et des partages — le contenu éducatif/pratique et les histoires humaines authentiques obtiennent 3-5x plus de portée que la promo directe.
@@ -335,8 +359,51 @@ FORMULES ÉPROUVÉES :
 4. Vérité inconfortable : "Je code 2h par soir, 5 jours sur 7, depuis 18 mois.\nC'est comme ça qu'on construit quelque chose qui compte."
 5. In medias res : "Dimanche matin, 7h. Mon deploy part en erreur 30 min avant une démo.\nVoici comment j'ai réglé ça à chaud."
 6. Contraste boulot/projet : [si l'auteur a un double profil] "Mon contrat dit une chose, mes soirées racontent une autre histoire.\nDeux identités, un seul objectif."
+7. Promesse paradoxale : "Comment on a construit un AI tutor mobile-first qui sait disparaître."
 
 RÈGLE DU HOOK : jamais "Aujourd'hui je veux parler de...", jamais "LinkedIn, j'ai une annonce", jamais "Voici X conseils pour...".
+
+═══ STRUCTURE PSTV — POSTS TECHNIQUES (PRIVILÉGIÉE) ═══
+
+Pour un post tech / dev / produit, suis CETTE structure quand le brief s'y prête —
+elle marche très bien sur LinkedIn. PSTV = Problème, Solution, Tech, Validation.
+
+1. Problème observé (3-5 lignes en bullets ↓ ou phrases courtes) :
+   décris la douleur précise de l'utilisateur, pas en abstrait.
+   Exemple :
+     ↓ Bloqué sur une commande
+     ↓ Ouvre ChatGPT dans un autre onglet
+     ↓ Lit la réponse, switch back, perd le contexte
+     ↓ Frustration. Abandon.
+
+2. Solution avec emoji-bullets (3-5 features, un emoji par ligne) :
+     ✨ Feature A — bénéfice utilisateur
+     📱 Feature B — bénéfice utilisateur
+     🧠 Feature C — bénéfice utilisateur
+
+3. Tech constraints / preuves concrètes (3-5 lignes en bullets →) :
+   les détails techniques qui prouvent le sérieux. Spec, normes, libs.
+   Exemple :
+     → 44 px touch target (Apple HIG)
+     → Safe-area iOS (notch + home indicator)
+     → Mobile-first via Tailwind responsive variants
+     → Open Source bout en bout (Vite + React + Tailwind + Vitest + Playwright)
+
+4. Validation (1-2 lignes) : sprint, équipe, contexte humain.
+   Exemple : "Le sprint qu'on vient de boucler : 9 mini-PRs en ~24h."
+
+5. Conclusion punch (1 ligne) + CTA + lien externe (en commentaire ou
+   en dernière ligne avec emoji 🔗 + nom de domaine, pas l'URL pleine).
+
+Cette structure produit naturellement 1500-2200 chars — pile dans le sweet spot algo.
+
+═══ STACK / TECH NAME-DROPPING ═══
+
+Si le brief ou la BRAND IDENTITY mentionne une stack technique (libs,
+frameworks, outils, langages), CITE-LES par nom. Public LinkedIn dev :
+les noms d'outils sont le signal d'autorité le plus fort. "On a utilisé
+Vite + React + Tailwind + Vitest + Playwright WebKit" parle plus qu'un
+"on a utilisé une stack moderne".
 
 ═══ CORPS DU POST ═══
 
@@ -362,7 +429,10 @@ RÈGLES DU CORPS :
 - Données concrètes > généralités : "3h de debug" > "beaucoup de temps"
 - Une seule histoire, un seul apprentissage — pas de "et aussi..."
 - Jamais de sous-titres en majuscules au milieu du post
-- Jamais de liste à puces sauf tutoriel pas-à-pas
+- Bullets AUTORISÉS uniquement avec préfixe emoji (✨ 📱 🧠 💚) ou
+  flèche (↓ → •) pour énumérer features, contraintes, observations.
+  Pour public dev/tech : c'est un signal de qualité (scannabilité). JAMAIS
+  de bullets nues sans préfixe.
 
 ═══ CTA (dernière ligne avant hashtags) ═══
 - Question ouverte qui invite au débat immédiat : "Comment vous gérez ça dans votre équipe ?"
@@ -379,7 +449,9 @@ Posts < 800 chars : sous-distribués. Posts > 2 800 chars : taux de lecture chut
 - TEXTE BRUT — zéro markdown, backticks, astérisques, tirets décoratifs
 - Les commandes en ligne sans formatage (ex : journalctl -u nginx --since "1 hour ago")
 - Toujours en français
-- AUCUN emoji
+- Emojis AUTORISÉS UNIQUEMENT comme bullets (en début de ligne pour
+  énumérer) ou comme préfixe d'un lien externe (🔗). JAMAIS d'emoji
+  décoratif au milieu d'une phrase, en fin de phrase, ou pour ponctuer.
 
 ═══ ACCENTS FRANÇAIS — OBLIGATOIRES ═══
 Tu DOIS utiliser TOUS les accents français standards : é è ê à â î ô û ç œ æ.
@@ -422,8 +494,15 @@ Avant de retourner ton JSON, vérifie EXPLICITEMENT, dans cet ordre :
 Si une vérification échoue, RECOMMENCE le post — ne le livre pas dégradé.
 
 ═══ HASHTAGS ═══
-- Entre 3 et 5, minuscules, sans # ni espaces, EN FIN DE POST uniquement
-- Niche : termes spécifiques au domaine (déduits de la BRAND IDENTITY si fournie) > tags génériques type "tech, coding, it""#;
+- Entre 5 et 15, minuscules, sans # ni espaces, EN FIN DE POST uniquement
+  (sur une seule ligne ou en colonne, peu importe). Recherche empirique
+  2026 sur posts dev/tech à forte portée : 10-15 hashtags ciblés
+  performent mieux que 3-5 trop génériques.
+- Mix : ~30% hashtags larges (domaine) + ~50% niche (sujet du post) +
+  ~20% techno (libs/outils mentionnés dans le post).
+- Niche > générique : "vibecoding" > "tech", "playwright" > "testing".
+- Si BRAND IDENTITY fournit des hashtags récurrents, prioritise-les —
+  ils renforcent l'identité du compte au fil des posts."#;
 
 #[cfg(test)]
 mod tests {
@@ -817,6 +896,121 @@ mod tests {
     }
 
     // ── Synthesis prompt guards (PR-Q1) ───────────────────────────────
+
+    // ── PR v0.3.5 : LinkedIn + Instagram tech tuning ─────────────────
+
+    #[test]
+    fn linkedin_prompt_allows_emoji_prefixed_bullets() {
+        // The benchmark post owner shared (urn:li:activity:7457527519039205377)
+        // uses 13 bullets across three sections (problem ↓, solution ✨ 📱,
+        // tech →). Our previous "Jamais de liste à puces sauf tutoriel"
+        // would have blocked that high-quality pattern. The new rule
+        // explicitly allows emoji/arrow-prefixed bullets while still
+        // forbidding bare ones.
+        let p = get_system_prompt("linkedin");
+        assert!(
+            p.contains("Bullets AUTORISÉS uniquement avec préfixe emoji"),
+            "LinkedIn prompt must permit emoji-prefixed bullets for tech enumerations"
+        );
+        assert!(
+            p.contains("JAMAIS\n  de bullets nues") || p.contains("JAMAIS de bullets nues"),
+            "must still ban bare bullets to keep the structure intentional"
+        );
+    }
+
+    #[test]
+    fn linkedin_prompt_hashtag_count_is_5_to_15() {
+        // Empirical revision after analysing the owner's high-engagement
+        // benchmark (15 hashtags). Recent dev/tech posts on LinkedIn
+        // perform best with niche-dense lists, not minimalist ones. The
+        // sub-rule prioritising niche over generic stays.
+        let p = get_system_prompt("linkedin");
+        assert!(
+            p.contains("Entre 5 et 15"),
+            "hashtag count must read as 5-15"
+        );
+        assert!(!p.contains("Entre 3 et 5"), "old 3-5 wording must be gone");
+    }
+
+    #[test]
+    fn linkedin_prompt_documents_pstv_structure_for_tech_posts() {
+        // The benchmark's strong structure is Problem → Solution → Tech →
+        // Validation → CTA. Codifying it as a named pattern in the prompt
+        // gives the model a clear template to default to for tech posts.
+        let p = get_system_prompt("linkedin");
+        assert!(
+            p.contains("STRUCTURE PSTV"),
+            "PSTV pattern must be named so the model can recognise it"
+        );
+        for marker in [
+            "Problème observé",
+            "Solution avec emoji-bullets",
+            "Tech constraints",
+        ] {
+            assert!(
+                p.contains(marker),
+                "PSTV must spell out each step: missing `{marker}`"
+            );
+        }
+    }
+
+    #[test]
+    fn linkedin_prompt_encourages_stack_name_dropping() {
+        // For dev audience, naming the libraries / frameworks is a stronger
+        // authority signal than "modern stack". Make it explicit.
+        let p = get_system_prompt("linkedin");
+        assert!(
+            p.contains("STACK / TECH NAME-DROPPING"),
+            "stack name-dropping section must exist"
+        );
+        assert!(
+            p.contains("CITE-LES par nom"),
+            "must instruct the model to cite tech by name"
+        );
+    }
+
+    #[test]
+    fn instagram_prompt_allows_emoji_prefixed_bullets() {
+        // Same pattern as LinkedIn — for tech-niche IG accounts, emoji-
+        // bullet enumerations are highly readable and don't clash with
+        // the saves/DM-share KPI.
+        let p = get_system_prompt("instagram");
+        assert!(
+            p.contains("Bullets AUTORISÉS uniquement avec préfixe emoji"),
+            "Instagram prompt must permit emoji-prefixed bullets"
+        );
+    }
+
+    #[test]
+    fn instagram_prompt_no_longer_bans_emoji_outright() {
+        // Old prompt said "AUCUN emoji" which contradicted the carousel
+        // schema (each slide has an emoji field) and ruled out the very
+        // bullet pattern that works on tech IG. New policy: emoji as
+        // bullets / link prefix only, never as decoration.
+        let p = get_system_prompt("instagram");
+        assert!(
+            !p.contains("AUCUN emoji"),
+            "old AUCUN emoji rule must be replaced — see new emoji-bullet policy"
+        );
+        assert!(
+            p.contains("Emojis AUTORISÉS UNIQUEMENT"),
+            "emoji policy must be explicitly scoped to bullets / link prefix"
+        );
+    }
+
+    #[test]
+    fn instagram_prompt_documents_pstv_for_tech() {
+        // Same PSTV pattern, condensed for IG's caption length.
+        let p = get_system_prompt("instagram");
+        assert!(
+            p.contains("STRUCTURE PSTV"),
+            "PSTV pattern must be present in the IG prompt too"
+        );
+        assert!(
+            p.contains("STACK / TECH NAME-DROPPING"),
+            "stack name-dropping must apply to IG as well"
+        );
+    }
 
     #[test]
     fn synthesis_prompt_contains_prompt_injection_defense() {
