@@ -54,3 +54,37 @@ jobs:
       - run: python -c "import sidecar.ai_client; print('sidecar OK')"
         working-directory: .
       - run: pytest sidecar/tests/ -v
+
+  # Defense against accidental secret commits.
+  #
+  # Why trufflehog (over gitleaks-action): the gitleaks GitHub Action requires
+  # a paid license for use on private repositories. Trufflehog OSS is free
+  # for everyone, validates findings against live APIs (so OpenRouter/Anthropic
+  # test keys we keep in test fixtures don't false-positive), and the action is
+  # maintained by the original authors.
+  #
+  # Scope: scans the diff range of every push/PR. On PRs it scans the full
+  # diff (base..head); on pushes it scans the new commits. We do NOT scan
+  # the full history on every run — that would be slow and noisy for an
+  # already-cleaned repo.
+  secrets:
+    name: Secret scanning (trufflehog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history so trufflehog can compute the diff range.
+          # `0` = full clone. Without this, PR scans miss commits.
+          fetch-depth: 0
+      - name: Trufflehog secret scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          # Scan the diff for the current event:
+          #  - on PR: base SHA (where the PR branched) → head SHA (current)
+          #  - on push to main: previous main SHA → new SHA
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          # `--only-verified` keeps the noise low — only secrets that
+          # successfully authenticated against their provider's API
+          # are reported. False positives on test fixtures are filtered out.
+          extra_args: --only-verified
