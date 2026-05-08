@@ -63,6 +63,39 @@ pub fn run() {
 
                 handle.manage(state);
             });
+
+            // Spawn the daily auto-backup as a background task. Runs once
+            // shortly after startup (so the user gets a backup the first
+            // time they use the app post-install) and then sleeps a day
+            // between runs. Failures are logged, never propagated — a
+            // backup miss must not crash the app startup path.
+            //
+            // Lives outside the block_on above because we want it
+            // detached: nothing should ever wait on this task to complete.
+            let bg_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use tokio::time::{sleep, Duration};
+
+                // Small initial delay so the first backup doesn't fight
+                // for the SQLite WAL with whatever the user is doing on
+                // the first window paint (loading accounts, etc.).
+                sleep(Duration::from_secs(60)).await;
+
+                loop {
+                    let state: tauri::State<'_, AppState> = bg_handle.state();
+                    match crate::commands::auto_backup::run_if_due(&state).await {
+                        Ok(Some(path)) => log::info!("auto_backup: created {path}"),
+                        Ok(None) => log::debug!("auto_backup: skipped (recent backup exists)"),
+                        Err(e) => log::warn!("auto_backup: failed (non-fatal): {e}"),
+                    }
+                    // Re-check every hour. The `run_if_due` guard ensures
+                    // we only actually create a fresh backup once per
+                    // ~23h, so this loop is a cheap heartbeat — not a
+                    // backup-every-hour storm.
+                    sleep(Duration::from_secs(3600)).await;
+                }
+            });
+
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -134,6 +167,11 @@ pub fn run() {
             commands::data_export::export_backup_zip,
             // Data export — portable JSON + media + Postgres schema (.zip)
             commands::data_export::export_portable_zip,
+            // Data export — restore a `.gpcbak` over the live DB
+            commands::data_export::import_backup_zip,
+            // Auto-backup — first-launch restore prompt + manual list
+            commands::auto_backup::get_restore_offer,
+            commands::auto_backup::list_auto_backups,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

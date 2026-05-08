@@ -77,33 +77,41 @@ struct BackupManifest {
 /// Returns the absolute path to the created archive.
 #[tauri::command]
 pub async fn export_backup_zip(state: tauri::State<'_, AppState>) -> Result<String, String> {
-    // 1. Resolve the output path. Fixed location keeps the UI simple
-    //    (no save dialog needed = no extra plugin dep). The user can
-    //    later move the file wherever they want.
+    // Fixed location keeps the UI simple (no save dialog dep). The user
+    // can move the file later. Auto-backup (PR-AR) uses Documents/ via
+    // `write_backup_to` directly — Downloads is the user-action target.
     let downloads = dirs::download_dir()
         .ok_or_else(|| "Impossible de trouver le dossier Téléchargements".to_string())?;
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
     let output_path = downloads.join(format!("getpostcraft-backup-{timestamp}.gpcbak"));
 
-    // 2. Snapshot the live DB. VACUUM INTO requires a literal path —
-    //    parameter binding is not supported in this statement (sqlite
-    //    parses the path at compile time, before any binding). Path
-    //    comes from `temp_dir()` + a deterministic timestamped name,
-    //    no user input ever flows in here, so format-string injection
-    //    is structurally impossible.
+    write_backup_to(&state.db, &output_path).await?;
+    Ok(output_path.to_string_lossy().to_string())
+}
+
+/// Internal API: snapshot the DB into a `.gpcbak` at the caller's path.
+/// Same semantics as `export_backup_zip` minus the Downloads-folder
+/// resolution. Auto-backup writes to Documents through this entry point.
+pub async fn write_backup_to(
+    pool: &sqlx::SqlitePool,
+    output_path: &std::path::Path,
+) -> Result<(), String> {
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+
+    // Snapshot the live DB. VACUUM INTO requires a literal path — sqlite
+    // parses it at compile time before binding, so we can't pass it as a
+    // parameter. Path comes from `temp_dir()` + a deterministic
+    // timestamped name, no user input flows in, format-string injection
+    // is structurally impossible.
     let temp_db = std::env::temp_dir().join(format!("getpostcraft-snapshot-{timestamp}.db"));
-    // SQLite on Windows accepts forward slashes; normalising avoids
-    // backslash escaping headaches in the SQL literal.
     let path_for_sql = temp_db
         .to_string_lossy()
         .replace('\\', "/")
         .replace('\'', "''"); // defense in depth even though path is system-controlled
 
     // RAII guard: deletes the snapshot when the guard drops, including on
-    // panic between VACUUM and `write_archive`. Manual `remove_file` after
-    // a successful read would leak the file if any code in between unwound.
-    // The snapshot contains the full DB (accounts, posts, settings) and we
-    // don't want it lingering in the OS temp dir on a crash.
+    // panic between VACUUM and `write_archive`. The snapshot contains the
+    // full DB and we don't want it lingering in /tmp on a crash.
     struct TempFileGuard<'a>(&'a std::path::Path);
     impl Drop for TempFileGuard<'_> {
         fn drop(&mut self) {
@@ -112,22 +120,16 @@ pub async fn export_backup_zip(state: tauri::State<'_, AppState>) -> Result<Stri
     }
 
     sqlx::query(&format!("VACUUM INTO '{path_for_sql}'"))
-        .execute(&state.db)
+        .execute(pool)
         .await
         .map_err(|e| format!("VACUUM INTO failed: {e}"))?;
 
-    // Guard is constructed AFTER `VACUUM INTO` succeeds — before that,
-    // there's nothing to clean up. From here onwards any early return,
-    // panic, or `?` propagation will trigger the cleanup.
+    // Guard constructed AFTER VACUUM succeeds — before that, nothing to
+    // clean up. Any early return, panic, or `?` from here triggers it.
     let _temp_guard = TempFileGuard(&temp_db);
 
-    // 3. Read the snapshot. The guard handles deletion on the way out.
-    //    A signal-9 kill is still uncoverable without a startup sweep, but
-    //    the panic / `?` paths are now safe.
     let db_bytes = std::fs::read(&temp_db).map_err(|e| format!("Read snapshot: {e}"))?;
 
-    // 4. Manifest with checksum computed over the DB bytes that will
-    //    actually land in the archive — verifies post-extraction.
     let checksum = format!("{:x}", Sha256::digest(&db_bytes));
     let manifest = BackupManifest {
         format: MANIFEST_FORMAT,
@@ -139,11 +141,8 @@ pub async fn export_backup_zip(state: tauri::State<'_, AppState>) -> Result<Stri
     let manifest_json =
         serde_json::to_string_pretty(&manifest).map_err(|e| format!("Serialize manifest: {e}"))?;
 
-    // 5. Write the ZIP. Deflate the .db (mostly text, compresses well),
-    //    flat for the tiny manifest.
-    write_archive(&output_path, &db_bytes, &manifest_json)?;
-
-    Ok(output_path.to_string_lossy().to_string())
+    let path_buf = output_path.to_path_buf();
+    write_archive(&path_buf, &db_bytes, &manifest_json)
 }
 
 /// Pull the ZIP-write step out of the command so it's testable without
@@ -167,6 +166,112 @@ fn write_archive(
         .map_err(|e| e.to_string())?;
 
     zip.finish().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ── Import (PR-AR — first-launch restore) ────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct ImportableManifest {
+    format: String,
+    format_version: u32,
+    checksum_sha256: String,
+}
+
+/// Restore a `.gpcbak` archive over the live database.
+///
+/// Validation order:
+///   1. Open the ZIP and read `manifest.json` → must have format `"gpcbak"`.
+///   2. format_version must be `<= MANIFEST_FORMAT_VERSION` (we don't
+///      know how to read versions newer than this binary).
+///   3. Read `app.db` from the ZIP → SHA-256 must match `checksum_sha256`.
+///
+/// Only after all three pass do we touch the destination. We write the
+/// new bytes to a temp neighbour first and `rename` them into place so
+/// the swap is atomic on every platform — a crash mid-write leaves the
+/// previous DB intact instead of corrupting it.
+///
+/// The caller (the restore-prompt dialog) must call
+/// `tauri::AppHandle::restart` after this returns, because sqlx's pool
+/// is still pointing at the old file's inode/handle.
+#[tauri::command]
+pub async fn import_backup_zip(path: String) -> Result<(), String> {
+    use std::io::Read as _;
+
+    let archive_path = std::path::Path::new(&path);
+    if !archive_path.exists() {
+        return Err(format!("Archive introuvable : {path}"));
+    }
+
+    let file = std::fs::File::open(archive_path).map_err(|e| format!("Open archive: {e}"))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("Parse ZIP: {e}"))?;
+
+    // 1. Manifest.
+    let mut manifest_buf = String::new();
+    zip.by_name("manifest.json")
+        .map_err(|_| "manifest.json absent — ce n'est pas un .gpcbak valide".to_string())?
+        .read_to_string(&mut manifest_buf)
+        .map_err(|e| format!("Read manifest: {e}"))?;
+    let manifest: ImportableManifest =
+        serde_json::from_str(&manifest_buf).map_err(|e| format!("Parse manifest: {e}"))?;
+    if manifest.format != MANIFEST_FORMAT {
+        return Err(format!(
+            "Format inattendu : « {0} » (attendu : « {MANIFEST_FORMAT} »)",
+            manifest.format
+        ));
+    }
+    if manifest.format_version > MANIFEST_FORMAT_VERSION {
+        return Err(format!(
+            "Archive trop récente (v{0}) pour cette version de l'app (v{MANIFEST_FORMAT_VERSION}). \
+             Mets à jour Getpostcraft avant de restaurer.",
+            manifest.format_version
+        ));
+    }
+
+    // 2. DB bytes + checksum.
+    let mut db_bytes = Vec::new();
+    zip.by_name("app.db")
+        .map_err(|_| "app.db absent dans l'archive".to_string())?
+        .read_to_end(&mut db_bytes)
+        .map_err(|e| format!("Read app.db: {e}"))?;
+
+    let actual_checksum = format!("{:x}", Sha256::digest(&db_bytes));
+    if actual_checksum != manifest.checksum_sha256 {
+        return Err(
+            "Checksum SHA-256 invalide — l'archive a été modifiée ou est corrompue.".to_string(),
+        );
+    }
+
+    // 3. Atomic swap.
+    let target_dir = dirs::data_dir()
+        .ok_or("Impossible de résoudre le data dir")?
+        .join("getpostcraft");
+    std::fs::create_dir_all(&target_dir).map_err(|e| format!("Create data dir: {e}"))?;
+
+    // Best-effort cleanup of WAL + SHM so the restored DB starts clean.
+    // sqlx is still holding the old pool — these may be locked. We try
+    // anyway; the caller's `restart()` will release any lingering lock.
+    let target_db = target_dir.join("app.db");
+    let target_wal = target_dir.join("app.db-wal");
+    let target_shm = target_dir.join("app.db-shm");
+
+    let staged = target_dir.join("app.db.import-staged");
+    std::fs::write(&staged, &db_bytes).map_err(|e| format!("Stage restore: {e}"))?;
+
+    // Atomic rename = no half-written final file. On Windows, std::fs::rename
+    // requires the target NOT to exist, so remove first; on Unix, rename
+    // overwrites in one syscall. Either way, the staged file is fully
+    // written before we touch the canonical path.
+    let _ = std::fs::remove_file(&target_wal);
+    let _ = std::fs::remove_file(&target_shm);
+    let _ = std::fs::remove_file(&target_db);
+    std::fs::rename(&staged, &target_db).map_err(|e| format!("Atomic swap: {e}"))?;
+
+    log::info!(
+        "Restore: imported app.db ({} bytes) from {path}",
+        db_bytes.len()
+    );
+
     Ok(())
 }
 
