@@ -24,6 +24,10 @@ pub struct ConnectedAccount {
     pub brand_color: Option<String>,
     pub accent_color: Option<String>,
     pub visual_profile: Option<String>,
+    /// ISO 8601 UTC. NULL = unknown (legacy row or provider that omits
+    /// expires_in). The frontend uses this to render the "expire dans X
+    /// jours" badge and warn before the post-publish silent-401 surfaces.
+    pub token_expires_at: Option<String>,
 }
 
 impl From<crate::db::accounts::Account> for ConnectedAccount {
@@ -38,8 +42,19 @@ impl From<crate::db::accounts::Account> for ConnectedAccount {
             brand_color: a.brand_color,
             accent_color: a.accent_color,
             visual_profile: a.visual_profile,
+            token_expires_at: a.token_expires_at,
         }
     }
+}
+
+/// Convert an `expires_in` (seconds from now) into an absolute RFC 3339 UTC
+/// timestamp. Returns `None` for absent or non-positive values so the DB
+/// stores NULL (= unknown) rather than a meaningless past date.
+fn expires_at_from_secs(expires_in: Option<i64>) -> Option<String> {
+    expires_in
+        .filter(|&s| s > 0)
+        .and_then(|s| chrono::Duration::try_seconds(s).map(|d| chrono::Utc::now() + d))
+        .map(|ts| ts.to_rfc3339())
 }
 
 // ── PKCE helpers ──────────────────────────────────────────────────────────
@@ -247,27 +262,33 @@ pub async fn start_oauth_flow(
     )
     .await?;
 
-    let access_token = match crate::adapters::instagram::exchange_for_long_lived_token(
-        &short_lived,
-        &client_secret,
-    )
-    .await
-    {
-        Ok(token) => {
-            log::info!("Instagram: long-lived token obtained successfully");
-            token
-        }
-        Err(e) => {
-            // `e` is already scrubbed inside `exchange_for_long_lived_token`,
-            // but pass it through `redact_secrets` again as belt-and-braces in
-            // case a future caller forwards a raw upstream body here.
-            let safe = crate::log_redact::redact_secrets(&e);
-            log::warn!(
+    // Long-lived returns (token, expires_in_seconds). When the upgrade fails
+    // we fall back to the short-lived token but mark expiry unknown — the
+    // short-lived expires in ~1 hour anyway and we'd rather have the user
+    // discover that quickly than rely on a fake long-lived expiry.
+    let (access_token, expires_in) =
+        match crate::adapters::instagram::exchange_for_long_lived_token(
+            &short_lived,
+            &client_secret,
+        )
+        .await
+        {
+            Ok((token, expires_in)) => {
+                log::info!("Instagram: long-lived token obtained successfully");
+                (token, expires_in)
+            }
+            Err(e) => {
+                // `e` is already scrubbed inside `exchange_for_long_lived_token`,
+                // but pass it through `redact_secrets` again as belt-and-braces in
+                // case a future caller forwards a raw upstream body here.
+                let safe = crate::log_redact::redact_secrets(&e);
+                log::warn!(
                 "Instagram: long-lived token exchange failed, falling back to short-lived token: {safe}"
             );
-            short_lived
-        }
-    };
+                (short_lived, None)
+            }
+        };
+    let token_expires_at = expires_at_from_secs(expires_in);
 
     // 9. Fetch user profile
     let user_info = crate::adapters::instagram::get_user_info(&access_token).await?;
@@ -276,7 +297,7 @@ pub async fn start_oauth_flow(
     let token_key = format!("instagram:{}", user_info.id);
     crate::token_store::save_token(&token_key, &access_token)?;
 
-    // 11. Save account metadata to SQLite
+    // 11. Save account metadata to SQLite (token itself stays in keyring)
     let account = crate::db::accounts::upsert_and_get(
         &state.db,
         "instagram",
@@ -284,6 +305,7 @@ pub async fn start_oauth_flow(
         &user_info.username,
         user_info.name.as_deref(),
         &token_key,
+        token_expires_at.as_deref(),
     )
     .await?;
 
@@ -470,10 +492,11 @@ pub async fn start_linkedin_oauth_flow(
     .await
     .map_err(|_| "LinkedIn OAuth flow timed out — please try again")??;
 
-    // 8. Exchange code → access token
-    let access_token =
+    // 8. Exchange code → access token + capture expires_in for the badge
+    let (access_token, expires_in) =
         crate::adapters::linkedin::exchange_code(&client_id, &client_secret, &code, &redirect_uri)
             .await?;
+    let token_expires_at = expires_at_from_secs(expires_in);
 
     // 9. Fetch profile (id + name) to build the author URN
     let user_info = crate::adapters::linkedin::get_user_info(&access_token).await?;
@@ -492,6 +515,7 @@ pub async fn start_linkedin_oauth_flow(
         &display_name,
         Some(&display_name),
         &token_key,
+        token_expires_at.as_deref(),
     )
     .await?;
 

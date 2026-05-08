@@ -11,6 +11,12 @@ export interface ConnectedAccount {
   accent_color: string | null;
   /** JSON-encoded VisualProfile (or null). Parse with JSON.parse before use. */
   visual_profile: string | null;
+  /**
+   * ISO 8601 UTC timestamp when the OAuth token expires, or null when
+   * unknown (legacy account or provider that doesn't return expires_in).
+   * Used to render the "expire dans X jours" badge.
+   */
+  token_expires_at: string | null;
 }
 
 export function listAccounts(): Promise<ConnectedAccount[]> {

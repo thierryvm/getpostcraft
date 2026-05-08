@@ -245,6 +245,19 @@ mod migration_tests {
     }
 
     #[tokio::test]
+    async fn accounts_has_token_expires_at_from_migration_014() {
+        // PR-S6 introduces an OAuth token expiry column so the UI can show a
+        // "expire dans X jours" badge before publishes start failing with a
+        // silent 401. Nullable on purpose for legacy rows.
+        let pool = fresh_migrated_pool().await;
+        let cols = table_columns(&pool, "accounts").await;
+        assert!(
+            cols.contains(&"token_expires_at".to_string()),
+            "migration 014 must add token_expires_at column, got: {cols:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn settings_seeded_with_default_provider_and_model() {
         // Migration 001 seeds active_provider + active_model so a fresh install
         // doesn't crash on first AI call. Migrations 005/006/008/010 update the

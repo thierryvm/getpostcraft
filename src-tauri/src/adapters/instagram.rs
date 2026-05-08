@@ -11,8 +11,12 @@ pub struct InstagramUser {
     pub name: Option<String>,
 }
 
-/// Exchange an authorization code for an access token using PKCE.
+/// Exchange an authorization code for a short-lived access token using PKCE.
 /// Meta requires client_secret even when using PKCE (non-standard but enforced).
+///
+/// Returns just the token. Short-lived tokens last ~1 hour and the caller
+/// always upgrades to a long-lived token immediately, so the expires_in for
+/// this endpoint is informational and not propagated.
 pub async fn exchange_code(
     client_id: &str,
     client_secret: &str,
@@ -75,6 +79,11 @@ pub async fn exchange_code(
 /// Exchange a short-lived token for a long-lived token (valid ~60 days).
 /// Must be called right after exchange_code — short-lived tokens expire in 1-2 hours.
 ///
+/// Returns `(access_token, expires_in_seconds)`. Meta returns
+/// `expires_in: 5184000` (60 days) on this endpoint. PR-S6 captures this
+/// to surface a "expire dans X jours" badge and refuse publish attempts
+/// past expiry instead of letting a silent 401 confuse the user.
+///
 /// Endpoint: GET https://graph.instagram.com/access_token
 ///   ?grant_type=ig_exchange_token
 ///   &client_secret={secret}
@@ -82,10 +91,15 @@ pub async fn exchange_code(
 pub async fn exchange_for_long_lived_token(
     short_lived_token: &str,
     client_secret: &str,
-) -> Result<String, String> {
+) -> Result<(String, Option<i64>), String> {
     #[derive(Deserialize)]
     struct LongLivedResponse {
         access_token: String,
+        /// Per the Meta docs this is always returned for long-lived tokens
+        /// (5184000 = 60 days). Defensive `Option` in case Meta's response
+        /// shape ever drifts.
+        #[serde(default)]
+        expires_in: Option<i64>,
     }
 
     log::info!("Instagram: requesting long-lived token from {LONG_LIVED_URL}");
@@ -115,7 +129,7 @@ pub async fn exchange_for_long_lived_token(
         .await
         .map_err(|e| format!("Failed to parse long-lived token response: {e}"))?;
 
-    Ok(token.access_token)
+    Ok((token.access_token, token.expires_in))
 }
 
 /// Fetch basic profile info for the authenticated user.
