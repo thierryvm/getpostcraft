@@ -6,6 +6,7 @@ import { AccountsForm } from "@/components/settings/AccountsForm";
 import { PublicationForm } from "@/components/settings/PublicationForm";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { LogsPanel } from "@/components/settings/LogsPanel";
+import { BackupSection } from "@/components/settings/BackupSection";
 
 export function SettingsPage() {
   const { tab } = useSearch({ from: "/settings" });
@@ -29,6 +30,7 @@ export function SettingsPage() {
           <TabsTrigger value="ai">Intelligence Artificielle</TabsTrigger>
           <TabsTrigger value="accounts">Comptes</TabsTrigger>
           <TabsTrigger value="publication">Publication</TabsTrigger>
+          <TabsTrigger value="data">Données</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="about">À propos</TabsTrigger>
         </TabsList>
@@ -72,6 +74,22 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent>
               <PublicationForm />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="data" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Sauvegarde et portabilité</CardTitle>
+              <CardDescription>
+                Exporte tes données dans un format ouvert. Anti-lock-in : tu peux
+                ouvrir l'archive avec n'importe quel outil et explorer la base
+                directement avec sqlite3.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <BackupSection />
             </CardContent>
           </Card>
         </TabsContent>
