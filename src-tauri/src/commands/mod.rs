@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod auto_backup;
 pub mod calendar;
 pub mod data_export;
 pub mod logs;

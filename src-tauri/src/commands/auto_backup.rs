@@ -199,13 +199,17 @@ mod tests {
         assert_eq!(KEEP_DAILY, 7);
     }
 
+    // Compile-time guard: the < 24h sanity check belongs at the type level,
+    // not in a runtime test (clippy rightly flags `assert!(CONST < CONST)`
+    // as tautological). A `const _: () =` block runs at compile time and
+    // breaks the build if anyone ever bumps MIN_AGE_SECS past a day.
+    const _: () = assert!(MIN_AGE_SECS < 24 * 3600);
+
     #[test]
     fn min_age_is_close_to_one_day() {
-        // Same intent — we want roughly daily, slightly under so the user
-        // launching at 9 a.m. every day still gets a fresh one. Hard
-        // assertion to catch accidental swaps to seconds vs hours.
+        // Documents the exact value as a regression guard against accidental
+        // swaps between seconds, minutes, hours when bumping the cadence.
         assert_eq!(MIN_AGE_SECS, 23 * 3600);
-        assert!(MIN_AGE_SECS < 24 * 3600);
     }
 
     #[tokio::test]
@@ -220,7 +224,10 @@ mod tests {
             .run(&pool)
             .await
             .unwrap();
-        assert!(is_db_fresh(&pool).await, "fresh DB after migrations is empty");
+        assert!(
+            is_db_fresh(&pool).await,
+            "fresh DB after migrations is empty"
+        );
     }
 
     #[tokio::test]
@@ -242,7 +249,10 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        assert!(!is_db_fresh(&pool).await, "account row must mark DB non-fresh");
+        assert!(
+            !is_db_fresh(&pool).await,
+            "account row must mark DB non-fresh"
+        );
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { HelpSheet } from "@/components/shared/HelpSheet";
+import { RestorePromptDialog } from "@/components/RestorePromptDialog";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/ui.store";
 import { cn } from "@/lib/utils";
@@ -131,6 +132,10 @@ export function RootLayout() {
       <main className="flex flex-1 flex-col overflow-auto">
         <Outlet />
       </main>
+
+      {/* First-launch restore prompt — surfaces only when DB is fresh
+          AND a `.gpcbak` exists in Documents/Getpostcraft/backups/. */}
+      <RestorePromptDialog />
     </div>
     </TooltipProvider>
   );
