@@ -48,10 +48,20 @@ pub async fn exchange_code(
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
+        // Try to surface the structured error message first; if Meta echoes
+        // anything secret-looking in the fallback raw body, scrub it before
+        // bubbling the message up (it can land in user-visible error toasts
+        // and crash reports).
         if let Ok(err) = serde_json::from_str::<ErrorResponse>(&body) {
-            return Err(err.error_message.or(err.error_description).unwrap_or(body));
+            return Err(err
+                .error_message
+                .or(err.error_description)
+                .unwrap_or_else(|| crate::log_redact::redact_secrets(&body)));
         }
-        return Err(format!("Token exchange failed: {body}"));
+        return Err(format!(
+            "Token exchange failed: {}",
+            crate::log_redact::redact_secrets(&body)
+        ));
     }
 
     let token: TokenResponse = resp
@@ -95,8 +105,9 @@ pub async fn exchange_for_long_lived_token(
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        log::warn!("Instagram: long-lived token exchange returned HTTP {status}: {body}");
-        return Err(format!("Long-lived token exchange failed: {body}"));
+        let safe_body = crate::log_redact::redact_secrets(&body);
+        log::warn!("Instagram: long-lived token exchange returned HTTP {status}: {safe_body}");
+        return Err(format!("Long-lived token exchange failed: {safe_body}"));
     }
 
     let token: LongLivedResponse = resp
