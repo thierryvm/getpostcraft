@@ -27,4 +27,16 @@ The Business Source License (this document) is not an Open Source license.
 However, the Licensed Work will eventually be made available under the
 Change License (MIT) on the Change Date.
 
-License text: https://mariadb.com/bsl11/
+The full Business Source License 1.1 text is available at:
+https://mariadb.com/bsl11/
+
+In short:
+- You may read, fork, modify, and run the Licensed Work for personal use.
+- You may NOT use the Licensed Work to provide a competing service to a
+  third party.
+- You may NOT distribute compiled binaries or hosted instances of the
+  Licensed Work for production use without a separate commercial license.
+- On the Change Date (April 11, 2030), the Licensed Work converts to the
+  Change License (MIT) automatically — no further restrictions.
+
+For commercial licensing arrangements, contact thierry@getpostcraft.app.
