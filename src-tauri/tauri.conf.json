@@ -38,7 +38,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "resources": [
+      "../sidecar/main.py",
+      "../sidecar/ai_client.py",
+      "../sidecar/render.py",
+      "../sidecar/scraper.py",
+      "../sidecar/requirements.txt"
+    ]
   },
   "plugins": {
     "updater": {

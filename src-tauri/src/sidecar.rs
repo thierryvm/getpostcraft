@@ -15,9 +15,56 @@ const PYTHON: &str = "python3";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Locate `sidecar/main.py` at runtime.
+///
+/// `env!("CARGO_MANIFEST_DIR")` resolves at *compile* time. In dev mode
+/// that's the project root and works fine. In CI-built binaries it
+/// expands to the GitHub Actions runner path (e.g.
+/// `D:\a\getpostcraft\getpostcraft\src-tauri`) which obviously doesn't
+/// exist on the user's machine — we shipped this bug in v0.3.x and the
+/// owner hit it on `analyze_url_visual` (2026-05-08).
+///
+/// Strategy: try a list of candidates and return the first that exists.
+/// The dev path stays first so `npm run tauri dev` keeps working without
+/// re-bundling resources every change.
+///
+/// Production layout (Tauri 2 puts `bundle.resources` under
+/// `{install}/resources/`, prefixing relative `..` paths with `_up_`):
+///   - Windows MSI/NSIS:  `{install}/resources/_up_/sidecar/main.py`
+///   - macOS .app:        `{App}/Contents/Resources/_up_/sidecar/main.py`
+///   - Linux AppImage:    `{install}/resources/_up_/sidecar/main.py`
 fn sidecar_script() -> std::path::PathBuf {
-    let raw = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.py");
-    raw.canonicalize().unwrap_or(raw)
+    use std::path::PathBuf;
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 1. Dev mode — alongside the source tree.
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.py"));
+
+    // 2. Production — relative to the running executable.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // Tauri's `_up_` mangling for resources whose source path
+            // starts with `..` — see Tauri 2 bundle docs.
+            candidates.push(dir.join("resources/_up_/sidecar/main.py"));
+            // Same shape without the mangle — covers older Tauri versions
+            // and any future change to the convention.
+            candidates.push(dir.join("resources/sidecar/main.py"));
+            // macOS .app bundles place the binary in Contents/MacOS/
+            // and resources in Contents/Resources/.
+            candidates.push(dir.join("../Resources/_up_/sidecar/main.py"));
+            candidates.push(dir.join("../Resources/sidecar/main.py"));
+        }
+    }
+
+    // First existing wins. Falls back to the dev path so the error
+    // surfaced downstream still mentions a sensible-looking location
+    // for diagnostics rather than nothing.
+    candidates
+        .iter()
+        .find(|p| p.exists())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone())
 }
 
 // ── AI generation request / response ─────────────────────────────────────────
