@@ -1,8 +1,26 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, Database, FileJson, FolderOpen, Loader2 } from "lucide-react";
+import { AlertTriangle, Database, FileJson, FolderOpen, Loader2, X } from "lucide-react";
 import { exportBackupZip, exportPortableZip } from "@/lib/tauri/dataExport";
+
+/** localStorage key for the dismiss-state of the pre-uninstall banner. */
+const UNINSTALL_BANNER_DISMISSED_KEY = "gpc.uninstallWarning.dismissed";
+
+/**
+ * The "Remove user data" trap is a Windows NSIS-uninstaller behaviour. macOS
+ * `.app` and Linux .deb / AppImage uninstalls have no equivalent prompt — they
+ * leave the user data dir alone. Showing the banner there would only confuse.
+ *
+ * We sniff `navigator.userAgent` rather than calling the Tauri `os` plugin to
+ * avoid the extra permission/dependency: this is a UX-only check, not a
+ * security gate, and userAgent is reliable enough for "is this a Windows
+ * webview".
+ */
+function isWindowsHost(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Windows/i.test(navigator.userAgent);
+}
 
 /**
  * Settings section that lets the user export their local data in two
@@ -20,6 +38,26 @@ export function BackupSection() {
   const [busyKind, setBusyKind] = useState<"backup" | "portable" | null>(null);
   const [exportedPath, setExportedPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Banner is Windows-only (NSIS-specific issue) and dismissible: once the
+  // user has read it, they shouldn't keep paying vertical real estate every
+  // visit to this tab. Dismiss state persists across launches via localStorage.
+  const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(UNINSTALL_BANNER_DISMISSED_KEY) === "true";
+  });
+
+  function dismissBanner() {
+    setBannerDismissed(true);
+    try {
+      window.localStorage.setItem(UNINSTALL_BANNER_DISMISSED_KEY, "true");
+    } catch {
+      // localStorage can be disabled (private mode in some browsers); the
+      // in-memory dismiss still hides the banner for this session.
+    }
+  }
+
+  const showUninstallBanner = isWindowsHost() && !bannerDismissed;
 
   async function runExport(kind: "backup" | "portable") {
     setBusyKind(kind);
@@ -55,21 +93,41 @@ export function BackupSection() {
 
   return (
     <div className="space-y-5">
-      {/* Pre-uninstall warning — the Windows NSIS uninstaller offers
-          "Remove user data" enabled by default, which wipes app.db AND the
-          OS keychain entries. Make the safety net visible. */}
-      <div className="rounded border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-3">
-        <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-400 shrink-0" />
-        <div className="text-xs text-amber-100/90 space-y-1">
-          <p className="font-medium text-amber-300">Avant de désinstaller : exporte une sauvegarde</p>
-          <p>
-            L'option « Remove user data » du désinstalleur Windows efface ta
-            base locale ET tes clés du trousseau système (impossible à
-            récupérer). Un export <code className="px-1 py-0.5 rounded bg-black/20">.gpcbak</code>{" "}
-            te permet de tout restaurer.
-          </p>
+      {/* Pre-uninstall warning — Windows-only because the NSIS "Remove user
+          data" prompt is the source of the data-loss incident; macOS and
+          Linux uninstalls don't have an equivalent. `role="alert"` so screen
+          readers announce the warning instead of silently presenting it as
+          a normal block. Dismissible — once the user has read it, the
+          state persists in localStorage so subsequent visits don't waste
+          vertical space. */}
+      {showUninstallBanner && (
+        <div
+          role="alert"
+          className="rounded border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-3"
+        >
+          <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-400 shrink-0" aria-hidden="true" />
+          <div className="text-xs text-amber-100/90 space-y-1 flex-1">
+            <p className="font-medium text-amber-300">
+              Avant de désinstaller : exporte une sauvegarde
+            </p>
+            <p>
+              L'option « Remove user data » du désinstalleur Windows efface ta
+              base locale ET tes clés du trousseau système (impossible à
+              récupérer). Un export{" "}
+              <code className="px-1 py-0.5 rounded bg-black/20">.gpcbak</code>{" "}
+              te permet de tout restaurer.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={dismissBanner}
+            aria-label="Masquer cet avertissement"
+            className="text-amber-400/70 hover:text-amber-300 transition-colors shrink-0"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
-      </div>
+      )}
 
       <p className="text-sm text-muted-foreground">
         <span className="font-medium text-foreground">Exclu volontairement</span> des
