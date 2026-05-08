@@ -50,15 +50,23 @@ impl LinkedInUser {
 /// Exchange an authorization code for a LinkedIn access token.
 /// LinkedIn confidential clients use client_secret only — PKCE code_verifier is
 /// not supported for apps that have a client_secret (public-client flow only).
+/// Returns `(access_token, expires_in_seconds)`. LinkedIn typically issues
+/// 60-day tokens (5184000 s) but the value can vary by app type, so we
+/// trust whatever the response says rather than assume.
 pub async fn exchange_code(
     client_id: &str,
     client_secret: &str,
     code: &str,
     redirect_uri: &str,
-) -> Result<String, String> {
+) -> Result<(String, Option<i64>), String> {
     #[derive(Deserialize)]
     struct TokenResponse {
         access_token: String,
+        /// LinkedIn returns this on every successful exchange. Optional in
+        /// our type for defensive parsing; if the field disappears we'd
+        /// rather log a missing-expiry account than fail the whole login.
+        #[serde(default)]
+        expires_in: Option<i64>,
     }
 
     #[derive(Deserialize)]
@@ -99,7 +107,7 @@ pub async fn exchange_code(
         .await
         .map_err(|e| format!("Failed to parse LinkedIn token response: {e}"))?;
 
-    Ok(token.access_token)
+    Ok((token.access_token, token.expires_in))
 }
 
 // ── User info ──────────────────────────────────────────────────────────────

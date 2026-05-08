@@ -18,10 +18,17 @@ pub struct Account {
     /// Shape: see migration 012. Read by the post generation flow as a
     /// secondary style hint on top of `product_truth`. None = no analysis run.
     pub visual_profile: Option<String>,
+    /// ISO 8601 / RFC 3339 UTC timestamp when the OAuth access token in
+    /// the keyring will expire. NULL on legacy rows (created before
+    /// migration 014) or providers that don't return `expires_in` —
+    /// the publish flow then falls back to the upstream-API behaviour
+    /// (silent 401 from Meta/LinkedIn) until the user reconnects.
+    pub token_expires_at: Option<String>,
 }
 
 const SELECT_COLUMNS: &str = "id, provider, user_id, username, display_name, token_key, \
-     created_at, updated_at, product_truth, brand_color, accent_color, visual_profile";
+     created_at, updated_at, product_truth, brand_color, accent_color, visual_profile, \
+     token_expires_at";
 
 fn row_to_account(row: &SqliteRow) -> Account {
     Account {
@@ -37,6 +44,7 @@ fn row_to_account(row: &SqliteRow) -> Account {
         brand_color: row.get("brand_color"),
         accent_color: row.get("accent_color"),
         visual_profile: row.try_get("visual_profile").ok().flatten(),
+        token_expires_at: row.try_get("token_expires_at").ok().flatten(),
     }
 }
 
@@ -63,15 +71,18 @@ pub async fn upsert_and_get(
     username: &str,
     display_name: Option<&str>,
     token_key: &str,
+    token_expires_at: Option<&str>,
 ) -> Result<Account, String> {
     let sql = format!(
-        "INSERT INTO accounts (provider, user_id, username, display_name, token_key, updated_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'))
+        "INSERT INTO accounts (provider, user_id, username, display_name, token_key, \
+                               token_expires_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
          ON CONFLICT(provider, user_id) DO UPDATE SET
-             username     = excluded.username,
-             display_name = excluded.display_name,
-             token_key    = excluded.token_key,
-             updated_at   = excluded.updated_at
+             username         = excluded.username,
+             display_name     = excluded.display_name,
+             token_key        = excluded.token_key,
+             token_expires_at = excluded.token_expires_at,
+             updated_at       = excluded.updated_at
          RETURNING {SELECT_COLUMNS}",
     );
     let row = sqlx::query(&sql)
@@ -80,6 +91,7 @@ pub async fn upsert_and_get(
         .bind(username)
         .bind(display_name)
         .bind(token_key)
+        .bind(token_expires_at)
         .fetch_one(pool)
         .await
         .map_err(|e| e.to_string())?;

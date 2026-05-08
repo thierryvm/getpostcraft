@@ -16,6 +16,7 @@ import {
 } from "@/lib/tauri/oauth";
 import { ProductTruthEditor } from "./ProductTruthEditor";
 import { BrandColorsEditor } from "./BrandColorsEditor";
+import { TokenExpiryBadge } from "./TokenExpiryBadge";
 import type { ConnectedAccount } from "@/lib/tauri/oauth";
 
 export function LinkedInSection({ account }: { account: ConnectedAccount | undefined }) {
@@ -86,9 +87,12 @@ export function LinkedInSection({ account }: { account: ConnectedAccount | undef
                 <User className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-sm font-medium text-foreground">
-                  {account.display_name ?? account.username}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-foreground">
+                    {account.display_name ?? account.username}
+                  </p>
+                  <TokenExpiryBadge expiresAt={account.token_expires_at} />
+                </div>
                 <p className="text-xs text-muted-foreground">LinkedIn</p>
               </div>
             </div>

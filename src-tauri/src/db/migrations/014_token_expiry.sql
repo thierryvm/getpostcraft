@@ -1,0 +1,29 @@
+-- Capture when each connected account's OAuth token will expire so we can
+-- warn the user before publishing fails with a silent 401.
+--
+-- ## Why this is needed
+--
+-- Both Instagram (long-lived, ~60 days) and LinkedIn (typically 60 days)
+-- issue tokens that expire silently. Until now the publish flow would
+-- discover expiry only when the upstream API returned 401, with no
+-- actionable hint to the user — the post just failed.
+--
+-- Storing the expiry timestamp lets us:
+--   1. Display a "expire dans X jours" badge in the account list,
+--      colour-coded by urgency.
+--   2. Refuse a publish attempt with a clear "reconnecte le compte"
+--      error when the token is already past its expiry.
+--
+-- Nullable on purpose:
+--   - Existing rows have no captured expiry; the publish flow falls back
+--     to the upstream-API behaviour (silent 401 like before) until the
+--     user reconnects, at which point the new value is captured.
+--   - Some flows (manual token paste, future providers) may not return
+--     `expires_in` in their token response — null then means "unknown,
+--     don't gate publishes on this".
+--
+-- Stored as ISO 8601 / RFC 3339 UTC text so it stays human-readable when
+-- inspecting the DB directly with `sqlite3`. Comparisons on TEXT work
+-- correctly for ISO 8601 because the lexicographic order matches the
+-- chronological order.
+ALTER TABLE accounts ADD COLUMN token_expires_at TEXT;
