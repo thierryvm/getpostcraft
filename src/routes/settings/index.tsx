@@ -7,6 +7,7 @@ import { PublicationForm } from "@/components/settings/PublicationForm";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { LogsPanel } from "@/components/settings/LogsPanel";
 import { BackupSection } from "@/components/settings/BackupSection";
+import { AiUsagePanel } from "@/components/settings/AiUsagePanel";
 
 export function SettingsPage() {
   const { tab } = useSearch({ from: "/settings" });
@@ -35,7 +36,7 @@ export function SettingsPage() {
           <TabsTrigger value="about">À propos</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="ai" className="mt-4">
+        <TabsContent value="ai" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Clé API (BYOK)</CardTitle>
@@ -47,6 +48,19 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent>
               <AiKeyForm />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Coût d'utilisation</CardTitle>
+              <CardDescription>
+                Compteur de tokens et coût estimé sur les 30 derniers jours.
+                Données stockées localement, jamais transmises.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AiUsagePanel />
             </CardContent>
           </Card>
         </TabsContent>

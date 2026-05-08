@@ -123,6 +123,54 @@ pub fn inject_product_truth(base_prompt: &str, product_truth: Option<&str>) -> S
     }
 }
 
+/// Pricing table for the AI cost tracker (USD per million tokens).
+///
+/// Prices captured 2026-05-08 from each provider's published rate. Static
+/// because price changes are infrequent enough to ship in a normal release;
+/// the cost tracker recomputes from stored token counts so old data
+/// re-prices automatically when this map is updated.
+///
+/// `(input_per_million, output_per_million)` — Anthropic charges asymmetric
+/// rates so we keep both. Same shape for OpenRouter's pass-through pricing.
+fn pricing_map() -> &'static [(&'static str, f64, f64)] {
+    // Match by *suffix substring* on the model ID — providers prefix with
+    // "anthropic/", "openai/", etc. and we want one entry per model family.
+    &[
+        // Anthropic — direct + via OpenRouter
+        ("claude-haiku-latest", 1.00, 5.00),
+        ("claude-haiku-4.5", 1.00, 5.00),
+        ("claude-haiku-4-5", 1.00, 5.00),
+        ("claude-sonnet-4.6", 3.00, 15.00),
+        ("claude-sonnet-4-6", 3.00, 15.00),
+        ("claude-opus-4.7", 15.00, 75.00),
+        ("claude-opus-4.6-fast", 15.00, 75.00),
+        // OpenAI — via OpenRouter
+        ("gpt-4o-mini", 0.15, 0.60),
+        ("gpt-4o", 5.00, 15.00),
+        // DeepSeek
+        ("deepseek-chat", 0.14, 0.28),
+        // Google
+        ("gemini-2.0-flash", 0.075, 0.30),
+        // Mistral
+        ("mistral-small-3.1-24b", 0.20, 0.60),
+    ]
+}
+
+/// Returns `(input_usd_per_million, output_usd_per_million, estimated)` for
+/// the given model ID. `estimated = true` when no entry matched and we fell
+/// back to a conservative default — the UI surfaces this as an approximation
+/// flag so users know the figure isn't authoritative.
+pub fn price_for(model: &str) -> (f64, f64, bool) {
+    for (key, p_in, p_out) in pricing_map() {
+        if model.contains(key) {
+            return (*p_in, *p_out, false);
+        }
+    }
+    // Fallback: roughly mid-tier OpenAI rates so unknown OpenRouter models
+    // don't read as suspiciously cheap. Marked estimated.
+    (0.50, 2.00, true)
+}
+
 /// Returns a tone-specific system prompt enriched with the account's product truth.
 pub fn get_variant_prompt_with_truth(
     network: &str,
@@ -702,6 +750,61 @@ mod tests {
             p.contains("inventé") || p.contains("inventer"),
             "self-check must explicitly cover number/fact invention"
         );
+    }
+
+    // ── Pricing map (PR cost-tracker) ─────────────────────────────────
+
+    #[test]
+    fn price_for_known_anthropic_models() {
+        // Sonnet 4.6 — the recommended default. Pricing is canonical
+        // ($3 / $15 per million tokens) so a regression here would silently
+        // miscompute every Sonnet user's cost panel.
+        let (inp, out, est) = price_for("anthropic/claude-sonnet-4.6");
+        assert_eq!(inp, 3.00);
+        assert_eq!(out, 15.00);
+        assert!(!est, "known model must not be flagged as estimated");
+    }
+
+    #[test]
+    fn price_for_known_openai_models() {
+        let (inp, out, est) = price_for("openai/gpt-4o-mini");
+        assert_eq!(inp, 0.15);
+        assert_eq!(out, 0.60);
+        assert!(!est);
+    }
+
+    #[test]
+    fn price_for_unknown_model_falls_back_with_estimated_flag() {
+        // Conservative fallback so unknown OpenRouter models don't read as
+        // suspiciously cheap. The UI uses the estimated flag to mark the
+        // figure as approximate.
+        let (inp, out, est) = price_for("freshly-released/unknown-model-123");
+        assert_eq!(inp, 0.50);
+        assert_eq!(out, 2.00);
+        assert!(est, "unknown model must be flagged as estimated");
+    }
+
+    #[test]
+    fn price_for_handles_provider_prefixed_ids() {
+        // Same family across providers: anthropic native vs OpenRouter
+        // pass-through both resolve to identical pricing.
+        let (inp_native, out_native, _) = price_for("claude-sonnet-4.6");
+        let (inp_or, out_or, _) = price_for("anthropic/claude-sonnet-4.6");
+        assert_eq!(inp_native, inp_or);
+        assert_eq!(out_native, out_or);
+    }
+
+    #[test]
+    fn pricing_input_is_strictly_lower_than_output_for_anthropic() {
+        // Anthropic always charges ~5x more for output than input. If we
+        // ever swap the columns by accident the user sees an inverted bill.
+        for model in ["claude-sonnet-4.6", "claude-opus-4.7", "claude-haiku-4.5"] {
+            let (inp, out, _) = price_for(model);
+            assert!(
+                out > inp,
+                "{model}: output ({out}) must cost more than input ({inp})"
+            );
+        }
     }
 
     #[test]

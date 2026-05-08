@@ -5,6 +5,7 @@ use sqlx::{
 use std::str::FromStr;
 
 pub mod accounts;
+pub mod ai_usage;
 pub mod history;
 pub mod settings_db;
 
@@ -242,6 +243,32 @@ mod migration_tests {
         .execute(&pool)
         .await
         .expect("insert post must succeed against post-013 schema");
+    }
+
+    #[tokio::test]
+    async fn ai_usage_table_exists_after_migration_015() {
+        // Cost tracker depends on this table being present from boot. The
+        // smoke insert below confirms the schema accepts the shape Rust
+        // writes — catches things like a NOT NULL on a column we'd want
+        // to leave nullable.
+        let pool = fresh_migrated_pool().await;
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='ai_usage'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query master");
+        assert_eq!(count, 1, "migration 015 must create the ai_usage table");
+
+        // Functional smoke — the Rust insert path runs against this schema.
+        sqlx::query(
+            "INSERT INTO ai_usage (occurred_at, provider, model, action, input_tokens, output_tokens) \
+             VALUES ('2026-05-08T12:00:00Z', 'openrouter', 'anthropic/claude-sonnet-4.6', \
+                     'generate_content', 1234, 567)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert into ai_usage must succeed");
     }
 
     #[tokio::test]
