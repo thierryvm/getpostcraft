@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
-import { Database, FileJson, FolderOpen, Loader2 } from "lucide-react";
+import { AlertTriangle, Database, FileJson, FolderOpen, Loader2 } from "lucide-react";
 import { exportBackupZip, exportPortableZip } from "@/lib/tauri/dataExport";
 
 /**
@@ -55,6 +55,22 @@ export function BackupSection() {
 
   return (
     <div className="space-y-5">
+      {/* Pre-uninstall warning — the Windows NSIS uninstaller offers
+          "Remove user data" enabled by default, which wipes app.db AND the
+          OS keychain entries. Make the safety net visible. */}
+      <div className="rounded border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-3">
+        <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-400 shrink-0" />
+        <div className="text-xs text-amber-100/90 space-y-1">
+          <p className="font-medium text-amber-300">Avant de désinstaller : exporte une sauvegarde</p>
+          <p>
+            L'option « Remove user data » du désinstalleur Windows efface ta
+            base locale ET tes clés du trousseau système (impossible à
+            récupérer). Un export <code className="px-1 py-0.5 rounded bg-black/20">.gpcbak</code>{" "}
+            te permet de tout restaurer.
+          </p>
+        </div>
+      </div>
+
       <p className="text-sm text-muted-foreground">
         <span className="font-medium text-foreground">Exclu volontairement</span> des
         deux formats : tes clés API et tokens OAuth. Ils restent dans le
