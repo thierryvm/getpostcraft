@@ -234,7 +234,7 @@ Full terms: [`LICENSE`](LICENSE) — commercial inquiries: thierry@getpostcraft.
 
 <div align="center">
 
-Built solo by [Thierry Van Malderen](https://github.com/thierryvm) ·
+Built solo by [Thierry Vanmeeteren](https://github.com/thierryvm) ·
 Belgium · 2026.
 
 If Getpostcraft helps you ship better posts, a star here means a lot.

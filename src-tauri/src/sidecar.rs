@@ -5,18 +5,53 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::{timeout, Duration};
 
 /// Find a working Python interpreter once and cache it for the rest of
-/// the process lifetime. Tries `python3`, then `python`, then `py` (the
-/// Windows launcher). The order matters on Windows 11: `python` without
-/// any install resolves to the Microsoft Store *stub*, which prints a
-/// "open Store" message and exits non-zero — every sidecar call would
-/// fail silently with no clue why. `python3` and `py` are not stub-shadowed.
+/// the process lifetime.
+///
+/// Two-pass probe to handle the Windows MS Store stub trap. On Windows 11
+/// a user can have `python3` AND `python` both on PATH, with one
+/// resolving to the Store stub (fake Python — runs `--version` but has
+/// no real install or site-packages) and the other to a real install
+/// with the sidecar packages.
+///
+/// Pass 1 — pick the interpreter that can `import openai, anthropic,
+/// playwright`. That's necessarily the one with packages we need.
+/// Order doesn't matter here: only one will satisfy.
+///
+/// Pass 2 — fallback when no interpreter has the packages yet (fresh
+/// install). Falls back to `--version` and picks the first that
+/// responds. The in-app `install_python_deps` command (Settings → IA)
+/// then bootstraps the packages into that interpreter.
+///
+/// 2026-05-08 incident: v0.3.4 cached `python3` from `--version` even
+/// though it was the Store stub on the owner's machine, then sidecar
+/// imports failed with `ModuleNotFoundError: No module named 'openai'`
+/// even after the user pip-installed against `python` (real install).
+/// Pass 1 catches the right interpreter the FIRST time.
 fn python_executable() -> &'static str {
     static CACHED: OnceLock<&'static str> = OnceLock::new();
     CACHED.get_or_init(|| {
-        for candidate in ["python3", "python", "py"] {
-            // `--version` is a cheap, side-effect-free check supported by
-            // every Python ≥ 2. The MS Store stub returns 9009 (or just
-            // prints the install prompt to stderr) — `success()` is false.
+        let candidates = ["python", "python3", "py"];
+
+        // Pass 1 — interpreter with the sidecar packages already installed.
+        for candidate in candidates {
+            let ok = std::process::Command::new(candidate)
+                .arg("-c")
+                .arg("import openai, anthropic, playwright")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok {
+                log::info!("sidecar: using Python `{candidate}` (packages OK)");
+                return candidate;
+            }
+        }
+
+        // Pass 2 — packages not yet installed. Pick any working Python so
+        // the in-app installer has a target. MS Store stub fails `--version`
+        // too on most Windows configs, so we still skip it.
+        for candidate in candidates {
             let ok = std::process::Command::new(candidate)
                 .arg("--version")
                 .stdout(Stdio::null())
@@ -25,14 +60,15 @@ fn python_executable() -> &'static str {
                 .map(|s| s.success())
                 .unwrap_or(false);
             if ok {
-                log::info!("sidecar: using Python interpreter `{candidate}`");
+                log::warn!(
+                    "sidecar: using Python `{candidate}` (packages MISSING — run \
+                     install_python_deps from Settings → IA)"
+                );
                 return candidate;
             }
         }
-        log::warn!("sidecar: no working Python found in PATH (python3, python, py all failed)");
-        // Fall back to "python3" so the eventual error message names a
-        // reasonable command for diagnostic purposes. The user-facing
-        // error path already mentions "is Python installed and in PATH?".
+
+        log::error!("sidecar: no working Python found in PATH (python, python3, py all failed)");
         "python3"
     })
 }

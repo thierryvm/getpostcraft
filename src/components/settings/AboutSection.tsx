@@ -67,7 +67,7 @@ export function AboutSection() {
         <p className="text-xs text-muted-foreground">
           Usage personnel uniquement jusqu'au 11 avril 2030, puis MIT.
           <br />
-          © 2026 Thierry Van Malderen — tous droits réservés.
+          © 2026 Thierry Vanmeeteren — tous droits réservés.
         </p>
       </div>
 
