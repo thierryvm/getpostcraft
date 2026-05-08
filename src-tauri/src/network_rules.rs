@@ -90,7 +90,13 @@ pub fn get_carousel_prompt(network: &str, slide_count: u8) -> String {
          (é è ê à â î ô û ç œ æ). \"evite\" au lieu de \"évite\" est une ERREUR.\n\n\
          NE PAS INVENTER DE CHIFFRES NI DE FAITS — tout chiffre/fonctionnalité \
          cité doit provenir explicitement du brief ou du bloc BRAND IDENTITY. \
-         Si l'info n'est pas fournie, reformule en termes généraux."
+         Si l'info n'est pas fournie, reformule en termes généraux.\n\n\
+         AI-TELLS À BANNIR : pas de \"plongeons dans\", \"explorons\", \"décortiquons\", \
+         \"a révolutionné\", \"incontournable\", \"voici tout ce que vous devez savoir\". \
+         Si l'un apparaît, réécris la slide.\n\n\
+         AUTO-VÉRIFICATION AVANT DE RÉPONDRE : pour chaque slide, vérifie que (1) le titre \
+         tient en 8 mots max, (2) le body évite les AI-tells, (3) aucun chiffre n'est inventé, \
+         (4) tous les accents français sont en place. Si une vérification échoue, recommence."
     )
 }
 
@@ -128,6 +134,10 @@ pub fn get_variant_prompt_with_truth(
         "educational" => "TON : pédagogique et informatif. Explique clairement, donne des exemples concrets, valeur ajoutée maximale. Commence par 'Savais-tu que…' ou 'Astuce :' ou une question rhétorique.",
         "casual"      => "TON : décontracté et humain. Parle comme à un ami. Anecdote personnelle bienvenue. Pas de jargon inutile.",
         "punchy"      => "TON : percutant et direct. Hook choc en première ligne, phrases courtes, rythme rapide. Crée un sentiment d'urgence ou de curiosité.",
+        // Story = LinkedIn's highest-engagement format per the 2026 algo research
+        // (saved in memory as `reference_viral_posts_research.md`). A first-person
+        // narrative with a specific moment + lesson outperforms listicles.
+        "story"       => "TON : storytelling à la première personne. Choisis UN moment précis (date, lieu, action concrète), raconte ce qui s'est passé en 3-5 paragraphes courts, finis sur la leçon retenue. PAS de \"il était une fois\" ni de fiction — du vécu réel ancré dans la BRAND IDENTITY.",
         _             => "TON : neutre et professionnel.",
     };
     format!("{base}\n\nINSTRUCTION SUPPLÉMENTAIRE POUR CETTE VARIANTE :\n{instruction}")
@@ -209,6 +219,27 @@ Si tu hésites sur un fait → omets-le ou demande de précision dans le post lu
 - Pas de hooks génériques comme "X est incroyable"
 - Pas de liste à puces dans la caption
 - Pas de promesses vagues — chaque claim doit être précis et crédible
+
+═══ MOTS ET TOURNURES À BANNIR (AI-TELLS) ═══
+Ces formulations trahissent un texte généré par IA et tuent la crédibilité. Ne les utilise JAMAIS :
+- "plongeons dans" / "explorons" / "décortiquons"
+- "voici tout ce que vous devez savoir"
+- "a révolutionné" / "change la donne" / "transforme la façon"
+- "incontournable" / "indispensable" / "must-have"
+- "dans ce post" / "à travers ce post"
+- "en conclusion" / "pour conclure" / "en résumé"
+- "naviguer dans le monde de" / "l'univers de"
+- "boostez" / "optimisez" en accroche
+Si une de ces formulations apparaît, RÉÉCRIS la phrase autrement.
+
+═══ AUTO-VÉRIFICATION AVANT DE RÉPONDRE ═══
+Avant de retourner ton JSON, vérifie EXPLICITEMENT, dans cet ordre :
+1. Le hook (caractères 1-125) contient-il au moins UN élément concret — un chiffre réel, un outil nommé, une action précise ? Si vague, réécris.
+2. As-tu cité un chiffre, un nombre, une liste de fonctionnalités, ou une métrique qui ne figure PAS dans le brief ni dans la BRAND IDENTITY ? Si oui, supprime ou reformule en termes généraux ("plusieurs leçons" plutôt que "52 leçons").
+3. Tous les accents français standards sont-ils en place dans CHAQUE mot concerné ?
+4. Le CTA cible UN seul signal algo (sauvegarde, DM, ou commentaire) — pas deux ?
+5. As-tu utilisé un AI-tell de la liste précédente ? Si oui, réécris.
+Si une vérification échoue, RECOMMENCE la caption — ne la livre pas dégradée.
 
 ═══ HASHTAGS — 10 AU TOTAL ═══
 Structure : 3 larges + 5 niche + 2 communauté
@@ -309,6 +340,29 @@ Si l'info n'y est pas → ne la cite pas. Reformule en termes généraux à la p
 - Pas de "J'espère que ce post vous a été utile"
 - Pas de storytelling artificiel ("Il était une fois un serveur...")
 - Pas de liste numérotée en début de post ("Voici 5 raisons pour...")
+
+═══ MOTS ET TOURNURES À BANNIR (AI-TELLS) ═══
+Ces formulations trahissent un texte généré par IA et coûtent en crédibilité (LinkedIn = signal d'autorité). Ne les utilise JAMAIS :
+- "plongeons dans" / "explorons" / "décortiquons"
+- "à travers cet article" / "dans ce post"
+- "a révolutionné" / "change la donne" / "transforme la façon"
+- "incontournable" / "indispensable" / "must-have"
+- "en conclusion" / "pour conclure" / "en résumé"
+- "boostez votre" / "optimisez votre" en accroche
+- "naviguer dans le monde de" / "l'univers de"
+- Listicles passe-partout : "voici X conseils que…"
+Si une de ces formulations apparaît, RÉÉCRIS la phrase autrement.
+
+═══ AUTO-VÉRIFICATION AVANT DE RÉPONDRE ═══
+Avant de retourner ton JSON, vérifie EXPLICITEMENT, dans cet ordre :
+1. Les 2 premières lignes peuvent-elles fonctionner SEULES ? Si elles dépendent du reste du post, le hook est mort.
+2. As-tu cité un chiffre, une durée, une métrique, ou une liste de fonctionnalités absent du brief ET de la BRAND IDENTITY ? Si oui, supprime ou reformule en termes généraux.
+3. Y a-t-il un lien externe dans le corps ? Si oui, supprime — c'est -30% de portée.
+4. Tous les accents français standards sont-ils en place ?
+5. Les paragraphes font-ils 1-2 lignes max, séparés par des lignes vides ?
+6. Le CTA invite-t-il à un commentaire rapide (question ouverte) ?
+7. As-tu utilisé un AI-tell de la liste précédente ?
+Si une vérification échoue, RECOMMENCE le post — ne le livre pas dégradé.
 
 ═══ HASHTAGS ═══
 - Entre 3 et 5, minuscules, sans # ni espaces, EN FIN DE POST uniquement
@@ -556,6 +610,113 @@ mod tests {
         assert!(
             p.contains("1-2 lignes") || p.contains("ligne vide"),
             "LinkedIn prompt must enforce short paragraphs with breathing space"
+        );
+    }
+
+    // ── Anti-AI-tell guardrails (PR-CQ1) ──────────────────────────────────
+
+    /// The most common ChatGPT-isms that flag a post as machine-written.
+    /// Listed here once so adding a new one updates every test that needs it.
+    const AI_TELL_PHRASES: &[&str] = &[
+        "plongeons dans",
+        "explorons",
+        "décortiquons",
+        "a révolutionné",
+        "incontournable",
+    ];
+
+    #[test]
+    fn instagram_prompt_lists_ai_tells_to_ban() {
+        let p = get_system_prompt("instagram");
+        for phrase in AI_TELL_PHRASES {
+            assert!(
+                p.contains(phrase),
+                "Instagram prompt must explicitly ban the AI-tell `{phrase}`"
+            );
+        }
+    }
+
+    #[test]
+    fn linkedin_prompt_lists_ai_tells_to_ban() {
+        let p = get_system_prompt("linkedin");
+        for phrase in AI_TELL_PHRASES {
+            assert!(
+                p.contains(phrase),
+                "LinkedIn prompt must explicitly ban the AI-tell `{phrase}`"
+            );
+        }
+    }
+
+    #[test]
+    fn carousel_prompt_lists_ai_tells_to_ban() {
+        let p = get_carousel_prompt("instagram", 5);
+        // Carousel is shorter so we don't repeat the full list — but the
+        // most aggressive ones must still appear.
+        assert!(p.contains("plongeons dans"));
+        assert!(p.contains("a révolutionné"));
+    }
+
+    #[test]
+    fn instagram_prompt_requires_self_check_before_response() {
+        let p = get_system_prompt("instagram");
+        assert!(
+            p.contains("AUTO-VÉRIFICATION"),
+            "Instagram prompt must instruct the model to self-check before returning"
+        );
+        // Without an explicit RECOMMENCE/RÉÉCRIS instruction the model accepts
+        // its own first draft even when the rules fail.
+        assert!(
+            p.contains("RECOMMENCE") || p.contains("RÉÉCRIS"),
+            "Instagram self-check must mandate retry on failure, not just flag it"
+        );
+    }
+
+    #[test]
+    fn linkedin_prompt_requires_self_check_before_response() {
+        let p = get_system_prompt("linkedin");
+        assert!(
+            p.contains("AUTO-VÉRIFICATION"),
+            "LinkedIn prompt must instruct the model to self-check before returning"
+        );
+        assert!(
+            p.contains("RECOMMENCE") || p.contains("RÉÉCRIS"),
+            "LinkedIn self-check must mandate retry on failure"
+        );
+    }
+
+    #[test]
+    fn carousel_prompt_requires_self_check_before_response() {
+        let p = get_carousel_prompt("instagram", 5);
+        assert!(
+            p.contains("AUTO-VÉRIFICATION"),
+            "Carousel prompt must instruct the model to self-check before returning"
+        );
+    }
+
+    #[test]
+    fn instagram_self_check_targets_known_hallucination() {
+        // The "52 leçons" hallucination on @terminallearning was the canonical bug —
+        // the self-check must explicitly cover number invention, not just generally.
+        let p = get_system_prompt("instagram");
+        assert!(
+            p.contains("inventé") || p.contains("inventer"),
+            "self-check must explicitly cover number/fact invention"
+        );
+    }
+
+    #[test]
+    fn get_variant_prompt_story_tone() {
+        // PR-CQ1 adds the `story` tone — LinkedIn 2026 algo's highest-engagement format.
+        let p = get_variant_prompt_with_truth("linkedin", "story", None);
+        assert!(
+            p.to_lowercase().contains("storytelling")
+                || p.to_lowercase().contains("première personne"),
+            "story tone instruction must mention first-person storytelling"
+        );
+        // Must NOT degenerate into fiction — that's the failure mode.
+        assert!(
+            p.contains("PAS de") || p.contains("vécu réel"),
+            "story tone must explicitly forbid fictional storytelling"
         );
     }
 }
