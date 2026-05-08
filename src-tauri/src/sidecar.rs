@@ -1,12 +1,41 @@
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
+use std::sync::OnceLock;
 use tokio::io::AsyncWriteExt;
 use tokio::time::{timeout, Duration};
 
-#[cfg(windows)]
-const PYTHON: &str = "python";
-#[cfg(not(windows))]
-const PYTHON: &str = "python3";
+/// Find a working Python interpreter once and cache it for the rest of
+/// the process lifetime. Tries `python3`, then `python`, then `py` (the
+/// Windows launcher). The order matters on Windows 11: `python` without
+/// any install resolves to the Microsoft Store *stub*, which prints a
+/// "open Store" message and exits non-zero — every sidecar call would
+/// fail silently with no clue why. `python3` and `py` are not stub-shadowed.
+fn python_executable() -> &'static str {
+    static CACHED: OnceLock<&'static str> = OnceLock::new();
+    CACHED.get_or_init(|| {
+        for candidate in ["python3", "python", "py"] {
+            // `--version` is a cheap, side-effect-free check supported by
+            // every Python ≥ 2. The MS Store stub returns 9009 (or just
+            // prints the install prompt to stderr) — `success()` is false.
+            let ok = std::process::Command::new(candidate)
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok {
+                log::info!("sidecar: using Python interpreter `{candidate}`");
+                return candidate;
+            }
+        }
+        log::warn!("sidecar: no working Python found in PATH (python3, python, py all failed)");
+        // Fall back to "python3" so the eventual error message names a
+        // reasonable command for diagnostic purposes. The user-facing
+        // error path already mentions "is Python installed and in PATH?".
+        "python3"
+    })
+}
 
 /// Windows CreateProcess flag that suppresses the console window when a GUI app
 /// spawns a console subprocess. Without it, every sidecar call flashes a black
@@ -38,10 +67,16 @@ fn sidecar_script() -> std::path::PathBuf {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    // 1. Dev mode — alongside the source tree.
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.py"));
-
-    // 2. Production — relative to the running executable.
+    // Production paths first — if we're running from an installed binary
+    // these are the shapes the Tauri bundle produces. Putting them before
+    // the dev path means the CI-baked CARGO_MANIFEST_DIR (which points to
+    // the runner's filesystem and never exists on a user machine) is the
+    // ABSOLUTE last resort, not the silent default. The earlier order had
+    // a subtle hole: if every prod candidate failed `.exists()` we fell
+    // back to candidates[0] which was the broken dev path — same class
+    // of bug as v0.3.x. Flipping the order means a misconfigured bundle
+    // surfaces as a clear "main.py not found at <prod path>" error
+    // instead of a confusing CI-runner-path message.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             // Tauri's `_up_` mangling for resources whose source path
@@ -57,9 +92,14 @@ fn sidecar_script() -> std::path::PathBuf {
         }
     }
 
-    // First existing wins. Falls back to the dev path so the error
-    // surfaced downstream still mentions a sensible-looking location
-    // for diagnostics rather than nothing.
+    // Dev mode last — alongside the source tree, only used when running
+    // via `npm run tauri dev` or `cargo run` from the project root.
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/main.py"));
+
+    // First existing wins. If absolutely none exist (broken install),
+    // return the FIRST production candidate so the eventual "No such
+    // file" error mentions a path the user might recognise as install-
+    // shaped rather than a CI runner path.
     candidates
         .iter()
         .find(|p| p.exists())
@@ -137,7 +177,7 @@ async fn run_sidecar(json_input: String, timeout_secs: u64) -> Result<String, St
     let script = sidecar_script();
 
     timeout(Duration::from_secs(timeout_secs), async move {
-        let mut command = tokio::process::Command::new(PYTHON);
+        let mut command = tokio::process::Command::new(python_executable());
         command
             .arg(&script)
             // Force UTF-8 I/O on all platforms; 'replace' keeps us alive
