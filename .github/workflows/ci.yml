@@ -57,34 +57,31 @@ jobs:
 
   # Defense against accidental secret commits.
   #
-  # Why trufflehog (over gitleaks-action): the gitleaks GitHub Action requires
-  # a paid license for use on private repositories. Trufflehog OSS is free
-  # for everyone, validates findings against live APIs (so OpenRouter/Anthropic
-  # test keys we keep in test fixtures don't false-positive), and the action is
-  # maintained by the original authors.
+  # Why trufflehog (over gitleaks-action): gitleaks-action requires a paid
+  # license on private repos. Trufflehog OSS is free, validates findings
+  # against live APIs (`--only-verified`), and the action is maintained by
+  # the original authors.
   #
-  # Scope: scans the diff range of every push/PR. On PRs it scans the full
-  # diff (base..head); on pushes it scans the new commits. We do NOT scan
-  # the full history on every run — that would be slow and noisy for an
-  # already-cleaned repo.
+  # Scope: diff range only (not full history). The action's built-in logic
+  # picks the right SHAs from the event payload — `event.before`/`sha` for
+  # push, `pull_request.base.sha`/`head.sha` for PR. We deliberately do NOT
+  # pass `base`/`head` inputs ourselves: passing `base: main, head: HEAD`
+  # on a push to main resolves both to the same SHA (the just-pushed
+  # commit), and the action errors with "BASE and HEAD commits are the
+  # same" — see CI run 25551468627 on 2026-05-08. Letting the action
+  # default kicks the right SHA for each event automatically.
   secrets:
     name: Secret scanning (trufflehog)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need full history so trufflehog can compute the diff range.
-          # `0` = full clone. Without this, PR scans miss commits.
+          # Full history so trufflehog can walk the diff range. `0` = full clone.
           fetch-depth: 0
       - name: Trufflehog secret scan
         uses: trufflesecurity/trufflehog@main
         with:
-          # Scan the diff for the current event:
-          #  - on PR: base SHA (where the PR branched) → head SHA (current)
-          #  - on push to main: previous main SHA → new SHA
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          # `--only-verified` keeps the noise low — only secrets that
-          # successfully authenticated against their provider's API
-          # are reported. False positives on test fixtures are filtered out.
+          # `--only-verified` keeps noise low — only secrets that successfully
+          # authenticate against their provider's API are reported. Fake keys
+          # in test fixtures are filtered out automatically.
           extra_args: --only-verified
