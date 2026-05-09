@@ -20,6 +20,15 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
+    // Snapshot the DB before we touch it — if a migration plants a column
+    // change that bricks the schema, the user can roll back to the file the
+    // app saw at startup. The daily auto-backup in ~/Documents covers
+    // routine recovery; this snapshot covers the "I just upgraded and
+    // things look weird" 5-minute window before the daily task fires.
+    if let Err(e) = snapshot_db_before_migrate(&db_path) {
+        log::warn!("db: pre-migration snapshot failed (non-fatal): {e}");
+    }
+
     let options =
         SqliteConnectOptions::from_str(&format!("sqlite://{}", db_path.to_string_lossy()))
             .map_err(|e| e.to_string())?
@@ -58,6 +67,31 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         .map_err(|e| e.to_string())?;
 
     Ok(pool)
+}
+
+/// Copy the live DB (if it exists) to `app.db.pre-migrate.bak` next to it
+/// so a failed migration in the next step doesn't leave the user with no
+/// rollback option. Cheap (single file copy in the data dir, megabytes,
+/// not gigabytes) and best-effort: I/O failures here log a warning rather
+/// than aborting startup, since the caller can still proceed and the
+/// user has a daily auto-backup as a deeper safety net.
+///
+/// Only one snapshot is kept — overwritten each time the app starts.
+/// That's intentional: this is a "right before the most recent upgrade"
+/// safety net, not an archive. The auto-backup daily history covers
+/// archival recovery.
+fn snapshot_db_before_migrate(db_path: &std::path::Path) -> std::io::Result<()> {
+    if !db_path.exists() {
+        // First launch — no DB to snapshot yet.
+        return Ok(());
+    }
+    let snapshot_path = db_path.with_extension("db.pre-migrate.bak");
+    std::fs::copy(db_path, &snapshot_path)?;
+    log::info!(
+        "db: pre-migration snapshot saved to {}",
+        snapshot_path.display()
+    );
+    Ok(())
 }
 
 /// Reconcile `_sqlx_migrations.checksum` with the bytes embedded in this
@@ -425,6 +459,55 @@ mod migration_tests {
         .await
         .expect("query master");
         assert_eq!(exists, 0, "heal must not touch sqlite_master on fresh DB");
+    }
+
+    #[test]
+    fn snapshot_before_migrate_copies_existing_db() {
+        // Simulates the upgrade case: an app.db already exists, init_pool
+        // must produce app.db.pre-migrate.bak so the user can roll back.
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let db_path = tmp.path().join("app.db");
+        std::fs::write(&db_path, b"sqlite database bytes here").expect("write db");
+        super::snapshot_db_before_migrate(&db_path).expect("snapshot must succeed");
+        let snap = db_path.with_extension("db.pre-migrate.bak");
+        assert!(snap.exists(), "snapshot file must be created");
+        assert_eq!(
+            std::fs::read(&snap).expect("read snap"),
+            b"sqlite database bytes here",
+            "snapshot bytes must match the source",
+        );
+    }
+
+    #[test]
+    fn snapshot_before_migrate_is_noop_on_first_launch() {
+        // Brand-new install: no app.db yet. Snapshot must succeed silently
+        // and not create anything (otherwise we'd litter empty files in
+        // the data dir on every fresh startup).
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let db_path = tmp.path().join("app.db");
+        super::snapshot_db_before_migrate(&db_path).expect("noop must succeed");
+        assert!(!db_path.with_extension("db.pre-migrate.bak").exists());
+    }
+
+    #[test]
+    fn snapshot_before_migrate_overwrites_previous_snapshot() {
+        // We keep ONLY the most recent snapshot — older ones are overwritten
+        // so the data dir doesn't accumulate copies after many startups.
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let db_path = tmp.path().join("app.db");
+        let snap = db_path.with_extension("db.pre-migrate.bak");
+
+        std::fs::write(&db_path, b"v1").expect("write db v1");
+        super::snapshot_db_before_migrate(&db_path).expect("snap v1");
+        assert_eq!(std::fs::read(&snap).expect("read snap"), b"v1");
+
+        std::fs::write(&db_path, b"v2 newer bytes").expect("write db v2");
+        super::snapshot_db_before_migrate(&db_path).expect("snap v2");
+        assert_eq!(
+            std::fs::read(&snap).expect("read snap"),
+            b"v2 newer bytes",
+            "snapshot must reflect the latest bytes",
+        );
     }
 
     #[tokio::test]

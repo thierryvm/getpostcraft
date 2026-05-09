@@ -59,4 +59,8 @@ wiremock = "0.6"
 # `serial_test` serialises tests that mutate the same process-wide env var.
 # Without it, two parallel tests setting GETPOSTCRAFT_IG_API would race.
 serial_test = "3"
+# Per-test isolated tempdir for the pre-migration snapshot tests, so they
+# don't write into the developer's real %APPDATA% or interfere with each
+# other when run in parallel.
+tempfile = "3"
 
