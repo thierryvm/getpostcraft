@@ -85,6 +85,12 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Python probe and pip helper across the codebase — the helper exists so
 /// adding a new spawn point doesn't accidentally regress the no-flash UX.
 pub(crate) fn silent_std_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    // `mut` is only needed when we call `creation_flags` below — that's a
+    // Windows-only branch, so on Linux/macOS clippy flags this binding as
+    // `unused_mut` and `-D warnings` blows up CI. The targeted attribute
+    // suppresses the warning on non-Windows without weakening the lint
+    // anywhere else.
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut cmd = std::process::Command::new(program);
     #[cfg(windows)]
     {
@@ -99,6 +105,7 @@ pub(crate) fn silent_std_command(program: impl AsRef<std::ffi::OsStr>) -> std::p
 pub(crate) fn silent_tokio_command(
     program: impl AsRef<std::ffi::OsStr>,
 ) -> tokio::process::Command {
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut cmd = tokio::process::Command::new(program);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
