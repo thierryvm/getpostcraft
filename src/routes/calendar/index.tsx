@@ -31,8 +31,22 @@ import { fr } from "date-fns/locale";
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
+/**
+ * Format a Date as `YYYY-MM-DD` using the LOCAL calendar day, not UTC.
+ *
+ * `toISOString().slice(0,10)` was the previous implementation but it returns
+ * the UTC date — so a post created at 20:25 CET on May 9 (= 18:25 UTC, ISO
+ * "2026-05-09T18:25Z") had key "2026-05-09" while the May 9 cell, built from
+ * `new Date(year, month, 1)` at local midnight, had its toISOString() snap
+ * back to "2026-05-08T22:00Z" → key "2026-05-08". Posts ended up one day
+ * forward in any UTC+N timezone (CET in summer = +2). This helper keeps the
+ * keys in the user's local frame so cells and posts agree on the day.
+ */
 function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function startOfMonth(y: number, m: number): Date {
@@ -75,8 +89,17 @@ function weekRangeISO(weekStart: Date): [string, string] {
   return [start.toISOString(), end.toISOString()];
 }
 
+/**
+ * Bucket a post into a calendar day. Same local-time discipline as `isoDate`:
+ * we parse the stored UTC ISO timestamp into a Date and read its LOCAL day
+ * components so a post created at 20:25 CET on May 9 lands on May 9, not
+ * May 10. The previous `slice(0, 10)` chopped the UTC string directly,
+ * which mis-bucketed any post stamped between local midnight and the
+ * UTC-offset boundary.
+ */
 function getPostDate(post: PostRecord): string {
-  return (post.scheduled_at ?? post.created_at).slice(0, 10);
+  const iso = post.scheduled_at ?? post.created_at;
+  return isoDate(new Date(iso));
 }
 
 const MONTH_NAMES = [
