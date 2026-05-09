@@ -404,12 +404,20 @@ def _parse_carousel_response(text: str, expected_count: int) -> list[dict]:
     if not isinstance(data, list):
         raise ValueError(f"Expected JSON array, got {type(data).__name__}")
 
+    # Allowed slide-role tags. Anything else (including missing) becomes None
+    # so the Rust renderer falls back to its index-derived label. This mirrors
+    # the Rust-side `role_meta_for` whitelist.
+    allowed_roles = {"hero", "problem", "approach", "tech", "change", "moment", "cta"}
+
     slides = []
     for i, slide in enumerate(data[:expected_count]):
+        raw_role = str(slide.get("role", "")).strip().lower()
+        role = raw_role if raw_role in allowed_roles else None
         slides.append({
             "emoji": _sanitize_surrogates(str(slide.get("emoji", "💡"))),
             "title": _sanitize_surrogates(str(slide.get("title", f"Slide {i + 1}"))),
             "body": _sanitize_surrogates(str(slide.get("body", ""))),
+            "role": role,
         })
     return slides
 

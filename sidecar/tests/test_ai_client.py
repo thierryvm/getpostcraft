@@ -199,6 +199,36 @@ class TestParseCarouselResponse:
         # Must not raise
         assert json.dumps(result)
 
+    def test_role_passes_through_when_in_whitelist(self):
+        slides = [
+            {"emoji": "✦", "title": "T", "body": "B", "role": "problem"},
+            {"emoji": "✦", "title": "T", "body": "B", "role": "approach"},
+            {"emoji": "✦", "title": "T", "body": "B", "role": "cta"},
+        ]
+        raw = json.dumps(slides)
+        result = _parse_carousel_response(raw, 3)
+        assert result[0]["role"] == "problem"
+        assert result[1]["role"] == "approach"
+        assert result[2]["role"] == "cta"
+
+    def test_role_normalises_case_and_whitespace(self):
+        slides = [{"emoji": "✦", "title": "T", "body": "B", "role": "  PROBLEM  "}]
+        raw = json.dumps(slides)
+        result = _parse_carousel_response(raw, 1)
+        assert result[0]["role"] == "problem"
+
+    def test_unknown_role_becomes_none(self):
+        slides = [{"emoji": "✦", "title": "T", "body": "B", "role": "fluffy-cat"}]
+        raw = json.dumps(slides)
+        result = _parse_carousel_response(raw, 1)
+        assert result[0]["role"] is None
+
+    def test_missing_role_becomes_none(self):
+        slides = [{"emoji": "✦", "title": "T", "body": "B"}]
+        raw = json.dumps(slides)
+        result = _parse_carousel_response(raw, 1)
+        assert result[0]["role"] is None
+
 
 # ── _respond_error (via main module) ─────────────────────────────────────────
 

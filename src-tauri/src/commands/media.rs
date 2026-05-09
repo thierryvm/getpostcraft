@@ -422,15 +422,26 @@ fn build_carousel_slide_html(
     let accent_height = (w * 0.005).round().max(4.0) as u32;
     let accent_width = (w * 0.06).round() as u32;
 
-    let badge_html = if slide.emoji.trim().is_empty() {
-        String::new()
+    // Resolve the role-driven badge first; fall back to the index-derived
+    // label if the AI didn't tag the slide. The badge color overrides the
+    // brand color *only inside the badge* — the rest of the chrome
+    // (counter, stamp, accent rule) stays branded.
+    let role_meta = role_meta_for(slide.role.as_deref());
+    let badge_label = role_meta
+        .label
+        .map(str::to_string)
+        .unwrap_or_else(|| slide_label(slide.index, slide.total).to_string());
+    let badge_color = role_meta.color.unwrap_or(brand_color.as_str());
+    let badge_mark = if slide.emoji.trim().is_empty() {
+        role_meta.mark.unwrap_or("✦").to_string()
     } else {
-        format!(
-            r#"<div class="badge"><span class="badge-mark">{mark}</span><span class="badge-label">{label}</span></div>"#,
-            mark = html_escape(&slide.emoji),
-            label = html_escape(slide_label(slide.index, slide.total)),
-        )
+        slide.emoji.clone()
     };
+    let badge_html = format!(
+        r#"<div class="badge" style="border-color:{badge_color}55;background:{badge_color}1f;color:{badge_color}"><span class="badge-mark">{mark}</span><span class="badge-label">{label}</span></div>"#,
+        mark = html_escape(&badge_mark),
+        label = html_escape(&badge_label),
+    );
 
     // Encoded as a data URI so Chromium renders it without an extra fetch.
     // One <pattern> repeats across the full body. Stroke colour stays cool
@@ -447,8 +458,7 @@ fn build_carousel_slide_html(
          color:#e6edf3;position:relative;overflow:hidden;padding:{pad}px;\
          display:flex;flex-direction:column;justify-content:flex-start}}\
          .badge{{display:inline-flex;align-items:center;gap:8px;\
-         padding:8px 16px;border-radius:999px;border:1px solid {brand_color}55;\
-         background:{brand_color}1f;color:{brand_color};\
+         padding:8px 16px;border-radius:999px;border:1px solid;\
          font-family:'JetBrains Mono','SF Mono','Fira Code',Consolas,monospace;\
          font-size:{badge_size}px;font-weight:600;letter-spacing:.04em;\
          margin-bottom:{pad}px;width:max-content;max-width:80%}}\
@@ -494,9 +504,7 @@ fn build_carousel_slide_html(
 }
 
 /// Tiny helper that maps the slide's position to a section label used in the
-/// top-left badge. The first slide is always "intro", the last "conclusion",
-/// everything in between mirrors the slide number so the user has visual
-/// landmarks. Section-typed roles (problème / approche / etc.) come in v0.3.7.
+/// top-left badge when the AI didn't tag the slide with a role.
 fn slide_label(index: u8, total: u8) -> &'static str {
     if index == 1 {
         "intro"
@@ -504,6 +512,60 @@ fn slide_label(index: u8, total: u8) -> &'static str {
         "à toi"
     } else {
         "lis-moi"
+    }
+}
+
+/// Visual metadata for a role-tagged slide. Color is the badge accent,
+/// label the human-readable chip text, mark the unicode prefix used when
+/// the AI doesn't supply an emoji.
+#[derive(Default, Debug, Clone, Copy)]
+struct RoleMeta {
+    color: Option<&'static str>,
+    label: Option<&'static str>,
+    mark: Option<&'static str>,
+}
+
+/// Map a normalised role string to its visual metadata. Unknown / missing
+/// roles return an empty `RoleMeta`, which the caller treats as "fall back
+/// to the index-derived label and brand color".
+fn role_meta_for(role: Option<&str>) -> RoleMeta {
+    match role.unwrap_or("") {
+        "hero" => RoleMeta {
+            color: None, // brand color
+            label: Some("hello"),
+            mark: Some(">_"),
+        },
+        "problem" => RoleMeta {
+            color: Some("#ff6b6b"),
+            label: Some("le problème"),
+            mark: Some("◆"),
+        },
+        "approach" => RoleMeta {
+            color: None, // brand color — solution stays on-brand
+            label: Some("notre approche"),
+            mark: Some("✦"),
+        },
+        "tech" => RoleMeta {
+            color: Some("#60a5fa"),
+            label: Some("sous le capot"),
+            mark: Some("⌗"),
+        },
+        "change" => RoleMeta {
+            color: Some("#fbbf24"),
+            label: Some("ce qui change"),
+            mark: Some("◇"),
+        },
+        "moment" => RoleMeta {
+            color: Some("#c084fc"),
+            label: Some("un exemple"),
+            mark: Some("◈"),
+        },
+        "cta" => RoleMeta {
+            color: None, // brand color — final CTA on-brand
+            label: Some("à toi"),
+            mark: Some("→"),
+        },
+        _ => RoleMeta::default(),
     }
 }
 
@@ -688,15 +750,27 @@ mod tests {
         );
     }
 
+    /// Test helper — builds a CarouselSlide with sane defaults so the
+    /// growing list of fields doesn't make every test case noisy.
+    fn make_slide(index: u8, total: u8) -> CarouselSlide {
+        CarouselSlide {
+            index,
+            total,
+            emoji: "x".into(),
+            title: "Test".into(),
+            body: "Body".into(),
+            role: None,
+        }
+    }
+
     #[test]
     fn carousel_html_uses_provided_handle_and_color() {
         let brand = Brand::resolve(Some("ankora"), Some("#0d9488"));
         let slide = CarouselSlide {
-            index: 1,
-            total: 3,
-            emoji: "🚀".to_string(),
-            title: "Title".to_string(),
-            body: "Body".to_string(),
+            emoji: "🚀".into(),
+            title: "Title".into(),
+            body: "Body".into(),
+            ..make_slide(1, 3)
         };
         let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
         assert!(html.contains("@ankora"));
@@ -707,29 +781,24 @@ mod tests {
     fn carousel_html_renders_monospace_chrome_and_grid() {
         let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
         let slide = CarouselSlide {
-            index: 3,
-            total: 7,
             emoji: "✦".into(),
             title: "Hello".into(),
             body: "World".into(),
+            ..make_slide(3, 7)
         };
         let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
-        // Monospace counter (XX / YY zero-padded) — the visual signature.
         assert!(
             html.contains("03 / 07"),
             "counter must be zero-padded XX / YY"
         );
-        // Brand stamp prompt prefix.
         assert!(
             html.contains("&gt;_"),
             "stamp must include the >_ shell prompt prefix"
         );
-        // Grid background pattern (data URI signature).
         assert!(
             html.contains("data:image/svg+xml"),
             "background grid must be inlined as SVG"
         );
-        // Tech-niche font stack — JetBrains Mono first.
         assert!(
             html.contains("JetBrains Mono"),
             "monospace stack must lead with JetBrains Mono"
@@ -739,15 +808,7 @@ mod tests {
     #[test]
     fn carousel_html_scales_with_canvas_dimensions() {
         let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
-        let slide = CarouselSlide {
-            index: 1,
-            total: 5,
-            emoji: "x".into(),
-            title: "Test".into(),
-            body: "Body".into(),
-        };
-        // Portrait (1080×1350) and square (1080×1080) must both render at the
-        // same width — the typography scale is width-derived, not height.
+        let slide = make_slide(1, 5);
         let portrait = build_carousel_slide_html(&slide, 1080, 1350, &brand);
         let square = build_carousel_slide_html(&slide, 1080, 1080, &brand);
         assert!(portrait.contains("width:1080px"));
@@ -767,19 +828,78 @@ mod tests {
     }
 
     #[test]
+    fn role_meta_for_known_roles_returns_distinct_colors() {
+        let problem = role_meta_for(Some("problem"));
+        let tech = role_meta_for(Some("tech"));
+        let change = role_meta_for(Some("change"));
+        let moment = role_meta_for(Some("moment"));
+        assert!(
+            problem.color.is_some()
+                && tech.color.is_some()
+                && change.color.is_some()
+                && moment.color.is_some(),
+            "tagged roles must define a badge color"
+        );
+        assert_ne!(problem.color, tech.color, "each role gets its own accent");
+        assert_ne!(tech.color, change.color);
+        assert_ne!(change.color, moment.color);
+    }
+
+    #[test]
+    fn role_meta_for_brand_aligned_roles_keeps_brand_color() {
+        // hero / approach / cta intentionally inherit the brand color so the
+        // post opens, climaxes, and closes on the brand's signature accent.
+        for role in ["hero", "approach", "cta"] {
+            let meta = role_meta_for(Some(role));
+            assert!(
+                meta.color.is_none(),
+                "role {role} must inherit brand color (color = None)"
+            );
+        }
+    }
+
+    #[test]
+    fn role_meta_for_unknown_role_falls_back_to_default() {
+        let meta = role_meta_for(Some("does-not-exist"));
+        assert!(meta.color.is_none() && meta.label.is_none() && meta.mark.is_none());
+    }
+
+    #[test]
+    fn carousel_html_uses_role_label_when_provided() {
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = CarouselSlide {
+            role: Some("problem".into()),
+            ..make_slide(2, 5)
+        };
+        let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
+        assert!(
+            html.contains("le problème"),
+            "role=problem must surface its human label in the badge"
+        );
+        assert!(
+            html.contains("#ff6b6b"),
+            "role=problem must paint its red accent"
+        );
+    }
+
+    #[test]
+    fn carousel_html_falls_back_to_index_label_without_role() {
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = make_slide(1, 5);
+        let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
+        assert!(
+            html.contains("intro"),
+            "untagged slide 1 must use the index-derived 'intro' label"
+        );
+    }
+
+    #[test]
     fn templates_are_persona_agnostic() {
-        // No template should leak an old hardcoded handle when a different one is supplied.
         let brand = Brand::resolve(Some("ankora"), Some("#0d9488"));
         let post = build_post_html("x", &[], 1080, 1080, &brand);
         let code = build_code_html("x", "rust", None, 1080, 1080, &brand);
         let term = build_terminal_html("ls", None, 1080, 1080, &brand);
-        let slide = CarouselSlide {
-            index: 1,
-            total: 1,
-            emoji: "x".into(),
-            title: "x".into(),
-            body: "x".into(),
-        };
+        let slide = make_slide(1, 1);
         let car = build_carousel_slide_html(&slide, 1080, 1350, &brand);
         for html in [&post, &code, &term, &car] {
             assert!(

@@ -9,6 +9,12 @@ pub struct CarouselSlide {
     pub emoji: String,
     pub title: String,
     pub body: String,
+    /// Section role suggested by the AI. Recognised values map to coloured
+    /// badges + bespoke layouts (`hero`, `problem`, `approach`, `tech`,
+    /// `change`, `moment`, `cta`). Unknown / missing values fall back to
+    /// the index-derived label ("intro" / "lis-moi" / "à toi").
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -816,6 +822,8 @@ pub async fn generate_carousel(
         emoji: String,
         title: String,
         body: String,
+        #[serde(default)]
+        role: Option<String>,
     }
     #[derive(Deserialize)]
     struct CarouselData {
@@ -852,6 +860,10 @@ pub async fn generate_carousel(
             emoji: s.emoji,
             title: s.title,
             body: s.body,
+            role: s
+                .role
+                .map(|r| r.trim().to_lowercase())
+                .filter(|r| !r.is_empty()),
         })
         .collect())
 }
