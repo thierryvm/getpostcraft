@@ -1,4 +1,4 @@
-import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers, Pencil } from "lucide-react";
+import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers, Pencil, Trash2 } from "lucide-react";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -616,24 +616,58 @@ export function ContentPreview() {
 
         {/* Visual generator */}
         <div ref={imageRef} className="flex flex-col gap-3">
-          {/* Header + generate button (hidden for carousel which has its own) */}
+          {/* Header + generate / clear buttons (carousel has its own Generate
+              further down because it needs the slides count picker first). */}
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-foreground">
             Visuel {imageFormat.width}×{imageFormat.height}
             <span className="ml-1.5 text-xs font-normal text-muted-foreground">{imageFormat.ratio}</span>
           </span>
-            {template !== "carousel" && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                onClick={handleRenderImage}
-                disabled={isRendering}
-              >
-                {isRendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />}
-                {isRendering ? "Rendu…" : "Générer"}
-              </Button>
-            )}
+            <div className="flex items-center gap-1.5">
+              {/* Clear button — visible whenever there's a rendered visual to
+                  throw away. Wipes both the local preview and the draft's
+                  stored images so the draft no longer references low-quality
+                  output. The user can then re-generate or publish text-only
+                  (LinkedIn). */}
+              {(imageUrl !== null || carouselImages !== null) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-destructive"
+                  onClick={() => {
+                    setImageUrl(null);
+                    setCarouselImages(null);
+                    setCarouselSlides(null);
+                    setCarouselIndex(0);
+                    setRenderError(null);
+                    setCarouselError(null);
+                    setExportSuccess(null);
+                    if (draftId !== null) {
+                      // Best-effort — failure here just means the DB still
+                      // points at a stale image; the next render call will
+                      // overwrite it anyway.
+                      updateDraftImages(draftId, []).catch(() => {});
+                    }
+                  }}
+                  title="Effacer le visuel généré (le brouillon reste, sans image)"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Effacer le visuel
+                </Button>
+              )}
+              {template !== "carousel" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={handleRenderImage}
+                  disabled={isRendering}
+                >
+                  {isRendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />}
+                  {isRendering ? "Rendu…" : "Générer"}
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Template selector — short label in the pill, longer hint right

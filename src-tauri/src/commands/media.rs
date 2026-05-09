@@ -430,17 +430,25 @@ fn build_carousel_slide_html(
     let handle_escaped = html_escape(&brand.handle);
     let brand_color = &brand.brand_color;
 
-    // Typography scale derived from canvas width — keeps proportions on
-    // both 1080² and 1080×1350. Hero titles are intentionally large so
-    // mobile-feed scrolls are stopped without resorting to all-caps.
-    let w = width as f32;
-    let pad = (w * 0.072).round() as u32; // 78px @ 1080
-    let title_size = (w * 0.082).round() as u32; // 88px @ 1080
-    let body_size = (w * 0.027).round() as u32; // 30px @ 1080
-    let chrome_size = (w * 0.02).round() as u32; // 22px @ 1080
-    let badge_size = (w * 0.02).round() as u32; // 22px @ 1080
-    let accent_height = (w * 0.005).round().max(4.0) as u32;
-    let accent_width = (w * 0.06).round() as u32;
+    // Typography scale derived from the SHORTER side of the canvas so the
+    // template doesn't blow out on landscape ratios (LinkedIn 1200×628 has
+    // far less vertical room than IG portrait 1080×1350). Width-only
+    // scaling produced 88px titles on a 628px-tall canvas — title alone
+    // ate >35% of the height before any body text could land, and the
+    // body would overflow into the brand-stamp row at the bottom.
+    let short = (width.min(height)) as f32;
+    let pad = (short * 0.072).round() as u32; // 78 @ 1080, 45 @ 628
+    let title_size = (short * 0.082).round() as u32; // 88 @ 1080, 51 @ 628
+    let body_size = (short * 0.028).round() as u32; // 30 @ 1080, 18 @ 628
+    let chrome_size = (short * 0.022).round() as u32; // 24 @ 1080, 14 @ 628
+    let badge_size = (short * 0.022).round() as u32;
+    let accent_height = (short * 0.005).round().max(4.0) as u32;
+    let accent_width = (short * 0.06).round() as u32;
+    // Reserve room at the bottom of the body's content box for the absolutely
+    // positioned brand stamp. Without this, a long final line of body text
+    // would land in the same row as the stamp and we'd get the "@handle
+    // showing through the body" overlap reported on LinkedIn slides.
+    let bottom_pad = pad + chrome_size + 24;
 
     // Resolve the role-driven badge first; fall back to the index-derived
     // label if the AI didn't tag the slide. The badge color overrides the
@@ -475,7 +483,8 @@ fn build_carousel_slide_html(
          body{{width:{width}px;height:{height}px;background:#0d1117;\
          background-image:url(\"{grid_svg}\");background-size:60px 60px;\
          font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;\
-         color:#e6edf3;position:relative;overflow:hidden;padding:{pad}px;\
+         color:#e6edf3;position:relative;overflow:hidden;\
+         padding:{pad}px {pad}px {bottom_pad}px {pad}px;\
          display:flex;flex-direction:column;justify-content:flex-start}}\
          .badge{{display:inline-flex;align-items:center;gap:8px;\
          padding:8px 16px;border-radius:999px;border:1px solid;\
@@ -864,6 +873,32 @@ mod tests {
         assert!(
             html.contains("JetBrains Mono"),
             "monospace stack must lead with JetBrains Mono"
+        );
+    }
+
+    #[test]
+    fn carousel_html_reserves_bottom_padding_for_brand_stamp() {
+        // Real bug: on LinkedIn landscape (1200×628) the brand stamp's row
+        // overlapped with the bottom line of body text — symmetric padding
+        // didn't reserve any space for the absolutely-positioned stamp.
+        // Fix: padding-bottom must be larger than padding-top so the body
+        // content box ends above the stamp row.
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = make_slide(3, 5);
+        let html = build_carousel_slide_html(&slide, 1200, 628, &brand);
+        // Asymmetric padding signature — `padding:{pad}px {pad}px {bottom_pad}px {pad}px`
+        // where bottom_pad > pad. Both values land in the inline CSS string.
+        assert!(
+            html.contains("padding:45px 45px"),
+            "expected the asymmetric 4-value padding shorthand reserving room \
+             for the stamp; got HTML without it"
+        );
+        // Title must scale to the SHORTER side, not width — otherwise the
+        // landscape canvas blows out and content overflows into the stamp.
+        assert!(
+            html.contains("font-size:51px"),
+            "title size on 1200x628 must derive from min(w,h)=628 (~51px), \
+             not width=1200 (~98px); got HTML without 51px"
         );
     }
 
