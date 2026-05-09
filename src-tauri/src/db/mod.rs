@@ -33,6 +33,24 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         .await
         .map_err(|e| e.to_string())?;
 
+    // Heal stale checksums in _sqlx_migrations BEFORE running migrate!().run().
+    //
+    // sqlx records a checksum of every migration's bytes in _sqlx_migrations
+    // and refuses to start if the current binary's embedded migration bytes
+    // differ from what's recorded — even by a single line ending. We've seen
+    // this fire when:
+    //   - A user's DB was created on a build with CRLF endings, then upgraded
+    //     to a build with LF endings (or vice versa).
+    //   - File got cosmetically reformatted (indent changes) without
+    //     functional change.
+    // The schema is fine; only the recorded hash is out of sync. Healing
+    // re-records the current bytes' hash so .run() sees no mismatch and
+    // no-ops on the already-applied migrations. Brand-new installs bypass
+    // this entirely (no _sqlx_migrations table yet).
+    heal_migration_checksums(&pool)
+        .await
+        .map_err(|e| format!("Failed to heal migration checksums: {e}"))?;
+
     // Run migrations
     sqlx::migrate!("src/db/migrations")
         .run(&pool)
@@ -40,6 +58,60 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         .map_err(|e| e.to_string())?;
 
     Ok(pool)
+}
+
+/// Reconcile `_sqlx_migrations.checksum` with the bytes embedded in this
+/// binary, for any migration row that's already present.
+///
+/// Returns the number of rows healed (0 when the DB is fresh or already
+/// in sync). Errors propagate as `sqlx::Error` so the caller can wrap
+/// them with a user-facing message.
+async fn heal_migration_checksums(pool: &SqlitePool) -> Result<usize, sqlx::Error> {
+    use sqlx::Row;
+
+    // Bail on fresh installs — no _sqlx_migrations table means there's
+    // nothing to heal and the regular migrate!().run() will create it.
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if exists == 0 {
+        return Ok(0);
+    }
+
+    let migrator = sqlx::migrate!("src/db/migrations");
+    let mut healed = 0usize;
+
+    for migration in migrator.iter() {
+        let version: i64 = migration.version;
+        let embedded_checksum: &[u8] = migration.checksum.as_ref();
+
+        let stored = sqlx::query("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
+            .bind(version)
+            .fetch_optional(pool)
+            .await?;
+        let Some(row) = stored else {
+            // Migration recorded as not-yet-applied — let .run() apply it.
+            continue;
+        };
+        let stored_checksum: Vec<u8> = row.try_get("checksum")?;
+
+        if stored_checksum != embedded_checksum {
+            sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+                .bind(embedded_checksum)
+                .bind(version)
+                .execute(pool)
+                .await?;
+            healed += 1;
+            log::warn!(
+                "db: healed migration {version} checksum (stored != embedded — \
+                 likely line-ending or whitespace drift between builds)"
+            );
+        }
+    }
+
+    Ok(healed)
 }
 
 // ── Migration regression tests (PR-C) ────────────────────────────────────────
@@ -281,6 +353,91 @@ mod migration_tests {
         assert!(
             cols.contains(&"token_expires_at".to_string()),
             "migration 014 must add token_expires_at column, got: {cols:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn heal_migration_checksums_repairs_drifted_row() {
+        // Reproduces the v0.3.5 → v0.3.6 startup crash: the user's _sqlx_migrations
+        // had a checksum from build A, the new binary embeds bytes from build B
+        // (CRLF/LF or whitespace drift), sqlx::migrate!().run() refused to start
+        // with "migration N was previously applied but has been modified".
+        //
+        // Fix: heal_migration_checksums re-records the embedded checksum on
+        // already-applied rows so .run() sees no mismatch and no-ops.
+        let pool = fresh_migrated_pool().await;
+
+        // Corrupt migration 1's checksum to simulate the build drift.
+        let rows_corrupted =
+            sqlx::query("UPDATE _sqlx_migrations SET checksum = X'00' WHERE version = 1")
+                .execute(&pool)
+                .await
+                .expect("corrupt checksum")
+                .rows_affected();
+        assert_eq!(rows_corrupted, 1, "must have a row at version 1 to corrupt");
+
+        // Without the heal, sqlx::migrate!().run() must fail.
+        let err = sqlx::migrate!("src/db/migrations")
+            .run(&pool)
+            .await
+            .expect_err("run must reject corrupted checksum");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("modified") || msg.contains("checksum"),
+            "expected checksum-mismatch error, got: {msg}"
+        );
+
+        // Heal — should repair the one drifted row.
+        let healed = super::heal_migration_checksums(&pool)
+            .await
+            .expect("heal must not error");
+        assert_eq!(
+            healed, 1,
+            "exactly one row was corrupted, heal must repair 1"
+        );
+
+        // Now .run() must succeed (it's all already-applied → no-op).
+        sqlx::migrate!("src/db/migrations")
+            .run(&pool)
+            .await
+            .expect("run must succeed after heal");
+    }
+
+    #[tokio::test]
+    async fn heal_migration_checksums_is_noop_on_fresh_db() {
+        // No _sqlx_migrations table yet (brand-new install). Heal must not
+        // create the table or error — it just returns 0.
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        let healed = super::heal_migration_checksums(&pool)
+            .await
+            .expect("heal on fresh db must not error");
+        assert_eq!(healed, 0);
+
+        // _sqlx_migrations table must still not exist (we didn't create it).
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query master");
+        assert_eq!(exists, 0, "heal must not touch sqlite_master on fresh DB");
+    }
+
+    #[tokio::test]
+    async fn heal_migration_checksums_skips_in_sync_rows() {
+        // Sanity: when the embedded bytes already match the recorded checksum,
+        // heal returns 0 and modifies nothing.
+        let pool = fresh_migrated_pool().await;
+        let healed = super::heal_migration_checksums(&pool)
+            .await
+            .expect("heal on in-sync DB must succeed");
+        assert_eq!(
+            healed, 0,
+            "no rows should need healing on a freshly-migrated DB"
         );
     }
 
