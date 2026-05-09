@@ -15,6 +15,14 @@ struct Brand {
     brand_color: String,
 }
 
+/// Strict hex-6-digit color matcher (`#RRGGBB`, case-insensitive). The CSS
+/// templates concatenate alpha hints onto the value (`{brand_color}55`) — any
+/// other format (`rgb()`, named, 8-digit) produces invalid CSS that Chromium
+/// silently drops, so we reject non-conformant input at resolve time.
+fn is_valid_hex_color(s: &str) -> bool {
+    s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
 impl Brand {
     fn resolve(handle: Option<&str>, brand_color: Option<&str>) -> Self {
         // Filter AFTER stripping the leading '@' so a bare "@" (or "  @  ")
@@ -25,11 +33,23 @@ impl Brand {
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| DEFAULT_HANDLE.to_string());
-        let brand_color = brand_color
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| DEFAULT_BRAND_COLOR.to_string());
+
+        // Validate the hex color — invalid input falls back silently with a
+        // warn log. We truncate the rejected value to 16 chars before logging
+        // so a 200-byte garbage string can't pollute the log file.
+        let brand_color = match brand_color.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(value) if is_valid_hex_color(value) => value.to_string(),
+            Some(invalid) => {
+                let preview: String = invalid.chars().take(16).collect();
+                log::warn!(
+                    "media::Brand::resolve: rejecting invalid brand_color {preview:?} \
+                     (must match `#RRGGBB`); falling back to default"
+                );
+                DEFAULT_BRAND_COLOR.to_string()
+            }
+            None => DEFAULT_BRAND_COLOR.to_string(),
+        };
+
         Self {
             handle,
             brand_color,
@@ -733,6 +753,48 @@ mod tests {
     fn brand_resolve_passes_custom_color_through() {
         let b = Brand::resolve(None, Some("#ff00aa"));
         assert_eq!(b.brand_color, "#ff00aa");
+    }
+
+    #[test]
+    fn brand_resolve_rejects_8_digit_hex() {
+        let b = Brand::resolve(None, Some("#0d9488ff"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_rejects_rgb_notation() {
+        let b = Brand::resolve(None, Some("rgb(13,148,136)"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_rejects_named_color() {
+        let b = Brand::resolve(None, Some("red"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_rejects_short_hex() {
+        let b = Brand::resolve(None, Some("#fff"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_rejects_garbage() {
+        let b = Brand::resolve(None, Some("#zzzzzz"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_accepts_uppercase_hex() {
+        let b = Brand::resolve(None, Some("#0D9488"));
+        assert_eq!(b.brand_color, "#0D9488");
+    }
+
+    #[test]
+    fn brand_resolve_accepts_mixed_case_hex() {
+        let b = Brand::resolve(None, Some("#0d9488"));
+        assert_eq!(b.brand_color, "#0d9488");
     }
 
     #[test]
