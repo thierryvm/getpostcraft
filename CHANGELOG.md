@@ -60,7 +60,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   whitelists known roles + normalises case; unknown values become
   `null` so the Rust renderer falls back to its index-derived label.
 
-### Hardened
+### Hardened — DB resilience
+- **Migration checksum healing** — fixes the `migration N was
+  previously applied but has been modified` startup panic that hit
+  users upgrading from v0.3.5 to v0.3.6. `init_pool` now reconciles
+  the bytes embedded in the binary against `_sqlx_migrations.checksum`
+  for already-applied rows before letting `migrate!().run()` enforce
+  its mismatch check. The schema is unchanged; only the recorded
+  hash is updated. Brand-new installs are detected and bypass the
+  heal entirely.
+- **Pre-migration snapshot** — every successful startup copies the
+  live `app.db` to `app.db.pre-migrate.bak` next to it BEFORE
+  `migrate!()` touches the schema. Best-effort (logged warn on I/O
+  failure rather than aborting startup), single rotated copy
+  (overwritten each launch). The daily auto-backup in
+  `~/Documents/Getpostcraft/backups/` continues to cover archival
+  recovery — this snapshot closes the 5-minute window between
+  upgrade install and the first daily backup. See
+  [docs/guides/recovery.md](docs/guides/recovery.md) for the
+  rollback procedure.
+
+### Hardened — visual renderer
 - **Brand color validation** — `Brand::resolve` now rejects anything
   that isn't a strict `#RRGGBB` hex (no `rgb()`, no 8-digit, no named
   colors) and falls back to the default with a warn log. Prevents
@@ -73,8 +93,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   want a tagged version.
 
 ### Tests
-- **+15 Rust** tests (visual chrome, role mapping, canvas-scaling,
-  brand hex validation across 7 invalid/valid inputs) → **174 / 174**.
+- **+21 Rust** tests (visual chrome, role mapping, canvas-scaling,
+  brand hex validation across 7 invalid/valid inputs, +6 DB
+  resilience: heal checksums repairs drift / noops on fresh DB /
+  noops on in-sync DB, snapshot copies+overwrites+noops) → **180 /
+  180**.
 - **+9 Python** tests (role whitelist + sequence sanity check) →
   **60 / 60** green.
 - **Frontend** tests retargeted at the new Dashboard / PostActions
