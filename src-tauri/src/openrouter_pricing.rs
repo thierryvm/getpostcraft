@@ -25,9 +25,25 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
+
+/// Shared HTTP client. `reqwest::Client` holds a connection pool internally;
+/// rebuilding one per refresh defeats keep-alive and pays the TLS handshake
+/// each time. Sourcery flagged this on PR #49 — kept as a `OnceLock` static
+/// so the fire-and-forget startup task and manual user refreshes share one
+/// pool. `OnceLock` is in std (no extra dep) and matches the convention used
+/// by `sidecar::python_executable`.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .expect("reqwest::Client default config must build")
+    })
+}
 
 /// One row of the cache. Fields match the shape `price_for` expects.
 #[derive(Debug, Clone, Copy)]
@@ -38,15 +54,24 @@ pub struct LivePrice {
     pub output_per_million: f64,
 }
 
-/// Snapshot of the live pricing table. Cloned cheaply (Arc'd map of small
-/// values) so callers can read without holding the RwLock during their work.
+/// Snapshot of the live pricing table.
+///
+/// **Clone cost**: `PricingSnapshot` owns its `HashMap<String, (f64, f64)>`
+/// directly, so `.clone()` performs a deep copy proportional to the number
+/// of indexed models. At ~300-500 OpenRouter entries × ~50 bytes each the
+/// per-clone cost is ~25 KB — fine for the few-times-per-session cadence
+/// the Tauri commands clone at, but not "free" if a future polling
+/// scheduler ever clones per-tick. If clone-cost ever matters, switch
+/// `prices` to `Arc<HashMap<...>>` for cheap sharing.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PricingSnapshot {
     /// `model_id → (input, output)` per million tokens, USD.
     /// Empty when no successful fetch has run yet.
     pub prices: HashMap<String, (f64, f64)>,
-    /// When the last fetch completed (RFC 3339 UTC). `None` until first success.
-    pub last_refreshed_at: Option<String>,
+    /// When the last fetch completed. `None` until first success.
+    /// Serialised as RFC 3339 so the JSON shape returned to the renderer
+    /// stays compatible with `Date(string)` parsing in TypeScript.
+    pub last_refreshed_at: Option<DateTime<Utc>>,
     /// Last error message from a failed fetch, if any. Cleared on next success.
     pub last_error: Option<String>,
 }
@@ -75,17 +100,18 @@ pub fn lookup_live(cache: &PricingCache, model_id: &str) -> Option<LivePrice> {
     })
 }
 
+/// Parse an OpenRouter price string into `f64`. Returns `None` for missing
+/// or unparseable values, `Some(0.0)` for the literal `"0"` (genuinely free
+/// models). Pulled out so the refresh loop reads as a linear pipeline.
+fn parse_price(raw: Option<&str>) -> Option<f64> {
+    raw?.parse::<f64>().ok()
+}
+
 /// Fetch the full catalog and replace the cache. Returns the count of rows
 /// indexed on success. Errors are stored in the snapshot's `last_error` and
 /// returned to the caller so a manual-refresh UI can surface them.
 pub async fn refresh(cache: &PricingCache) -> Result<usize, String> {
-    let url = OPENROUTER_MODELS_URL.to_string();
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let response = match client.get(&url).send().await {
+    let response = match http_client().get(OPENROUTER_MODELS_URL).send().await {
         Ok(r) => r,
         Err(e) => {
             let msg = format!("OpenRouter pricing fetch failed: {e}");
@@ -138,28 +164,33 @@ pub async fn refresh(cache: &PricingCache) -> Result<usize, String> {
         }
     };
 
-    // Convert per-token prices to per-million-tokens. Skip models that
-    // don't quote both halves — they're typically free-tier or
-    // experimental endpoints we don't want to cost-track anyway.
+    // Convert per-token prices to per-million-tokens. Indexing rules,
+    // post-Sourcery review:
+    //
+    // - Skip entries that don't carry a `pricing` block at all (incomplete
+    //   catalog rows).
+    // - Skip entries where BOTH prompt and completion fail to parse — that
+    //   indicates a malformed row, not a free model. Genuine free models
+    //   carry the literal string "0" (not "" or null); those parse cleanly
+    //   to 0.0 and are KEPT, so the user sees them in the model picker
+    //   alongside paid options.
     let mut prices = HashMap::with_capacity(body.data.len());
     for entry in body.data {
         let Some(p) = entry.pricing else { continue };
-        let prompt_per_token: f64 = p
-            .prompt
-            .as_deref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0);
-        let completion_per_token: f64 = p
-            .completion
-            .as_deref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0);
-        // A genuine zero is fine (free models), but if BOTH parsed to 0.0
-        // and the input wasn't literally "0", treat as missing — defensive
-        // against unparseable values being silently mistaken for "free".
-        if prompt_per_token == 0.0 && completion_per_token == 0.0 {
+        let prompt = parse_price(p.prompt.as_deref());
+        let completion = parse_price(p.completion.as_deref());
+        // Both unparseable → drop. At least one parsed → keep, treating the
+        // missing side as 0.0 so a model that only quotes prompt-cost
+        // (rare) doesn't get its row priced as parse-failure-zero.
+        let (Some(prompt_per_token), completion_per_token) = (prompt, completion.unwrap_or(0.0))
+        else {
+            // First binding failed: prompt unparseable. Try the inverse — if
+            // completion alone is valid, keep with prompt = 0.
+            if let Some(completion_per_token) = completion {
+                prices.insert(entry.id, (0.0, completion_per_token * 1_000_000.0));
+            }
             continue;
-        }
+        };
         prices.insert(
             entry.id,
             (
@@ -170,7 +201,7 @@ pub async fn refresh(cache: &PricingCache) -> Result<usize, String> {
     }
 
     let count = prices.len();
-    let now = Utc::now().to_rfc3339();
+    let now = Utc::now();
     if let Ok(mut snap) = cache.write() {
         snap.prices = prices;
         snap.last_refreshed_at = Some(now);
@@ -188,13 +219,10 @@ pub fn is_stale(cache: &PricingCache, max_age_secs: i64) -> bool {
     let Ok(snap) = cache.read() else {
         return true;
     };
-    let Some(ts) = snap.last_refreshed_at.as_ref() else {
+    let Some(last) = snap.last_refreshed_at else {
         return true;
     };
-    let Ok(parsed) = ts.parse::<DateTime<Utc>>() else {
-        return true;
-    };
-    (Utc::now() - parsed).num_seconds() > max_age_secs
+    (Utc::now() - last).num_seconds() > max_age_secs
 }
 
 #[cfg(test)]
@@ -229,15 +257,30 @@ mod tests {
     #[test]
     fn is_stale_false_when_freshly_refreshed() {
         let cache = new_cache();
-        cache.write().unwrap().last_refreshed_at = Some(Utc::now().to_rfc3339());
+        cache.write().unwrap().last_refreshed_at = Some(Utc::now());
         assert!(!is_stale(&cache, 3600));
     }
 
     #[test]
     fn is_stale_true_when_older_than_max_age() {
         let cache = new_cache();
-        let two_hours_ago = (Utc::now() - chrono::Duration::seconds(7200)).to_rfc3339();
+        let two_hours_ago = Utc::now() - chrono::Duration::seconds(7200);
         cache.write().unwrap().last_refreshed_at = Some(two_hours_ago);
         assert!(is_stale(&cache, 3600));
+    }
+
+    #[test]
+    fn parse_price_handles_zero_string_as_free() {
+        // OpenRouter quotes free models as "0" — must not be confused with
+        // a parse failure (which `unwrap_or(0.0)` would mask).
+        assert_eq!(parse_price(Some("0")), Some(0.0));
+        assert_eq!(parse_price(Some("0.000003")), Some(0.000003));
+    }
+
+    #[test]
+    fn parse_price_returns_none_on_missing_or_garbage() {
+        assert_eq!(parse_price(None), None);
+        assert_eq!(parse_price(Some("")), None);
+        assert_eq!(parse_price(Some("not a number")), None);
     }
 }
