@@ -232,6 +232,14 @@ export function ContentPreview() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const [publishedInSession, setPublishedInSession] = useState(false);
+  /**
+   * Network media id (Instagram numeric id, LinkedIn URN) for the currently
+   * loaded post. Populated from the persisted post when a draft is reopened
+   * AND set when a fresh publish succeeds — so the "Voir sur {network}"
+   * button works whether the post was just published this session or
+   * surfaced from history days later.
+   */
+  const [publishedMediaId, setPublishedMediaId] = useState<string | null>(null);
   // Inline caption editing
   const [isEditingCaption, setIsEditingCaption] = useState(false);
   const [editCaption, setEditCaption] = useState("");
@@ -243,8 +251,11 @@ export function ContentPreview() {
       if (network === "linkedin") return publishLinkedinPost(draftId);
       return publishPost(draftId);
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       setPublishedInSession(true);
+      // Capture the URN / IG media id so the "Voir sur" link works for
+      // freshly-published posts the same way it does for reopened ones.
+      setPublishedMediaId(result.media_id);
       queryClient.invalidateQueries({ queryKey: ["post_history"] });
     },
   });
@@ -277,6 +288,7 @@ export function ContentPreview() {
       setIsEditingCaption(false);
       setEditCaption("");
       setPublishedInSession(false);
+      setPublishedMediaId(null);
       setTemplate("post");
       setCode("");
       setLanguage("bash");
@@ -315,6 +327,10 @@ export function ContentPreview() {
         setHashtags(post.hashtags);
         setDraftId(post.id);
         setPublishedInSession(post.status === "published");
+        // Carry the network media id over so the "Voir sur {network}" link
+        // works on already-published posts reopened from Dashboard / Calendar
+        // too — not just freshly-published ones from the publish mutation.
+        setPublishedMediaId(post.ig_media_id);
         // Restore a usable brief so "Régénérer" / carousel "Générer" buttons
         // don't silently no-op. We don't store the original brief on the
         // post (only caption + hashtags), so the caption itself becomes the
@@ -960,7 +976,10 @@ export function ContentPreview() {
                 is sitting on top — full permalink fetch is a v0.3.7 enhancement. */}
             {publishedInSession && (() => {
               const account = allAccounts.find((a) => a.id === accountId);
-              const mediaId = publishMutation.data?.media_id;
+              // Prefer the freshly-published mutation result, fall back to
+              // the value captured from a reopened post. Either path lands
+              // here; the local state covers both.
+              const mediaId = publishMutation.data?.media_id ?? publishedMediaId;
               let url: string | null = null;
               if (network === "linkedin" && mediaId) {
                 url = `https://www.linkedin.com/feed/update/${encodeURIComponent(mediaId)}/`;
