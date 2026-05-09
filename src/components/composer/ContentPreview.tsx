@@ -377,7 +377,7 @@ export function ContentPreview() {
       const slides = await generateCarousel(brief, network, slideCount, accountId);
       setCarouselSlides(slides);
       setCarouselIndex(0);
-      const images = await renderCarouselSlides(slides, brand);
+      const images = await renderCarouselSlides(slides, brand, imageFormat.width, imageFormat.height);
       setCarouselImages(images);
       // Save draft so the publish button becomes available.
       // Caption = first slide title + body; image = first slide render.

@@ -387,58 +387,96 @@ fn build_terminal_html(
     )
 }
 
-fn build_carousel_slide_html(slide: &CarouselSlide, brand: &Brand) -> String {
-    let dots: String = (1..=slide.total)
-        .map(|i| {
-            if i == slide.index {
-                r#"<div class="dot active"></div>"#.to_string()
-            } else {
-                r#"<div class="dot"></div>"#.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("");
-
+/// Build the HTML for a single carousel slide.
+///
+/// Visual grammar (v0.3.6, inspired by hand-crafted reference posts):
+/// - Subtle 60×60px grid background (#161b22 stroke @ ~6% opacity) provides
+///   a tech-niche texture without competing with the content.
+/// - Counter top-right in monospace dim grey (`01 / 07` style).
+/// - Brand stamp bottom-right `>_ @handle` in monospace, branded color.
+/// - Content is left-aligned within the upper 2/3 of the canvas: title in
+///   bold sans-serif, accent rule, then body. Emoji becomes an optional
+///   pill in the top-left so it never has to fight the title for visual
+///   weight.
+///
+/// All sizes are derived from `width` so the same template renders cleanly
+/// at 1080×1080 (square) and 1080×1350 (4:5 portrait, the new IG default).
+fn build_carousel_slide_html(
+    slide: &CarouselSlide,
+    width: u32,
+    height: u32,
+    brand: &Brand,
+) -> String {
     let handle_escaped = html_escape(&brand.handle);
     let brand_color = &brand.brand_color;
+
+    // Typography scale derived from canvas width — keeps proportions on
+    // both 1080² and 1080×1350. Hero titles are intentionally large so
+    // mobile-feed scrolls are stopped without resorting to all-caps.
+    let w = width as f32;
+    let pad = (w * 0.072).round() as u32; // 78px @ 1080
+    let title_size = (w * 0.082).round() as u32; // 88px @ 1080
+    let body_size = (w * 0.027).round() as u32; // 30px @ 1080
+    let chrome_size = (w * 0.02).round() as u32; // 22px @ 1080
+    let badge_size = (w * 0.02).round() as u32; // 22px @ 1080
+    let accent_height = (w * 0.005).round().max(4.0) as u32;
+    let accent_width = (w * 0.06).round() as u32;
+
+    let badge_html = if slide.emoji.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<div class="badge"><span class="badge-mark">{mark}</span><span class="badge-label">{label}</span></div>"#,
+            mark = html_escape(&slide.emoji),
+            label = html_escape(slide_label(slide.index, slide.total)),
+        )
+    };
+
+    // Encoded as a data URI so Chromium renders it without an extra fetch.
+    // One <pattern> repeats across the full body. Stroke colour stays cool
+    // grey so the grid doesn't compete with the brand accent.
+    let grid_svg = "data:image/svg+xml;utf8,\
+        %3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2760%27%20height%3D%2760%27%3E\
+        %3Cpath%20d%3D%27M%2060%200%20L%200%200%200%2060%27%20fill%3D%27none%27%20stroke%3D%27%23161b22%27%20stroke-width%3D%271%27%2F%3E%3C%2Fsvg%3E";
+
     let css = format!(
         "*{{margin:0;padding:0;box-sizing:border-box}}\
-         body{{width:1080px;height:1080px;background:#0d1117;\
-         font-family:'Segoe UI',system-ui,-apple-system,sans-serif;\
-         display:flex;flex-direction:column;align-items:center;\
-         justify-content:center;padding:80px;position:relative}}\
-         .brand{{position:absolute;top:40px;right:48px;font-size:22px;\
-         color:{brand_color};font-weight:700;letter-spacing:.04em}}\
-         .counter{{position:absolute;top:40px;left:48px;font-size:22px;\
-         color:#8b949e;font-weight:500}}\
-         .content{{display:flex;flex-direction:column;align-items:center;\
-         text-align:center;max-width:900px}}\
-         .emoji{{font-size:104px;line-height:1;margin-bottom:48px}}\
-         .title{{font-size:58px;font-weight:800;color:#fff;\
-         line-height:1.15;margin-bottom:28px}}\
-         .accent{{width:64px;height:5px;background:{brand_color};\
-         border-radius:3px;margin-bottom:36px}}\
-         .body{{font-size:30px;color:#c9d1d9;line-height:1.6}}\
-         .dots{{position:absolute;bottom:44px;left:50%;\
-         transform:translateX(-50%);display:flex;gap:10px;align-items:center}}\
-         .dot{{width:10px;height:10px;border-radius:50%;background:#30363d}}\
-         .dot.active{{width:28px;height:10px;border-radius:5px;background:{brand_color}}}",
+         body{{width:{width}px;height:{height}px;background:#0d1117;\
+         background-image:url(\"{grid_svg}\");background-size:60px 60px;\
+         font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;\
+         color:#e6edf3;position:relative;overflow:hidden;padding:{pad}px;\
+         display:flex;flex-direction:column;justify-content:flex-start}}\
+         .badge{{display:inline-flex;align-items:center;gap:8px;\
+         padding:8px 16px;border-radius:999px;border:1px solid {brand_color}55;\
+         background:{brand_color}1f;color:{brand_color};\
+         font-family:'JetBrains Mono','SF Mono','Fira Code',Consolas,monospace;\
+         font-size:{badge_size}px;font-weight:600;letter-spacing:.04em;\
+         margin-bottom:{pad}px;width:max-content;max-width:80%}}\
+         .badge-mark{{font-size:1em}}\
+         .counter{{position:absolute;top:{pad}px;right:{pad}px;\
+         font-family:'JetBrains Mono','SF Mono','Fira Code',Consolas,monospace;\
+         font-size:{chrome_size}px;color:#8b949e;letter-spacing:.12em}}\
+         .stamp{{position:absolute;bottom:{pad}px;right:{pad}px;\
+         font-family:'JetBrains Mono','SF Mono','Fira Code',Consolas,monospace;\
+         font-size:{chrome_size}px;color:{brand_color};opacity:.85;letter-spacing:.06em}}\
+         .stamp-prompt{{color:{brand_color};opacity:.7;margin-right:6px}}\
+         .title{{font-size:{title_size}px;font-weight:800;color:#fff;\
+         line-height:1.08;letter-spacing:-0.02em;max-width:90%}}\
+         .accent{{width:{accent_width}px;height:{accent_height}px;\
+         background:{brand_color};border-radius:3px;margin:32px 0 28px}}\
+         .body{{font-size:{body_size}px;color:#c9d1d9;line-height:1.55;\
+         max-width:88%}}",
     );
 
-    let mut html = String::with_capacity(3500);
-    html.push_str(r#"<!DOCTYPE html><html><head><meta charset="UTF-8"><style>"#);
+    let mut html = String::with_capacity(3800);
+    html.push_str(r#"<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><style>"#);
     html.push_str(&css);
     html.push_str("</style></head><body>");
-    html.push_str(&format!(r#"<div class="brand">@{handle_escaped}</div>"#));
     html.push_str(&format!(
-        r#"<div class="counter">{}/{}</div>"#,
+        r#"<div class="counter">{:02} / {:02}</div>"#,
         slide.index, slide.total
     ));
-    html.push_str(r#"<div class="content">"#);
-    html.push_str(&format!(
-        r#"<div class="emoji">{}</div>"#,
-        html_escape(&slide.emoji)
-    ));
+    html.push_str(&badge_html);
     html.push_str(&format!(
         r#"<div class="title">{}</div>"#,
         html_escape(&slide.title)
@@ -448,10 +486,25 @@ fn build_carousel_slide_html(slide: &CarouselSlide, brand: &Brand) -> String {
         r#"<div class="body">{}</div>"#,
         html_escape(&slide.body).replace('\n', "<br>"),
     ));
-    html.push_str("</div>");
-    html.push_str(&format!(r#"<div class="dots">{}</div>"#, dots));
+    html.push_str(&format!(
+        r#"<div class="stamp"><span class="stamp-prompt">&gt;_</span>@{handle_escaped}</div>"#
+    ));
     html.push_str("</body></html>");
     html
+}
+
+/// Tiny helper that maps the slide's position to a section label used in the
+/// top-left badge. The first slide is always "intro", the last "conclusion",
+/// everything in between mirrors the slide number so the user has visual
+/// landmarks. Section-typed roles (problème / approche / etc.) come in v0.3.7.
+fn slide_label(index: u8, total: u8) -> &'static str {
+    if index == 1 {
+        "intro"
+    } else if index == total {
+        "à toi"
+    } else {
+        "lis-moi"
+    }
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
@@ -516,17 +569,25 @@ pub async fn render_terminal_image(
 }
 
 /// Render each carousel slide to PNG. Returns Vec of base64 data URLs (same order as input).
+///
+/// Accepts an explicit canvas size so the renderer follows the format the
+/// user picks in the Composer. Defaulting to the IG 4:5 portrait (1080×1350)
+/// gives more vertical real-estate for the typography-heavy templates.
 #[tauri::command]
 pub async fn render_carousel_slides(
     slides: Vec<CarouselSlide>,
     handle: Option<String>,
     brand_color: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
 ) -> Result<Vec<String>, String> {
     let brand = Brand::resolve(handle.as_deref(), brand_color.as_deref());
+    let w = width.unwrap_or(1080);
+    let h = height.unwrap_or(1350);
     let mut images = Vec::with_capacity(slides.len());
     for slide in &slides {
         let data_url =
-            render_to_base64(&build_carousel_slide_html(slide, &brand), 1080, 1080).await?;
+            render_to_base64(&build_carousel_slide_html(slide, w, h, &brand), w, h).await?;
         images.push(data_url);
     }
     Ok(images)
@@ -637,9 +698,72 @@ mod tests {
             title: "Title".to_string(),
             body: "Body".to_string(),
         };
-        let html = build_carousel_slide_html(&slide, &brand);
+        let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
         assert!(html.contains("@ankora"));
         assert!(html.contains("#0d9488"));
+    }
+
+    #[test]
+    fn carousel_html_renders_monospace_chrome_and_grid() {
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = CarouselSlide {
+            index: 3,
+            total: 7,
+            emoji: "✦".into(),
+            title: "Hello".into(),
+            body: "World".into(),
+        };
+        let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
+        // Monospace counter (XX / YY zero-padded) — the visual signature.
+        assert!(
+            html.contains("03 / 07"),
+            "counter must be zero-padded XX / YY"
+        );
+        // Brand stamp prompt prefix.
+        assert!(
+            html.contains("&gt;_"),
+            "stamp must include the >_ shell prompt prefix"
+        );
+        // Grid background pattern (data URI signature).
+        assert!(
+            html.contains("data:image/svg+xml"),
+            "background grid must be inlined as SVG"
+        );
+        // Tech-niche font stack — JetBrains Mono first.
+        assert!(
+            html.contains("JetBrains Mono"),
+            "monospace stack must lead with JetBrains Mono"
+        );
+    }
+
+    #[test]
+    fn carousel_html_scales_with_canvas_dimensions() {
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = CarouselSlide {
+            index: 1,
+            total: 5,
+            emoji: "x".into(),
+            title: "Test".into(),
+            body: "Body".into(),
+        };
+        // Portrait (1080×1350) and square (1080×1080) must both render at the
+        // same width — the typography scale is width-derived, not height.
+        let portrait = build_carousel_slide_html(&slide, 1080, 1350, &brand);
+        let square = build_carousel_slide_html(&slide, 1080, 1080, &brand);
+        assert!(portrait.contains("width:1080px"));
+        assert!(portrait.contains("height:1350px"));
+        assert!(square.contains("width:1080px"));
+        assert!(square.contains("height:1080px"));
+    }
+
+    #[test]
+    fn slide_label_marks_intro_and_outro_distinctly() {
+        assert_eq!(slide_label(1, 5), "intro");
+        assert_eq!(slide_label(5, 5), "à toi");
+        assert_eq!(slide_label(3, 5), "lis-moi");
+        // Single-slide carousel: opening trumps closing — keep "intro" so
+        // a degenerate 1-slide post still reads as a hook.
+        assert_eq!(slide_label(1, 1), "intro");
     }
 
     #[test]
@@ -656,7 +780,7 @@ mod tests {
             title: "x".into(),
             body: "x".into(),
         };
-        let car = build_carousel_slide_html(&slide, &brand);
+        let car = build_carousel_slide_html(&slide, 1080, 1350, &brand);
         for html in [&post, &code, &term, &car] {
             assert!(
                 !html.contains("@terminallearning"),
