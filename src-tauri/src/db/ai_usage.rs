@@ -63,7 +63,15 @@ pub struct UsageByModel {
 /// Build the summary from raw rows. Cost is computed here using the
 /// pricing map in `network_rules` so a price update doesn't require a
 /// data migration — the historical token counts stay valid.
-pub async fn summarise(pool: &SqlitePool) -> Result<UsageSummary, String> {
+///
+/// `pricing_cache` is consulted first; when a model is in OpenRouter's
+/// live catalog we use the up-to-date rate, otherwise we fall back to
+/// the static table. This means re-opening the panel after an
+/// OpenRouter pricing refresh re-prices historical rows automatically.
+pub async fn summarise(
+    pool: &SqlitePool,
+    pricing_cache: &crate::openrouter_pricing::PricingCache,
+) -> Result<UsageSummary, String> {
     use chrono::{Datelike, Utc};
 
     let now = Utc::now();
@@ -98,7 +106,8 @@ pub async fn summarise(pool: &SqlitePool) -> Result<UsageSummary, String> {
         let input_tokens: i64 = row.get("input_tokens");
         let output_tokens: i64 = row.get("output_tokens");
 
-        let (price_in, price_out, estimated) = crate::network_rules::price_for(&model);
+        let (price_in, price_out, estimated) =
+            crate::network_rules::price_for_with_live_cache(&model, pricing_cache);
         // price_* are USD per million tokens; tokens / 1_000_000 * price_*
         let cost_usd = (input_tokens as f64 / 1_000_000.0) * price_in
             + (output_tokens as f64 / 1_000_000.0) * price_out;
@@ -142,7 +151,8 @@ pub async fn summarise(pool: &SqlitePool) -> Result<UsageSummary, String> {
         let model: String = row.get("model");
         let input_tokens: i64 = row.get("input_tokens");
         let output_tokens: i64 = row.get("output_tokens");
-        let (price_in, price_out, _) = crate::network_rules::price_for(&model);
+        let (price_in, price_out, _) =
+            crate::network_rules::price_for_with_live_cache(&model, pricing_cache);
         total_cost_month += (input_tokens as f64 / 1_000_000.0) * price_in
             + (output_tokens as f64 / 1_000_000.0) * price_out;
     }
@@ -182,7 +192,8 @@ mod tests {
     #[tokio::test]
     async fn summarise_empty_db_returns_zero_with_no_models() {
         let pool = fresh_pool().await;
-        let s = summarise(&pool).await.expect("summarise");
+        let cache = crate::openrouter_pricing::new_cache();
+        let s = summarise(&pool, &cache).await.expect("summarise");
         assert_eq!(s.calls_30d, 0);
         assert_eq!(s.cost_usd_30d, 0.0);
         assert_eq!(s.cost_usd_month, 0.0);
@@ -230,7 +241,8 @@ mod tests {
         .await
         .unwrap();
 
-        let s = summarise(&pool).await.expect("summarise");
+        let cache = crate::openrouter_pricing::new_cache();
+        let s = summarise(&pool, &cache).await.expect("summarise");
         assert_eq!(s.calls_30d, 3);
 
         // Sonnet line — exact cost match validates the input/output ratio
@@ -285,7 +297,8 @@ mod tests {
         .await
         .unwrap();
 
-        let s = summarise(&pool).await.expect("summarise");
+        let cache = crate::openrouter_pricing::new_cache();
+        let s = summarise(&pool, &cache).await.expect("summarise");
         assert_eq!(s.calls_30d, 1, "old row must be filtered out");
     }
 
@@ -317,7 +330,8 @@ mod tests {
         .await
         .unwrap();
 
-        let s = summarise(&pool).await.expect("summarise");
+        let cache = crate::openrouter_pricing::new_cache();
+        let s = summarise(&pool, &cache).await.expect("summarise");
         assert!(
             s.by_model_30d[0].cost_usd >= s.by_model_30d[1].cost_usd,
             "rows must be sorted by cost descending"

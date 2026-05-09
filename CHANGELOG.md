@@ -8,6 +8,34 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.3.7] — 2026-05-10
+
+### Added
+- **Live OpenRouter pricing** — replaces the hardcoded `pricing_map()` with
+  a fetch from `https://openrouter.ai/api/v1/models`. Refreshed once 5 s
+  after startup (fire-and-forget) and on demand from a new "Rafraîchir"
+  button in Settings → Intelligence Artificielle → Coût d'utilisation.
+  When OpenRouter is unreachable the static fallback table answers
+  correctly — live pricing is purely a freshness boost. Anthropic native
+  and Ollama models stay on the static table since they don't go through
+  OpenRouter.
+- **Pricing freshness banner** in the AI usage panel: shows model count,
+  last-refresh relative time ("il y a 3 minutes"), and any error from
+  the most recent fetch.
+
+### Changed
+- `network_rules::price_for_with_live_cache` joins the live cache lookup
+  with the existing static fallback. Historical token counts re-price
+  automatically when the cache refreshes — no migration needed.
+- `db::ai_usage::summarise` now takes a `&PricingCache` so cost
+  computation uses live rates when available.
+
+### Tests
+- **+5 Rust** tests on the pricing cache (new_cache empty, populated lookup,
+  is_stale never-filled / freshly-refreshed / older-than-max-age) →
+  **187 / 187** Rust.
+- Frontend + Python unchanged.
+
 ## [0.3.6] — 2026-05-09
 
 ### Fixed
