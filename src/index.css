@@ -58,3 +58,22 @@ body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
 }
+
+/* Native <input type="date"> and <input type="time"> render their picker
+ * indicator (clock / calendar icon) with the user agent's default colors —
+ * black-on-light. On the dark #0d1117 theme that icon disappears against
+ * the dark input background. Inverting + dimming brings it back to a
+ * readable grey without us having to ship a custom date/time picker. */
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.85) brightness(0.9);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+input[type="time"]::-webkit-calendar-picker-indicator:hover,
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
