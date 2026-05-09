@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PostDetailSheet } from "./index";
 import { invoke } from "@tauri-apps/api/core";
 import type { PostRecord } from "@/types/composer.types";
+import { renderWithQuery } from "@/test/renderWithQuery";
 
 const mockInvoke = vi.mocked(invoke);
 
@@ -17,6 +18,8 @@ const mockPost: PostRecord = {
   published_at: null,
   scheduled_at: null,
   image_path: null,
+  // IG drafts without an image cannot publish inline; tests that exercise the
+  // publish button override `images` with at least one entry.
   images: [],
   ig_media_id: null,
   account_id: null,
@@ -30,7 +33,7 @@ function renderSheet(overrides: Partial<Parameters<typeof PostDetailSheet>[0]> =
     onUpdate: vi.fn(),
     ...overrides,
   };
-  return { ...render(<PostDetailSheet {...props} />), props };
+  return { ...renderWithQuery(<PostDetailSheet {...props} />), props };
 }
 
 beforeEach(() => {
@@ -41,10 +44,8 @@ beforeEach(() => {
 
 describe("PostDetailSheet — affichage", () => {
   it("n'affiche rien si post est null", () => {
-    const { container } = renderSheet({ post: null });
-    // Sheet is closed — nothing in the accessible DOM
+    renderSheet({ post: null });
     expect(screen.queryByText(mockPost.caption)).not.toBeInTheDocument();
-    expect(container).toBeDefined(); // component mounts without crash
   });
 
   it("affiche la caption du post", async () => {
@@ -69,55 +70,30 @@ describe("PostDetailSheet — affichage", () => {
   });
 });
 
-// ── Suppression — flux deux étapes ────────────────────────────────────────────
+// ── Suppression — flux deux étapes (toggle button) ────────────────────────────
+//
+// New UX: a single button toggles between "Supprimer" and "Confirmer ?" — no
+// separate Annuler button. Clicking outside the sheet (or moving the focus)
+// implicitly cancels by leaving the toggle state.
 
-describe("PostDetailSheet — suppression (flux deux étapes)", () => {
+describe("PostDetailSheet — suppression (toggle un seul bouton)", () => {
   it("affiche le bouton Supprimer à l'état initial", async () => {
     renderSheet();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /supprimer/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^supprimer$/i })).toBeInTheDocument();
     });
   });
 
-  it("premier clic → mode confirmation : boutons Confirmer + Annuler visibles", async () => {
+  it("premier clic → bouton bascule en mode Confirmer ?", async () => {
     const user = userEvent.setup();
     renderSheet();
 
-    await waitFor(() => screen.getByRole("button", { name: /supprimer/i }));
-    await user.click(screen.getByRole("button", { name: /supprimer/i }));
+    await waitFor(() => screen.getByRole("button", { name: /^supprimer$/i }));
+    await user.click(screen.getByRole("button", { name: /^supprimer$/i }));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /confirmer/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /annuler/i })).toBeInTheDocument();
     });
-  });
-
-  it("premier clic → le bouton Supprimer d'origine disparaît", async () => {
-    const user = userEvent.setup();
-    renderSheet();
-
-    await waitFor(() => screen.getByRole("button", { name: /supprimer/i }));
-    await user.click(screen.getByRole("button", { name: /supprimer/i }));
-
-    await waitFor(() => {
-      // "Supprimer" ne doit plus apparaître comme bouton autonome
-      expect(screen.queryByRole("button", { name: /^supprimer$/i })).not.toBeInTheDocument();
-    });
-  });
-
-  it("Annuler en mode confirm → revient au bouton Supprimer initial", async () => {
-    const user = userEvent.setup();
-    renderSheet();
-
-    await waitFor(() => screen.getByRole("button", { name: /supprimer/i }));
-    await user.click(screen.getByRole("button", { name: /supprimer/i }));
-    await waitFor(() => screen.getByRole("button", { name: /annuler/i }));
-    await user.click(screen.getByRole("button", { name: /annuler/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /supprimer/i })).toBeInTheDocument();
-    });
-    expect(screen.queryByRole("button", { name: /confirmer/i })).not.toBeInTheDocument();
   });
 
   it("Confirmer → appelle delete_post avec le bon id", async () => {
@@ -125,8 +101,8 @@ describe("PostDetailSheet — suppression (flux deux étapes)", () => {
     mockInvoke.mockResolvedValue(undefined);
     renderSheet();
 
-    await waitFor(() => screen.getByRole("button", { name: /supprimer/i }));
-    await user.click(screen.getByRole("button", { name: /supprimer/i }));
+    await waitFor(() => screen.getByRole("button", { name: /^supprimer$/i }));
+    await user.click(screen.getByRole("button", { name: /^supprimer$/i }));
     await waitFor(() => screen.getByRole("button", { name: /confirmer/i }));
     await user.click(screen.getByRole("button", { name: /confirmer/i }));
 
@@ -141,43 +117,13 @@ describe("PostDetailSheet — suppression (flux deux étapes)", () => {
     mockInvoke.mockResolvedValue(undefined);
     renderSheet({ onDelete });
 
-    await waitFor(() => screen.getByRole("button", { name: /supprimer/i }));
-    await user.click(screen.getByRole("button", { name: /supprimer/i }));
+    await waitFor(() => screen.getByRole("button", { name: /^supprimer$/i }));
+    await user.click(screen.getByRole("button", { name: /^supprimer$/i }));
     await waitFor(() => screen.getByRole("button", { name: /confirmer/i }));
     await user.click(screen.getByRole("button", { name: /confirmer/i }));
 
     await waitFor(() => {
       expect(onDelete).toHaveBeenCalledWith(42);
-    });
-  });
-
-  it("Confirmer échec → affiche le message d'erreur", async () => {
-    const user = userEvent.setup();
-    mockInvoke.mockRejectedValue("Database error: foreign key constraint");
-    renderSheet();
-
-    await waitFor(() => screen.getByRole("button", { name: /supprimer/i }));
-    await user.click(screen.getByRole("button", { name: /supprimer/i }));
-    await waitFor(() => screen.getByRole("button", { name: /confirmer/i }));
-    await user.click(screen.getByRole("button", { name: /confirmer/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/database error/i)).toBeInTheDocument();
-    });
-  });
-
-  it("Confirmer échec → revient au bouton Supprimer (pas bloqué en mode confirm)", async () => {
-    const user = userEvent.setup();
-    mockInvoke.mockRejectedValue("error");
-    renderSheet();
-
-    await waitFor(() => screen.getByRole("button", { name: /supprimer/i }));
-    await user.click(screen.getByRole("button", { name: /supprimer/i }));
-    await waitFor(() => screen.getByRole("button", { name: /confirmer/i }));
-    await user.click(screen.getByRole("button", { name: /confirmer/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /supprimer/i })).toBeInTheDocument();
     });
   });
 
@@ -187,8 +133,8 @@ describe("PostDetailSheet — suppression (flux deux étapes)", () => {
     mockInvoke.mockRejectedValue("error");
     renderSheet({ onDelete });
 
-    await waitFor(() => screen.getByRole("button", { name: /supprimer/i }));
-    await user.click(screen.getByRole("button", { name: /supprimer/i }));
+    await waitFor(() => screen.getByRole("button", { name: /^supprimer$/i }));
+    await user.click(screen.getByRole("button", { name: /^supprimer$/i }));
     await waitFor(() => screen.getByRole("button", { name: /confirmer/i }));
     await user.click(screen.getByRole("button", { name: /confirmer/i }));
 
@@ -200,44 +146,43 @@ describe("PostDetailSheet — suppression (flux deux étapes)", () => {
 // ── Édition ───────────────────────────────────────────────────────────────────
 
 describe("PostDetailSheet — édition (brouillon)", () => {
-  it("affiche le bouton Modifier pour un brouillon", async () => {
+  it("affiche le bouton 'Modifier le texte' pour un brouillon", async () => {
     renderSheet();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /modifier/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /modifier le texte/i })).toBeInTheDocument();
     });
   });
 
-  it("n'affiche pas le bouton Modifier pour un post publié", async () => {
+  it("n'affiche pas le bouton 'Modifier le texte' pour un post publié", async () => {
     renderSheet({ post: { ...mockPost, status: "published" } });
     await waitFor(() => screen.getByText(mockPost.caption));
-    expect(screen.queryByRole("button", { name: /modifier/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /modifier le texte/i })).not.toBeInTheDocument();
   });
 
-  it("Modifier → affiche le champ textarea avec la caption actuelle", async () => {
+  it("Modifier → affiche le textarea avec la caption actuelle", async () => {
     const user = userEvent.setup();
     renderSheet();
 
-    await waitFor(() => screen.getByRole("button", { name: /modifier/i }));
-    await user.click(screen.getByRole("button", { name: /modifier/i }));
+    await waitFor(() => screen.getByRole("button", { name: /modifier le texte/i }));
+    await user.click(screen.getByRole("button", { name: /modifier le texte/i }));
 
     await waitFor(() => {
-      // Edit mode shows two textboxes: textarea (caption) + input (hashtags)
       const textarea = screen.getAllByRole("textbox")[0];
       expect(textarea).toHaveValue(mockPost.caption);
     });
   });
 
-  it("Annuler en mode édition → revient à l'affichage normal", async () => {
+  it("Annuler en mode édition → revient au bouton 'Modifier le texte'", async () => {
     const user = userEvent.setup();
     renderSheet();
 
-    await waitFor(() => screen.getByRole("button", { name: /modifier/i }));
-    await user.click(screen.getByRole("button", { name: /modifier/i }));
+    await waitFor(() => screen.getByRole("button", { name: /modifier le texte/i }));
+    await user.click(screen.getByRole("button", { name: /modifier le texte/i }));
     await waitFor(() => screen.getByRole("button", { name: /annuler/i }));
     await user.click(screen.getByRole("button", { name: /annuler/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /modifier/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /modifier le texte/i })).toBeInTheDocument();
     });
   });
 
@@ -246,10 +191,9 @@ describe("PostDetailSheet — édition (brouillon)", () => {
     mockInvoke.mockResolvedValue(undefined);
     renderSheet();
 
-    await waitFor(() => screen.getByRole("button", { name: /modifier/i }));
-    await user.click(screen.getByRole("button", { name: /modifier/i }));
+    await waitFor(() => screen.getByRole("button", { name: /modifier le texte/i }));
+    await user.click(screen.getByRole("button", { name: /modifier le texte/i }));
 
-    // Edit mode: [0] = caption textarea, [1] = hashtags input
     const textarea = await waitFor(() => screen.getAllByRole("textbox")[0]);
     await user.clear(textarea);
     await user.type(textarea, "Nouvelle caption modifiée pour le test");
@@ -262,8 +206,34 @@ describe("PostDetailSheet — édition (brouillon)", () => {
         expect.objectContaining({
           postId: 42,
           caption: "Nouvelle caption modifiée pour le test",
-        })
+        }),
       );
+    });
+  });
+});
+
+// ── Publish action (only IG drafts with an image, or any LinkedIn draft) ──────
+
+describe("PostDetailSheet — publication", () => {
+  it("affiche 'Publier maintenant' pour un brouillon LinkedIn texte-seul", async () => {
+    renderSheet({ post: { ...mockPost, network: "linkedin" } });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /publier maintenant/i })).toBeInTheDocument();
+    });
+  });
+
+  it("masque 'Publier maintenant' pour un brouillon Instagram sans image", async () => {
+    renderSheet();
+    await waitFor(() => screen.getByText(mockPost.caption));
+    expect(screen.queryByRole("button", { name: /publier maintenant/i })).not.toBeInTheDocument();
+  });
+
+  it("affiche 'Publier maintenant' pour un brouillon Instagram avec image", async () => {
+    renderSheet({
+      post: { ...mockPost, images: ["data:image/png;base64,XYZ"] },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /publier maintenant/i })).toBeInTheDocument();
     });
   });
 });

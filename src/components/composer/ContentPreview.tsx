@@ -1,4 +1,5 @@
-import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers, Pencil } from "lucide-react";
+import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -181,6 +182,7 @@ export function ContentPreview() {
     setNetwork,
     setPendingDraftId,
     setAccountId,
+    setBrief,
   } = useComposerStore();
   const queryClient = useQueryClient();
   const { captionLimit, hashtagLimit, foldLimit, minRecommendedLength, recommendedLimit, label: networkLabel } = NETWORK_META[network];
@@ -194,8 +196,13 @@ export function ContentPreview() {
   });
   const brand: BrandOptions = useMemo(() => {
     const account = allAccounts.find((a) => a.id === accountId);
+    // Prefer the user-configured display_handle (e.g. "@terminallearning")
+    // over `username`. LinkedIn's OAuth fills username with the owner's
+    // full personal name, which is the wrong identity for the brand stamp;
+    // letting the user override fixes that without affecting Instagram
+    // accounts whose username is already a handle.
     return {
-      handle: account?.username ?? null,
+      handle: account?.display_handle ?? account?.username ?? null,
       brandColor: account?.brand_color ?? null,
     };
   }, [allAccounts, accountId]);
@@ -225,6 +232,14 @@ export function ContentPreview() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const [publishedInSession, setPublishedInSession] = useState(false);
+  /**
+   * Network media id (Instagram numeric id, LinkedIn URN) for the currently
+   * loaded post. Populated from the persisted post when a draft is reopened
+   * AND set when a fresh publish succeeds — so the "Voir sur {network}"
+   * button works whether the post was just published this session or
+   * surfaced from history days later.
+   */
+  const [publishedMediaId, setPublishedMediaId] = useState<string | null>(null);
   // Inline caption editing
   const [isEditingCaption, setIsEditingCaption] = useState(false);
   const [editCaption, setEditCaption] = useState("");
@@ -236,13 +251,24 @@ export function ContentPreview() {
       if (network === "linkedin") return publishLinkedinPost(draftId);
       return publishPost(draftId);
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       setPublishedInSession(true);
+      // Capture the URN / IG media id so the "Voir sur" link works for
+      // freshly-published posts the same way it does for reopened ones.
+      setPublishedMediaId(result.media_id);
       queryClient.invalidateQueries({ queryKey: ["post_history"] });
     },
   });
 
-  // Sync local hashtag state whenever a new result arrives; reset image + publish state
+  // Sync local hashtag state whenever a new result arrives; reset image + publish state.
+  //
+  // The `else` branch fires when "Nouveau post" / chip × is clicked: the
+  // store calls `resetForNewPost` which clears `result`, but ContentPreview
+  // also owns a dozen pieces of local state (hashtags, carousel images,
+  // template choice, code/terminal inputs…) that aren't in the store. Without
+  // this branch the right panel would keep showing the previous draft's
+  // caption / hashtags / carousel preview after the chip disappeared,
+  // confusing the user about whether the reset actually happened.
   useEffect(() => {
     if (result) {
       setHashtags(result.hashtags);
@@ -250,6 +276,25 @@ export function ContentPreview() {
       setRenderError(null);
       setPublishedInSession(false);
       setIsEditingCaption(false);
+    } else {
+      setHashtags([]);
+      setImageUrl(null);
+      setCarouselImages(null);
+      setCarouselSlides(null);
+      setCarouselIndex(0);
+      setRenderError(null);
+      setCarouselError(null);
+      setExportSuccess(null);
+      setIsEditingCaption(false);
+      setEditCaption("");
+      setPublishedInSession(false);
+      setPublishedMediaId(null);
+      setTemplate("post");
+      setCode("");
+      setLanguage("bash");
+      setFilename("");
+      setTermCommand("");
+      setTermOutput("");
     }
   }, [result]);
 
@@ -282,6 +327,17 @@ export function ContentPreview() {
         setHashtags(post.hashtags);
         setDraftId(post.id);
         setPublishedInSession(post.status === "published");
+        // Carry the network media id over so the "Voir sur {network}" link
+        // works on already-published posts reopened from Dashboard / Calendar
+        // too — not just freshly-published ones from the publish mutation.
+        setPublishedMediaId(post.ig_media_id);
+        // Restore a usable brief so "Régénérer" / carousel "Générer" buttons
+        // don't silently no-op. We don't store the original brief on the
+        // post (only caption + hashtags), so the caption itself becomes the
+        // working brief — the user can edit it in the left panel before
+        // regenerating. Trim to 480 chars so the brief schema's max(500)
+        // doesn't reject long published captions.
+        setBrief(post.caption.slice(0, 480));
         // Carousel vs single decided by image count, mirrors the publish backend.
         if (post.images.length > 1) {
           setTemplate("carousel");
@@ -318,7 +374,14 @@ export function ContentPreview() {
   }, [imageUrl]);
 
   const handleRegenerate = async () => {
-    if (!brief) return;
+    if (!brief.trim()) {
+      // Surface the precondition instead of silent-failing — used to be a
+      // bare `return` that left the user wondering why nothing happened
+      // (especially after reopening a draft, where the brief field is
+      // visible but easy to miss).
+      setError("Saisis un brief dans le panneau de gauche avant de régénérer.");
+      return;
+    }
     setIsLoading(true);
     setError(null);
     setResult(null);
@@ -367,25 +430,43 @@ export function ContentPreview() {
   };
 
   const handleGenerateCarousel = async () => {
-    if (!brief) return;
+    if (!brief.trim()) {
+      setCarouselError(
+        "Saisis un brief dans le panneau de gauche avant de générer le carrousel.",
+      );
+      return;
+    }
     setIsCarouselLoading(true);
     setCarouselError(null);
     setCarouselSlides(null);
     setCarouselImages(null);
     setExportSuccess(null);
     try {
-      const slides = await generateCarousel(brief, network, slideCount, accountId);
+      // Run slide generation and caption generation in parallel — both consume
+      // the same brief and ProductTruth, just with different system prompts,
+      // so the user pays one round-trip's worth of latency for both. The
+      // earlier shortcut (caption = slide1.emoji + title + body) shipped
+      // ~200-char captions on LinkedIn where the algo wants 1500-2100, and
+      // dropped the actual narrative + CTA the user expected.
+      const [slides, captionResult] = await Promise.all([
+        generateCarousel(brief, network, slideCount, accountId),
+        generateContent(brief, network, accountId),
+      ]);
       setCarouselSlides(slides);
       setCarouselIndex(0);
-      const images = await renderCarouselSlides(slides, brand);
+      const images = await renderCarouselSlides(slides, brand, imageFormat.width, imageFormat.height);
       setCarouselImages(images);
-      // Save draft so the publish button becomes available.
-      // Caption = first slide title + body; image = first slide render.
-      const firstSlide = slides[0];
-      const carouselCaption = firstSlide
-        ? `${firstSlide.emoji} ${firstSlide.title}\n${firstSlide.body}`
-        : brief;
-      const id = await saveDraft(network, carouselCaption, hashtags, accountId).catch(() => null);
+      // Surface the proper caption + hashtags in the right panel so the user
+      // sees the text they're about to publish. setResult also clears variants
+      // and primes the per-result useEffect (hashtag sync, render reset).
+      setResult({ caption: captionResult.caption, hashtags: captionResult.hashtags });
+      setHashtags(captionResult.hashtags);
+      const id = await saveDraft(
+        network,
+        captionResult.caption,
+        captionResult.hashtags,
+        accountId,
+      ).catch(() => null);
       if (id !== null) {
         setDraftId(id);
         // Save ALL carousel slides — publish flow reads the full array and
@@ -570,49 +651,121 @@ export function ContentPreview() {
 
         {/* Visual generator */}
         <div ref={imageRef} className="flex flex-col gap-3">
-          {/* Header + generate button (hidden for carousel which has its own) */}
+          {/* Header + generate / clear buttons (carousel has its own Generate
+              further down because it needs the slides count picker first). */}
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-foreground">
             Visuel {imageFormat.width}×{imageFormat.height}
             <span className="ml-1.5 text-xs font-normal text-muted-foreground">{imageFormat.ratio}</span>
           </span>
-            {template !== "carousel" && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                onClick={handleRenderImage}
-                disabled={isRendering}
-              >
-                {isRendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />}
-                {isRendering ? "Rendu…" : "Générer"}
-              </Button>
-            )}
+            <div className="flex items-center gap-1.5">
+              {/* Clear button — visible whenever there's a rendered visual to
+                  throw away. Wipes both the local preview and the draft's
+                  stored images so the draft no longer references low-quality
+                  output. The user can then re-generate or publish text-only
+                  (LinkedIn). */}
+              {(imageUrl !== null || carouselImages !== null) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-destructive"
+                  onClick={() => {
+                    setImageUrl(null);
+                    setCarouselImages(null);
+                    setCarouselSlides(null);
+                    setCarouselIndex(0);
+                    setRenderError(null);
+                    setCarouselError(null);
+                    setExportSuccess(null);
+                    if (draftId !== null) {
+                      // Best-effort — failure here just means the DB still
+                      // points at a stale image; the next render call will
+                      // overwrite it anyway.
+                      updateDraftImages(draftId, []).catch(() => {});
+                    }
+                  }}
+                  title="Effacer le visuel généré (le brouillon reste, sans image)"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Effacer le visuel
+                </Button>
+              )}
+              {template !== "carousel" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={handleRenderImage}
+                  disabled={isRendering}
+                >
+                  {isRendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />}
+                  {isRendering ? "Rendu…" : "Générer"}
+                </Button>
+              )}
+            </div>
           </div>
 
-          {/* Template selector */}
-          <div className="flex flex-wrap gap-1 p-1 bg-secondary/50 rounded-lg w-fit">
-            {(["post", "code", "terminal", "carousel"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => {
-                  setTemplate(t);
-                  setImageUrl(null);
-                  setRenderError(null);
-                  setCarouselError(null);
-                  setExportSuccess(null);
-                }}
-                className={`flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors font-medium ${
-                  template === t
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {t === "carousel" && <Layers className="h-3 w-3" />}
-                {t === "post" ? "Post" : t === "code" ? "Code" : t === "terminal" ? "Terminal" : "Carrousel"}
-              </button>
-            ))}
+          {/* Template selector — short label in the pill, longer hint right
+              below so the user knows which template to pick before clicking. */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap gap-1 p-1 bg-secondary/50 rounded-lg w-fit">
+              {(["post", "code", "terminal", "carousel"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => {
+                    setTemplate(t);
+                    setImageUrl(null);
+                    setRenderError(null);
+                    setCarouselError(null);
+                    setExportSuccess(null);
+                  }}
+                  className={`flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors font-medium ${
+                    template === t
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t === "carousel" && <Layers className="h-3 w-3" />}
+                  {t === "post" ? "Post" : t === "code" ? "Code" : t === "terminal" ? "Terminal" : "Carrousel"}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              {template === "post" && (
+                <>
+                  <span className="text-foreground font-medium">Post</span> ·
+                  carte simple avec ta caption + hashtags rendus dans une fenêtre
+                  terminal stylée. Le plus rapide — clique « Générer », pas
+                  d'input à fournir.
+                </>
+              )}
+              {template === "code" && (
+                <>
+                  <span className="text-foreground font-medium">Code</span> ·
+                  bloc de code coloré (style éditeur, dots macOS) avec langage
+                  + nom de fichier. Idéal pour partager un snippet, une
+                  fonction utile, un one-liner. Colle le code dans la zone
+                  ci-dessous.
+                </>
+              )}
+              {template === "terminal" && (
+                <>
+                  <span className="text-foreground font-medium">Terminal</span>{" "}
+                  · mockup de session shell — une commande + son output. Bien
+                  pour montrer le résultat d'une commande Linux, le payload
+                  d'un curl, une trace d'erreur. Saisis la commande et l'output.
+                </>
+              )}
+              {template === "carousel" && (
+                <>
+                  <span className="text-foreground font-medium">Carrousel</span>{" "}
+                  · 3-10 slides séquentielles à partir du brief, chaque slide
+                  taggée par rôle (problème · approche · technique · CTA…).
+                  Le plus engageant côté algo IG. ~30s à générer.
+                </>
+              )}
+            </p>
           </div>
 
           {/* Template-specific inputs */}
@@ -816,13 +969,46 @@ export function ContentPreview() {
                 )}
               </Button>
             )}
-            {/* Success badge replaces button after publish */}
-            {publishedInSession && (
-              <span className="flex-1 flex items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary">
-                <Check className="h-4 w-4" />
-                Publié ✓
-              </span>
-            )}
+            {/* Success state — clickable link to the live post on the network.
+                LinkedIn URN deep-links directly via /feed/update/{urn}/.
+                Instagram has no permalink in the publish response, so we
+                send the user to the account's profile feed where the post
+                is sitting on top — full permalink fetch is a v0.3.7 enhancement. */}
+            {publishedInSession && (() => {
+              const account = allAccounts.find((a) => a.id === accountId);
+              // Prefer the freshly-published mutation result, fall back to
+              // the value captured from a reopened post. Either path lands
+              // here; the local state covers both.
+              const mediaId = publishMutation.data?.media_id ?? publishedMediaId;
+              let url: string | null = null;
+              if (network === "linkedin" && mediaId) {
+                url = `https://www.linkedin.com/feed/update/${encodeURIComponent(mediaId)}/`;
+              } else if (network === "instagram" && account?.username) {
+                url = `https://www.instagram.com/${encodeURIComponent(account.username)}/`;
+              }
+              const baseClass =
+                "flex-1 flex items-center justify-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary";
+              if (!url) {
+                return (
+                  <span className={baseClass}>
+                    <Check className="h-4 w-4" />
+                    Publié ✓
+                  </span>
+                );
+              }
+              return (
+                <button
+                  type="button"
+                  onClick={() => openUrl(url).catch(() => {})}
+                  className={`${baseClass} hover:bg-primary/20 transition-colors cursor-pointer`}
+                  title={`Ouvrir le post publié sur ${networkLabel}`}
+                >
+                  <Check className="h-4 w-4" />
+                  Publié ✓ — voir sur {networkLabel}
+                  <ExternalLink className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
+                </button>
+              );
+            })()}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

@@ -1,19 +1,52 @@
-import { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Calendar, CalendarDays, Loader2, X, Pencil, Trash2, Check, FileEdit } from "lucide-react";
-import { useNavigate } from "@tanstack/react-router";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Calendar,
+  CalendarDays,
+  Loader2,
+  X,
+  Pencil,
+  Check,
+  Plus,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { getCalendarPosts, schedulePost, unschedulePost, deletePost, updatePostDraft } from "@/lib/tauri/calendar";
-import { useComposerStore } from "@/stores/composer.store";
+import {
+  getCalendarPosts,
+  schedulePost,
+  unschedulePost,
+  updatePostDraft,
+} from "@/lib/tauri/calendar";
+import { getPostHistory } from "@/lib/tauri/composer";
 import type { PostRecord } from "@/types/composer.types";
-import { NETWORK_META } from "@/types/composer.types";
 import { cn } from "@/lib/utils";
+import { NetworkBadge, NETWORK_DOT_COLORS } from "@/components/shared/NetworkBadge";
+import { PostThumbnail } from "@/components/shared/PostThumbnail";
+import { PostActions } from "@/components/shared/PostActions";
+import { format, parse, isValid } from "date-fns";
+import { fr } from "date-fns/locale";
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
+/**
+ * Format a Date as `YYYY-MM-DD` using the LOCAL calendar day, not UTC.
+ *
+ * `toISOString().slice(0,10)` was the previous implementation but it returns
+ * the UTC date — so a post created at 20:25 CET on May 9 (= 18:25 UTC, ISO
+ * "2026-05-09T18:25Z") had key "2026-05-09" while the May 9 cell, built from
+ * `new Date(year, month, 1)` at local midnight, had its toISOString() snap
+ * back to "2026-05-08T22:00Z" → key "2026-05-08". Posts ended up one day
+ * forward in any UTC+N timezone (CET in summer = +2). This helper keeps the
+ * keys in the user's local frame so cells and posts agree on the day.
+ */
 function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function startOfMonth(y: number, m: number): Date {
@@ -35,9 +68,11 @@ function addDays(d: Date, n: number): Date {
 }
 
 function sameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() &&
+  return (
+    a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate();
+    a.getDate() === b.getDate()
+  );
 }
 
 function monthRangeISO(year: number, month: number): [string, string] {
@@ -54,8 +89,17 @@ function weekRangeISO(weekStart: Date): [string, string] {
   return [start.toISOString(), end.toISOString()];
 }
 
+/**
+ * Bucket a post into a calendar day. Same local-time discipline as `isoDate`:
+ * we parse the stored UTC ISO timestamp into a Date and read its LOCAL day
+ * components so a post created at 20:25 CET on May 9 lands on May 9, not
+ * May 10. The previous `slice(0, 10)` chopped the UTC string directly,
+ * which mis-bucketed any post stamped between local midnight and the
+ * UTC-offset boundary.
+ */
 function getPostDate(post: PostRecord): string {
-  return (post.scheduled_at ?? post.created_at).slice(0, 10);
+  const iso = post.scheduled_at ?? post.created_at;
+  return isoDate(new Date(iso));
 }
 
 const MONTH_NAMES = [
@@ -65,12 +109,148 @@ const MONTH_NAMES = [
 
 const DAY_LABELS_SHORT = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 
-const NETWORK_COLORS: Record<string, string> = {
-  instagram: "bg-pink-500/20 text-pink-300 border-pink-500/30",
-  linkedin: "bg-blue-500/20 text-blue-300 border-blue-500/30",
-  twitter: "bg-sky-500/20 text-sky-300 border-sky-500/30",
-  tiktok: "bg-purple-500/20 text-purple-300 border-purple-500/30",
-};
+// ── Schedule-existing-draft picker ────────────────────────────────────────────
+
+function SchedulePickerDialog({
+  date,
+  onClose,
+  onScheduled,
+}: {
+  date: Date;
+  onClose: () => void;
+  onScheduled: () => void;
+}) {
+  const [time, setTime] = useState("09:00");
+  const queryClient = useQueryClient();
+
+  const { data: drafts = [], isLoading } = useQuery({
+    queryKey: ["unscheduled_drafts"],
+    queryFn: async () => {
+      const all = await getPostHistory(50);
+      return all.filter((p) => p.status === "draft" && !p.scheduled_at);
+    },
+  });
+
+  const scheduleMutation = useMutation({
+    mutationFn: async (postId: number) => {
+      const [hh, mm] = time.split(":").map(Number);
+      const target = new Date(date);
+      target.setHours(hh, mm, 0, 0);
+      await schedulePost(postId, target.toISOString());
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["calendar_posts"] });
+      queryClient.invalidateQueries({ queryKey: ["unscheduled_drafts"] });
+      queryClient.invalidateQueries({ queryKey: ["post_history"] });
+      onScheduled();
+    },
+  });
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Planifier un brouillon"
+    >
+      <Card
+        className="w-full max-w-lg max-h-[80vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <CardContent className="flex-1 overflow-hidden flex flex-col gap-4 pt-5 pb-4">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-foreground">
+                Planifier un brouillon
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {format(date, "EEEE d MMMM yyyy", { locale: fr })}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Fermer"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Time picker */}
+          <div className="flex items-center gap-2">
+            <label htmlFor="schedule-time" className="text-xs font-medium text-muted-foreground">
+              Heure :
+            </label>
+            <input
+              id="schedule-time"
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+
+          {/* Drafts list */}
+          <div className="flex-1 overflow-y-auto -mx-2 px-2">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              </div>
+            ) : drafts.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-8 text-center">
+                <p className="text-sm text-muted-foreground">
+                  Aucun brouillon non planifié.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Crée un post depuis le Composer pour le retrouver ici.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {drafts.map((draft) => (
+                  <button
+                    key={draft.id}
+                    type="button"
+                    onClick={() => scheduleMutation.mutate(draft.id)}
+                    disabled={scheduleMutation.isPending}
+                    className="flex items-center gap-3 rounded-md border border-border p-2 text-left hover:border-primary hover:bg-secondary/50 transition-colors disabled:opacity-50"
+                  >
+                    <PostThumbnail post={draft} size="sm" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-foreground line-clamp-2">
+                        {draft.caption}
+                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <NetworkBadge network={draft.network} variant="dot" />
+                        <span className="text-[10px] text-muted-foreground">
+                          {format(new Date(draft.created_at), "d MMM", { locale: fr })}
+                        </span>
+                      </div>
+                    </div>
+                    {scheduleMutation.isPending && scheduleMutation.variables === draft.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0" />
+                    ) : (
+                      <Plus className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {scheduleMutation.isError && (
+            <p className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">
+              {String(scheduleMutation.error)}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 // ── Post detail modal ─────────────────────────────────────────────────────────
 
@@ -87,26 +267,22 @@ function PostModal({
   onDelete: (id: number) => void;
   onUpdate: (updated: PostRecord) => void;
 }) {
-  const navigate = useNavigate();
-  const setPendingDraftId = useComposerStore((s) => s.setPendingDraftId);
   const [isRemoving, setIsRemoving] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editCaption, setEditCaption] = useState(post.caption);
   const [editHashtags, setEditHashtags] = useState(post.hashtags.join(" "));
 
-  const isDraft = post.status === "draft";
-
-  /** Hand the draft id to the composer route. The ContentPreview useEffect
-   *  picks it up on mount, fetches the full post (including images), and
-   *  populates state so the publish button reappears. */
-  const handleOpenInComposer = () => {
-    setPendingDraftId(post.id);
-    onClose();
-    navigate({ to: "/composer" });
-  };
+  // Reschedule controls
+  const initialScheduledDate = post.scheduled_at
+    ? format(new Date(post.scheduled_at), "yyyy-MM-dd")
+    : "";
+  const initialScheduledTime = post.scheduled_at
+    ? format(new Date(post.scheduled_at), "HH:mm")
+    : "09:00";
+  const [editDate, setEditDate] = useState(initialScheduledDate);
+  const [editTime, setEditTime] = useState(initialScheduledTime);
+  const [isRescheduling, setIsRescheduling] = useState(false);
 
   const handleUnschedule = async () => {
     setIsRemoving(true);
@@ -115,17 +291,6 @@ function PostModal({
       onUnschedule(post.id);
     } finally {
       setIsRemoving(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!confirmDelete) { setConfirmDelete(true); return; }
-    setIsDeleting(true);
-    try {
-      await deletePost(post.id);
-      onDelete(post.id);
-    } finally {
-      setIsDeleting(false);
     }
   };
 
@@ -144,35 +309,87 @@ function PostModal({
     }
   };
 
+  const handleReschedule = async () => {
+    if (!editDate) return;
+    const target = parse(`${editDate}T${editTime}`, "yyyy-MM-dd'T'HH:mm", new Date());
+    if (!isValid(target)) return;
+    setIsRescheduling(true);
+    try {
+      await schedulePost(post.id, target.toISOString());
+      onUpdate({ ...post, scheduled_at: target.toISOString() });
+    } finally {
+      setIsRescheduling(false);
+    }
+  };
+
+  const previewImage = post.images?.[0] ?? post.image_path ?? null;
+  const isCarousel = (post.images?.length ?? 0) > 1;
+  const isDraft = post.status === "draft";
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={() => { if (!isEditing) onClose(); }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={() => {
+        if (!isEditing) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
     >
       <Card
-        className="w-full max-w-md mx-4"
+        className="w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <CardContent className="pt-5 pb-4 flex flex-col gap-3">
-          {/* Header row */}
+        <CardContent className="pt-5 pb-4 flex flex-col gap-4 overflow-y-auto">
+          {/* Header */}
           <div className="flex items-start justify-between gap-2">
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
-                NETWORK_COLORS[post.network] ?? "bg-secondary text-secondary-foreground"
+            <div className="flex items-center gap-2 flex-wrap">
+              <NetworkBadge network={post.network} />
+              {post.status === "published" && (
+                <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  Publié
+                </span>
               )}
-            >
-              {NETWORK_META[post.network as keyof typeof NETWORK_META]?.label ?? post.network}
-            </span>
+              {post.status === "failed" && (
+                <span className="inline-flex items-center rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">
+                  Échec
+                </span>
+              )}
+            </div>
             <button
               type="button"
               onClick={onClose}
               aria-label="Fermer"
               className="text-muted-foreground hover:text-foreground transition-colors"
             >
-              <X className="h-4 w-4" aria-hidden="true" />
+              <X className="h-4 w-4" />
             </button>
           </div>
+
+          {/* Image preview */}
+          {previewImage && (
+            <div>
+              {isCarousel ? (
+                <div className="flex gap-1.5 overflow-x-auto pb-1">
+                  {post.images.map((src, i) => (
+                    <img
+                      key={i}
+                      src={src}
+                      alt={`Slide ${i + 1}`}
+                      className="h-28 w-28 shrink-0 rounded-md border border-border object-cover"
+                      loading="lazy"
+                    />
+                  ))}
+                </div>
+              ) : (
+                <img
+                  src={previewImage}
+                  alt=""
+                  className="max-h-56 w-full rounded-md border border-border object-contain bg-secondary/30"
+                  loading="lazy"
+                />
+              )}
+            </div>
+          )}
 
           {/* Caption — view or edit */}
           {isEditing ? (
@@ -199,101 +416,113 @@ function PostModal({
               {post.hashtags.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {post.hashtags.map((t) => (
-                    <span key={t} className="text-xs text-primary">#{t}</span>
+                    <span key={t} className="text-xs text-primary">
+                      #{t}
+                    </span>
                   ))}
                 </div>
               )}
             </>
           )}
 
-          {/* Footer row */}
-          <div className="flex items-center justify-between pt-1 border-t border-border gap-2">
+          {/* Reschedule controls — only for drafts already on the calendar */}
+          {!isEditing && isDraft && post.scheduled_at && (
+            <div className="border-t border-border pt-3 flex flex-col gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+                Replanifier
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                  className="rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <input
+                  type="time"
+                  value={editTime}
+                  onChange={(e) => setEditTime(e.target.value)}
+                  className="rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={handleReschedule}
+                  disabled={isRescheduling || !editDate}
+                >
+                  {isRescheduling ? <Loader2 className="h-3 w-3 animate-spin" /> : "Mettre à jour"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs text-muted-foreground"
+                  onClick={handleUnschedule}
+                  disabled={isRemoving}
+                >
+                  {isRemoving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Retirer du calendrier"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-2 border-t border-border gap-2 flex-wrap">
             <span className="text-xs text-muted-foreground shrink-0">
               {post.scheduled_at
-                ? `Planifié · ${new Date(post.scheduled_at).toLocaleDateString("fr-FR")}`
-                : `Créé · ${new Date(post.created_at).toLocaleDateString("fr-FR")}`}
+                ? `Planifié · ${format(new Date(post.scheduled_at), "d MMM · HH:mm", { locale: fr })}`
+                : `Créé · ${format(new Date(post.created_at), "d MMM · HH:mm", { locale: fr })}`}
             </span>
 
-            <div className="flex items-center gap-1">
-              {isEditing ? (
-                <>
+            {isEditing ? (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setIsEditing(false)}
+                  disabled={isSaving}
+                >
+                  Annuler
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 text-xs gap-1"
+                  onClick={handleSaveEdit}
+                  disabled={isSaving || !editCaption.trim()}
+                >
+                  {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                  Sauvegarder
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1">
+                {isDraft && (
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-6 text-xs"
-                    onClick={() => setIsEditing(false)}
-                    disabled={isSaving}
+                    className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                    onClick={() => setIsEditing(true)}
                   >
-                    Annuler
+                    <Pencil className="h-3 w-3" />
+                    Modifier le texte
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 text-xs text-primary hover:text-primary"
-                    onClick={handleSaveEdit}
-                    disabled={isSaving || !editCaption.trim()}
-                  >
-                    {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <><Check className="h-3 w-3 mr-1" />Sauvegarder</>}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  {isDraft && (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 text-xs gap-1 text-primary hover:text-primary"
-                        title="Charger le brouillon dans le Composer pour publier"
-                        onClick={handleOpenInComposer}
-                      >
-                        <FileEdit className="h-3 w-3" />
-                        Ouvrir
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                        title="Modifier"
-                        onClick={() => { setIsEditing(true); setConfirmDelete(false); }}
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </Button>
-                    </>
-                  )}
-                  {post.scheduled_at && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs text-muted-foreground hover:text-foreground"
-                      onClick={handleUnschedule}
-                      disabled={isRemoving}
-                    >
-                      {isRemoving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Retirer"}
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      "h-6 text-xs",
-                      confirmDelete
-                        ? "text-destructive hover:text-destructive font-semibold"
-                        : "text-muted-foreground hover:text-destructive"
-                    )}
-                    onClick={handleDelete}
-                    disabled={isDeleting}
-                    title={confirmDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer"}
-                  >
-                    {isDeleting
-                      ? <Loader2 className="h-3 w-3 animate-spin" />
-                      : confirmDelete
-                        ? "Confirmer ?"
-                        : <Trash2 className="h-3 w-3" />}
-                  </Button>
-                </>
-              )}
-            </div>
+                )}
+                <PostActions
+                  post={post}
+                  variant="compact"
+                  onDeleted={onDelete}
+                  onPublished={(id) => {
+                    onUpdate({
+                      ...post,
+                      status: "published",
+                      published_at: new Date().toISOString(),
+                    });
+                    void id;
+                  }}
+                />
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -311,6 +540,7 @@ function DayCell({
   isWeekView,
   onPostClick,
   onScheduleDrop,
+  onEmptyClick,
 }: {
   date: Date;
   isToday: boolean;
@@ -318,7 +548,8 @@ function DayCell({
   posts: PostRecord[];
   isWeekView: boolean;
   onPostClick: (post: PostRecord) => void;
-  onScheduleDrop?: (postId: number, date: Date) => void;
+  onScheduleDrop: (postId: number, date: Date) => void;
+  onEmptyClick: (date: Date) => void;
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -331,13 +562,16 @@ function DayCell({
     e.preventDefault();
     setIsDragOver(false);
     const postId = Number(e.dataTransfer.getData("postId"));
-    if (postId && onScheduleDrop) onScheduleDrop(postId, date);
+    if (postId) onScheduleDrop(postId, date);
   };
+
+  const maxVisible = isWeekView ? 6 : 3;
+  const overflow = posts.length - maxVisible;
 
   return (
     <div
       className={cn(
-        "flex flex-col min-h-0 border-b border-r border-border p-1.5 gap-1 transition-colors",
+        "group relative flex flex-col min-h-0 border-b border-r border-border p-1.5 gap-1 transition-colors",
         isWeekView ? "min-h-32" : "min-h-20",
         !isCurrentMonth && "opacity-40",
         isDragOver && "bg-primary/10",
@@ -346,19 +580,30 @@ function DayCell({
       onDragLeave={() => setIsDragOver(false)}
       onDrop={handleDrop}
     >
-      <span
-        className={cn(
-          "self-start flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium",
-          isToday
-            ? "bg-primary text-primary-foreground"
-            : "text-muted-foreground",
-        )}
-      >
-        {date.getDate()}
-      </span>
+      <div className="flex items-center justify-between">
+        <span
+          className={cn(
+            "flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium",
+            isToday ? "bg-primary text-primary-foreground" : "text-muted-foreground",
+          )}
+        >
+          {date.getDate()}
+        </span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEmptyClick(date);
+          }}
+          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-primary transition-opacity"
+          aria-label={`Planifier un brouillon le ${date.getDate()}`}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
       <div className="flex flex-col gap-0.5 overflow-hidden">
-        {posts.slice(0, isWeekView ? 6 : 3).map((post) => (
+        {posts.slice(0, maxVisible).map((post) => (
           <button
             key={post.id}
             type="button"
@@ -366,18 +611,33 @@ function DayCell({
             onDragStart={(e) => e.dataTransfer.setData("postId", String(post.id))}
             onClick={() => onPostClick(post)}
             className={cn(
-              "w-full text-left truncate rounded px-1.5 py-0.5 text-[10px] border",
-              "leading-4 hover:opacity-80 transition-opacity cursor-pointer",
-              NETWORK_COLORS[post.network] ?? "bg-secondary/50 text-muted-foreground border-border",
+              "flex items-center gap-1 w-full rounded px-1 py-0.5 text-left",
+              "border border-transparent hover:border-border hover:bg-secondary/50 transition-colors",
             )}
+            title={post.caption}
           >
-            {post.caption.slice(0, 40)}
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full shrink-0",
+                NETWORK_DOT_COLORS[post.network] ?? "bg-muted-foreground",
+              )}
+              aria-hidden="true"
+            />
+            {post.images?.[0] && (
+              <img
+                src={post.images[0]}
+                alt=""
+                className="h-4 w-4 rounded-sm object-cover shrink-0"
+                loading="lazy"
+              />
+            )}
+            <span className="text-[10px] leading-4 text-foreground/90 truncate">
+              {post.caption}
+            </span>
           </button>
         ))}
-        {posts.length > (isWeekView ? 6 : 3) && (
-          <span className="text-[9px] text-muted-foreground pl-1">
-            +{posts.length - (isWeekView ? 6 : 3)} de plus
-          </span>
+        {overflow > 0 && (
+          <span className="text-[9px] text-muted-foreground pl-1">+{overflow} de plus</span>
         )}
       </div>
     </div>
@@ -392,61 +652,62 @@ export function CalendarPage() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [weekStart, setWeekStart] = useState(() => startOfWeek(today));
-  const [posts, setPosts] = useState<PostRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [selectedPost, setSelectedPost] = useState<PostRecord | null>(null);
+  const [scheduleForDate, setScheduleForDate] = useState<Date | null>(null);
+  const [networkFilter, setNetworkFilter] = useState<string | null>(null);
 
-  const loadPosts = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const [from, to] =
-        view === "month"
-          ? monthRangeISO(year, month)
-          : weekRangeISO(weekStart);
-      const data = await getCalendarPosts(from, to);
-      setPosts(data);
-    } catch {
-      // silently fail — calendar is non-critical
-    } finally {
-      setIsLoading(false);
-    }
+  const queryClient = useQueryClient();
+
+  const range = useMemo<[string, string]>(
+    () =>
+      view === "month"
+        ? monthRangeISO(year, month)
+        : weekRangeISO(weekStart),
+    [view, year, month, weekStart],
+  );
+
+  const { data: posts = [], isLoading } = useQuery({
+    queryKey: ["calendar_posts", range[0], range[1]],
+    queryFn: () => getCalendarPosts(range[0], range[1]),
+  });
+
+  // Keep keyboard arrow navigation working without competing with form fields.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.matches("input, textarea")) return;
+      if (e.key === "ArrowLeft") prevPeriod();
+      if (e.key === "ArrowRight") nextPeriod();
+      if (e.key.toLowerCase() === "t") goToToday();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, year, month, weekStart]);
 
-  useEffect(() => {
-    loadPosts();
-  }, [loadPosts]);
-
-  const handleUnschedule = (id: number) => {
-    setPosts((prev) => prev.filter((p) => p.id !== id));
-    setSelectedPost(null);
-  };
-
-  const handleDelete = (id: number) => {
-    setPosts((prev) => prev.filter((p) => p.id !== id));
-    setSelectedPost(null);
-  };
-
-  const handleUpdate = (updated: PostRecord) => {
-    setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-    setSelectedPost(updated);
-  };
-
-  const handleScheduleDrop = async (postId: number, date: Date) => {
-    const iso = date.toISOString().slice(0, 10) + "T09:00:00Z";
-    try {
-      await schedulePost(postId, iso);
-      await loadPosts();
-    } catch {
-      // ignore
-    }
-  };
+  const handleScheduleDrop = useCallback(
+    async (postId: number, date: Date) => {
+      const target = new Date(date);
+      target.setHours(9, 0, 0, 0);
+      try {
+        await schedulePost(postId, target.toISOString());
+        queryClient.invalidateQueries({ queryKey: ["calendar_posts"] });
+        queryClient.invalidateQueries({ queryKey: ["unscheduled_drafts"] });
+      } catch {
+        // ignore — error surfaces at the next refresh
+      }
+    },
+    [queryClient],
+  );
 
   // ── Navigation ──
 
   const prevPeriod = () => {
     if (view === "month") {
-      if (month === 0) { setYear((y) => y - 1); setMonth(11); }
-      else setMonth((m) => m - 1);
+      if (month === 0) {
+        setYear((y) => y - 1);
+        setMonth(11);
+      } else setMonth((m) => m - 1);
     } else {
       setWeekStart((ws) => addDays(ws, -7));
     }
@@ -454,8 +715,10 @@ export function CalendarPage() {
 
   const nextPeriod = () => {
     if (view === "month") {
-      if (month === 11) { setYear((y) => y + 1); setMonth(0); }
-      else setMonth((m) => m + 1);
+      if (month === 11) {
+        setYear((y) => y + 1);
+        setMonth(0);
+      } else setMonth((m) => m + 1);
     } else {
       setWeekStart((ws) => addDays(ws, 7));
     }
@@ -467,9 +730,14 @@ export function CalendarPage() {
     setWeekStart(startOfWeek(today));
   };
 
-  // Group posts by ISO date
+  // ── Filtering & grouping ──
+
+  const filteredPosts = networkFilter
+    ? posts.filter((p) => p.network === networkFilter)
+    : posts;
+
   const postsByDate: Record<string, PostRecord[]> = {};
-  for (const post of posts) {
+  for (const post of filteredPosts) {
     const key = getPostDate(post);
     if (!postsByDate[key]) postsByDate[key] = [];
     postsByDate[key].push(post);
@@ -497,13 +765,20 @@ export function CalendarPage() {
 
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
+  // ── Available networks for the filter ──
+  const availableNetworks = Array.from(new Set(posts.map((p) => p.network)));
+
   return (
     <div className="flex flex-col h-full p-4 gap-3">
       {/* Toolbar */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-foreground">Calendrier éditorial</h1>
-        <div className="flex items-center gap-2">
-          {/* View toggle */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-lg font-semibold text-foreground">Calendrier éditorial</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Glisse-dépose pour replanifier · clique <Plus className="inline h-3 w-3" /> pour ajouter un brouillon
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex gap-1 p-0.5 bg-secondary/50 rounded-md">
             <button
               type="button"
@@ -512,11 +787,10 @@ export function CalendarPage() {
                 "flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors",
                 view === "month"
                   ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <Calendar className="h-3 w-3" />
-              Mois
+              <Calendar className="h-3 w-3" /> Mois
             </button>
             <button
               type="button"
@@ -525,16 +799,14 @@ export function CalendarPage() {
                 "flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors",
                 view === "week"
                   ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <CalendarDays className="h-3 w-3" />
-              Semaine
+              <CalendarDays className="h-3 w-3" /> Semaine
             </button>
           </div>
 
-          {/* Nav */}
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevPeriod}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevPeriod} aria-label="Période précédente">
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <button
@@ -544,7 +816,7 @@ export function CalendarPage() {
           >
             {headerLabel}
           </button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextPeriod}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextPeriod} aria-label="Période suivante">
             <ChevronRight className="h-4 w-4" />
           </Button>
 
@@ -552,32 +824,61 @@ export function CalendarPage() {
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="flex items-center gap-3 flex-wrap">
-        {Object.entries(NETWORK_COLORS).map(([net, cls]) => (
-          <span key={net} className={cn("flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium", cls)}>
-            {NETWORK_META[net as keyof typeof NETWORK_META]?.label ?? net}
+      {/* Network filter */}
+      {availableNetworks.length > 1 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Filtrer :
           </span>
-        ))}
-        <span className="text-[10px] text-muted-foreground ml-auto">
-          Glisse-dépose un post pour le déplacer
-        </span>
-      </div>
+          <button
+            type="button"
+            onClick={() => setNetworkFilter(null)}
+            className={cn(
+              "rounded-full border px-2 py-0.5 text-[10px] transition-colors",
+              networkFilter === null
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Tous · {posts.length}
+          </button>
+          {availableNetworks.map((net) => (
+            <button
+              key={net}
+              type="button"
+              onClick={() => setNetworkFilter(net === networkFilter ? null : net)}
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-[10px] flex items-center gap-1 transition-opacity",
+                networkFilter && networkFilter !== net && "opacity-40",
+              )}
+            >
+              <NetworkBadge network={net} />
+              <span className="text-muted-foreground">
+                · {posts.filter((p) => p.network === net).length}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Calendar grid */}
       <div className="flex-1 overflow-auto rounded-lg border border-border bg-card">
-        {/* Day headers */}
         <div className="grid grid-cols-7 border-b border-border">
           {DAY_LABELS_SHORT.map((d) => (
-            <div key={d} className="py-2 text-center text-xs font-medium text-muted-foreground border-r border-border last:border-r-0">
+            <div
+              key={d}
+              className="py-2 text-center text-xs font-medium text-muted-foreground border-r border-border last:border-r-0"
+            >
               {d}
             </div>
           ))}
         </div>
 
         {view === "month" ? (
-          /* Month grid — 6 rows × 7 cols */
-          <div className="grid grid-cols-7" style={{ gridTemplateRows: "repeat(6, minmax(80px, 1fr))" }}>
+          <div
+            className="grid grid-cols-7"
+            style={{ gridTemplateRows: "repeat(6, minmax(80px, 1fr))" }}
+          >
             {cells.map((date) => (
               <DayCell
                 key={isoDate(date)}
@@ -588,11 +889,11 @@ export function CalendarPage() {
                 isWeekView={false}
                 onPostClick={setSelectedPost}
                 onScheduleDrop={handleScheduleDrop}
+                onEmptyClick={setScheduleForDate}
               />
             ))}
           </div>
         ) : (
-          /* Week grid — 1 row × 7 cols */
           <div className="grid grid-cols-7">
             {weekDays.map((date) => (
               <DayCell
@@ -604,20 +905,38 @@ export function CalendarPage() {
                 isWeekView={true}
                 onPostClick={setSelectedPost}
                 onScheduleDrop={handleScheduleDrop}
+                onEmptyClick={setScheduleForDate}
               />
             ))}
           </div>
         )}
       </div>
 
-      {/* Post detail modal */}
+      {/* Modals */}
       {selectedPost && (
         <PostModal
           post={selectedPost}
           onClose={() => setSelectedPost(null)}
-          onUnschedule={handleUnschedule}
-          onDelete={handleDelete}
-          onUpdate={handleUpdate}
+          onUnschedule={() => {
+            queryClient.invalidateQueries({ queryKey: ["calendar_posts"] });
+            setSelectedPost(null);
+          }}
+          onDelete={() => {
+            queryClient.invalidateQueries({ queryKey: ["calendar_posts"] });
+            setSelectedPost(null);
+          }}
+          onUpdate={(updated) => {
+            queryClient.invalidateQueries({ queryKey: ["calendar_posts"] });
+            setSelectedPost(updated);
+          }}
+        />
+      )}
+
+      {scheduleForDate && (
+        <SchedulePickerDialog
+          date={scheduleForDate}
+          onClose={() => setScheduleForDate(null)}
+          onScheduled={() => setScheduleForDate(null)}
         />
       )}
     </div>

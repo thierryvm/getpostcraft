@@ -15,6 +15,14 @@ struct Brand {
     brand_color: String,
 }
 
+/// Strict hex-6-digit color matcher (`#RRGGBB`, case-insensitive). The CSS
+/// templates concatenate alpha hints onto the value (`{brand_color}55`) — any
+/// other format (`rgb()`, named, 8-digit) produces invalid CSS that Chromium
+/// silently drops, so we reject non-conformant input at resolve time.
+fn is_valid_hex_color(s: &str) -> bool {
+    s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
 impl Brand {
     fn resolve(handle: Option<&str>, brand_color: Option<&str>) -> Self {
         // Filter AFTER stripping the leading '@' so a bare "@" (or "  @  ")
@@ -25,11 +33,23 @@ impl Brand {
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| DEFAULT_HANDLE.to_string());
-        let brand_color = brand_color
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| DEFAULT_BRAND_COLOR.to_string());
+
+        // Validate the hex color — invalid input falls back silently with a
+        // warn log. We truncate the rejected value to 16 chars before logging
+        // so a 200-byte garbage string can't pollute the log file.
+        let brand_color = match brand_color.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(value) if is_valid_hex_color(value) => value.to_string(),
+            Some(invalid) => {
+                let preview: String = invalid.chars().take(16).collect();
+                log::warn!(
+                    "media::Brand::resolve: rejecting invalid brand_color {preview:?} \
+                     (must match `#RRGGBB`); falling back to default"
+                );
+                DEFAULT_BRAND_COLOR.to_string()
+            }
+            None => DEFAULT_BRAND_COLOR.to_string(),
+        };
+
         Self {
             handle,
             brand_color,
@@ -387,58 +407,115 @@ fn build_terminal_html(
     )
 }
 
-fn build_carousel_slide_html(slide: &CarouselSlide, brand: &Brand) -> String {
-    let dots: String = (1..=slide.total)
-        .map(|i| {
-            if i == slide.index {
-                r#"<div class="dot active"></div>"#.to_string()
-            } else {
-                r#"<div class="dot"></div>"#.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("");
-
+/// Build the HTML for a single carousel slide.
+///
+/// Visual grammar (v0.3.6, inspired by hand-crafted reference posts):
+/// - Subtle 60×60px grid background (#161b22 stroke @ ~6% opacity) provides
+///   a tech-niche texture without competing with the content.
+/// - Counter top-right in monospace dim grey (`01 / 07` style).
+/// - Brand stamp bottom-right `>_ @handle` in monospace, branded color.
+/// - Content is left-aligned within the upper 2/3 of the canvas: title in
+///   bold sans-serif, accent rule, then body. Emoji becomes an optional
+///   pill in the top-left so it never has to fight the title for visual
+///   weight.
+///
+/// All sizes are derived from `width` so the same template renders cleanly
+/// at 1080×1080 (square) and 1080×1350 (4:5 portrait, the new IG default).
+fn build_carousel_slide_html(
+    slide: &CarouselSlide,
+    width: u32,
+    height: u32,
+    brand: &Brand,
+) -> String {
     let handle_escaped = html_escape(&brand.handle);
     let brand_color = &brand.brand_color;
-    let css = format!(
-        "*{{margin:0;padding:0;box-sizing:border-box}}\
-         body{{width:1080px;height:1080px;background:#0d1117;\
-         font-family:'Segoe UI',system-ui,-apple-system,sans-serif;\
-         display:flex;flex-direction:column;align-items:center;\
-         justify-content:center;padding:80px;position:relative}}\
-         .brand{{position:absolute;top:40px;right:48px;font-size:22px;\
-         color:{brand_color};font-weight:700;letter-spacing:.04em}}\
-         .counter{{position:absolute;top:40px;left:48px;font-size:22px;\
-         color:#8b949e;font-weight:500}}\
-         .content{{display:flex;flex-direction:column;align-items:center;\
-         text-align:center;max-width:900px}}\
-         .emoji{{font-size:104px;line-height:1;margin-bottom:48px}}\
-         .title{{font-size:58px;font-weight:800;color:#fff;\
-         line-height:1.15;margin-bottom:28px}}\
-         .accent{{width:64px;height:5px;background:{brand_color};\
-         border-radius:3px;margin-bottom:36px}}\
-         .body{{font-size:30px;color:#c9d1d9;line-height:1.6}}\
-         .dots{{position:absolute;bottom:44px;left:50%;\
-         transform:translateX(-50%);display:flex;gap:10px;align-items:center}}\
-         .dot{{width:10px;height:10px;border-radius:50%;background:#30363d}}\
-         .dot.active{{width:28px;height:10px;border-radius:5px;background:{brand_color}}}",
+
+    // Typography scale derived from the SHORTER side of the canvas so the
+    // template doesn't blow out on landscape ratios (LinkedIn 1200×628 has
+    // far less vertical room than IG portrait 1080×1350). Width-only
+    // scaling produced 88px titles on a 628px-tall canvas — title alone
+    // ate >35% of the height before any body text could land, and the
+    // body would overflow into the brand-stamp row at the bottom.
+    let short = (width.min(height)) as f32;
+    let pad = (short * 0.072).round() as u32; // 78 @ 1080, 45 @ 628
+    let title_size = (short * 0.082).round() as u32; // 88 @ 1080, 51 @ 628
+    let body_size = (short * 0.028).round() as u32; // 30 @ 1080, 18 @ 628
+    let chrome_size = (short * 0.022).round() as u32; // 24 @ 1080, 14 @ 628
+    let badge_size = (short * 0.022).round() as u32;
+    let accent_height = (short * 0.005).round().max(4.0) as u32;
+    let accent_width = (short * 0.06).round() as u32;
+    // Reserve room at the bottom of the body's content box for the absolutely
+    // positioned brand stamp. Without this, a long final line of body text
+    // would land in the same row as the stamp and we'd get the "@handle
+    // showing through the body" overlap reported on LinkedIn slides.
+    let bottom_pad = pad + chrome_size + 24;
+
+    // Resolve the role-driven badge first; fall back to the index-derived
+    // label if the AI didn't tag the slide. The badge color overrides the
+    // brand color *only inside the badge* — the rest of the chrome
+    // (counter, stamp, accent rule) stays branded.
+    let role_meta = role_meta_for(slide.role.as_deref());
+    let badge_label = role_meta
+        .label
+        .map(str::to_string)
+        .unwrap_or_else(|| slide_label(slide.index, slide.total).to_string());
+    let badge_color = role_meta.color.unwrap_or(brand_color.as_str());
+    let badge_mark = if slide.emoji.trim().is_empty() {
+        role_meta.mark.unwrap_or("✦").to_string()
+    } else {
+        slide.emoji.clone()
+    };
+    let badge_html = format!(
+        r#"<div class="badge" style="border-color:{badge_color}55;background:{badge_color}1f;color:{badge_color}"><span class="badge-mark">{mark}</span><span class="badge-label">{label}</span></div>"#,
+        mark = html_escape(&badge_mark),
+        label = html_escape(&badge_label),
     );
 
-    let mut html = String::with_capacity(3500);
-    html.push_str(r#"<!DOCTYPE html><html><head><meta charset="UTF-8"><style>"#);
+    // Encoded as a data URI so Chromium renders it without an extra fetch.
+    // One <pattern> repeats across the full body. Stroke colour stays cool
+    // grey so the grid doesn't compete with the brand accent.
+    let grid_svg = "data:image/svg+xml;utf8,\
+        %3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2760%27%20height%3D%2760%27%3E\
+        %3Cpath%20d%3D%27M%2060%200%20L%200%200%200%2060%27%20fill%3D%27none%27%20stroke%3D%27%23161b22%27%20stroke-width%3D%271%27%2F%3E%3C%2Fsvg%3E";
+
+    let css = format!(
+        "*{{margin:0;padding:0;box-sizing:border-box}}\
+         body{{width:{width}px;height:{height}px;background:#0d1117;\
+         background-image:url(\"{grid_svg}\");background-size:60px 60px;\
+         font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;\
+         color:#e6edf3;position:relative;overflow:hidden;\
+         padding:{pad}px {pad}px {bottom_pad}px {pad}px;\
+         display:flex;flex-direction:column;justify-content:flex-start}}\
+         .badge{{display:inline-flex;align-items:center;gap:8px;\
+         padding:8px 16px;border-radius:999px;border:1px solid;\
+         font-family:'JetBrains Mono','SF Mono','Fira Code',Consolas,monospace;\
+         font-size:{badge_size}px;font-weight:600;letter-spacing:.04em;\
+         margin-bottom:{pad}px;width:max-content;max-width:80%}}\
+         .badge-mark{{font-size:1em}}\
+         .counter{{position:absolute;top:{pad}px;right:{pad}px;\
+         font-family:'JetBrains Mono','SF Mono','Fira Code',Consolas,monospace;\
+         font-size:{chrome_size}px;color:#8b949e;letter-spacing:.12em}}\
+         .stamp{{position:absolute;bottom:{pad}px;right:{pad}px;\
+         font-family:'JetBrains Mono','SF Mono','Fira Code',Consolas,monospace;\
+         font-size:{chrome_size}px;color:{brand_color};opacity:.85;letter-spacing:.06em}}\
+         .stamp-prompt{{color:{brand_color};opacity:.7;margin-right:6px}}\
+         .title{{font-size:{title_size}px;font-weight:800;color:#fff;\
+         line-height:1.08;letter-spacing:-0.02em;max-width:90%}}\
+         .accent{{width:{accent_width}px;height:{accent_height}px;\
+         background:{brand_color};border-radius:3px;margin:32px 0 28px}}\
+         .body{{font-size:{body_size}px;color:#c9d1d9;line-height:1.55;\
+         max-width:88%}}",
+    );
+
+    let mut html = String::with_capacity(3800);
+    html.push_str(r#"<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><style>"#);
     html.push_str(&css);
     html.push_str("</style></head><body>");
-    html.push_str(&format!(r#"<div class="brand">@{handle_escaped}</div>"#));
     html.push_str(&format!(
-        r#"<div class="counter">{}/{}</div>"#,
+        r#"<div class="counter">{:02} / {:02}</div>"#,
         slide.index, slide.total
     ));
-    html.push_str(r#"<div class="content">"#);
-    html.push_str(&format!(
-        r#"<div class="emoji">{}</div>"#,
-        html_escape(&slide.emoji)
-    ));
+    html.push_str(&badge_html);
     html.push_str(&format!(
         r#"<div class="title">{}</div>"#,
         html_escape(&slide.title)
@@ -448,10 +525,77 @@ fn build_carousel_slide_html(slide: &CarouselSlide, brand: &Brand) -> String {
         r#"<div class="body">{}</div>"#,
         html_escape(&slide.body).replace('\n', "<br>"),
     ));
-    html.push_str("</div>");
-    html.push_str(&format!(r#"<div class="dots">{}</div>"#, dots));
+    html.push_str(&format!(
+        r#"<div class="stamp"><span class="stamp-prompt">&gt;_</span>@{handle_escaped}</div>"#
+    ));
     html.push_str("</body></html>");
     html
+}
+
+/// Tiny helper that maps the slide's position to a section label used in the
+/// top-left badge when the AI didn't tag the slide with a role.
+fn slide_label(index: u8, total: u8) -> &'static str {
+    if index == 1 {
+        "intro"
+    } else if index == total {
+        "à toi"
+    } else {
+        "lis-moi"
+    }
+}
+
+/// Visual metadata for a role-tagged slide. Color is the badge accent,
+/// label the human-readable chip text, mark the unicode prefix used when
+/// the AI doesn't supply an emoji.
+#[derive(Default, Debug, Clone, Copy)]
+struct RoleMeta {
+    color: Option<&'static str>,
+    label: Option<&'static str>,
+    mark: Option<&'static str>,
+}
+
+/// Map a normalised role string to its visual metadata. Unknown / missing
+/// roles return an empty `RoleMeta`, which the caller treats as "fall back
+/// to the index-derived label and brand color".
+fn role_meta_for(role: Option<&str>) -> RoleMeta {
+    match role.unwrap_or("") {
+        "hero" => RoleMeta {
+            color: None, // brand color
+            label: Some("hello"),
+            mark: Some(">_"),
+        },
+        "problem" => RoleMeta {
+            color: Some("#ff6b6b"),
+            label: Some("le problème"),
+            mark: Some("◆"),
+        },
+        "approach" => RoleMeta {
+            color: None, // brand color — solution stays on-brand
+            label: Some("notre approche"),
+            mark: Some("✦"),
+        },
+        "tech" => RoleMeta {
+            color: Some("#60a5fa"),
+            label: Some("sous le capot"),
+            mark: Some("⌗"),
+        },
+        "change" => RoleMeta {
+            color: Some("#fbbf24"),
+            label: Some("ce qui change"),
+            mark: Some("◇"),
+        },
+        "moment" => RoleMeta {
+            color: Some("#c084fc"),
+            label: Some("un exemple"),
+            mark: Some("◈"),
+        },
+        "cta" => RoleMeta {
+            color: None, // brand color — final CTA on-brand
+            label: Some("à toi"),
+            mark: Some("→"),
+        },
+        _ => RoleMeta::default(),
+    }
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
@@ -516,17 +660,25 @@ pub async fn render_terminal_image(
 }
 
 /// Render each carousel slide to PNG. Returns Vec of base64 data URLs (same order as input).
+///
+/// Accepts an explicit canvas size so the renderer follows the format the
+/// user picks in the Composer. Defaulting to the IG 4:5 portrait (1080×1350)
+/// gives more vertical real-estate for the typography-heavy templates.
 #[tauri::command]
 pub async fn render_carousel_slides(
     slides: Vec<CarouselSlide>,
     handle: Option<String>,
     brand_color: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
 ) -> Result<Vec<String>, String> {
     let brand = Brand::resolve(handle.as_deref(), brand_color.as_deref());
+    let w = width.unwrap_or(1080);
+    let h = height.unwrap_or(1350);
     let mut images = Vec::with_capacity(slides.len());
     for slide in &slides {
         let data_url =
-            render_to_base64(&build_carousel_slide_html(slide, &brand), 1080, 1080).await?;
+            render_to_base64(&build_carousel_slide_html(slide, w, h, &brand), w, h).await?;
         images.push(data_url);
     }
     Ok(images)
@@ -613,6 +765,48 @@ mod tests {
     }
 
     #[test]
+    fn brand_resolve_rejects_8_digit_hex() {
+        let b = Brand::resolve(None, Some("#0d9488ff"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_rejects_rgb_notation() {
+        let b = Brand::resolve(None, Some("rgb(13,148,136)"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_rejects_named_color() {
+        let b = Brand::resolve(None, Some("red"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_rejects_short_hex() {
+        let b = Brand::resolve(None, Some("#fff"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_rejects_garbage() {
+        let b = Brand::resolve(None, Some("#zzzzzz"));
+        assert_eq!(b.brand_color, DEFAULT_BRAND_COLOR);
+    }
+
+    #[test]
+    fn brand_resolve_accepts_uppercase_hex() {
+        let b = Brand::resolve(None, Some("#0D9488"));
+        assert_eq!(b.brand_color, "#0D9488");
+    }
+
+    #[test]
+    fn brand_resolve_accepts_mixed_case_hex() {
+        let b = Brand::resolve(None, Some("#0d9488"));
+        assert_eq!(b.brand_color, "#0d9488");
+    }
+
+    #[test]
     fn post_html_uses_provided_handle_and_color() {
         let brand = Brand::resolve(Some("ankora"), Some("#0d9488"));
         let html = build_post_html("hello", &[], 1080, 1080, &brand);
@@ -627,36 +821,183 @@ mod tests {
         );
     }
 
+    /// Test helper — builds a CarouselSlide with sane defaults so the
+    /// growing list of fields doesn't make every test case noisy.
+    fn make_slide(index: u8, total: u8) -> CarouselSlide {
+        CarouselSlide {
+            index,
+            total,
+            emoji: "x".into(),
+            title: "Test".into(),
+            body: "Body".into(),
+            role: None,
+        }
+    }
+
     #[test]
     fn carousel_html_uses_provided_handle_and_color() {
         let brand = Brand::resolve(Some("ankora"), Some("#0d9488"));
         let slide = CarouselSlide {
-            index: 1,
-            total: 3,
-            emoji: "🚀".to_string(),
-            title: "Title".to_string(),
-            body: "Body".to_string(),
+            emoji: "🚀".into(),
+            title: "Title".into(),
+            body: "Body".into(),
+            ..make_slide(1, 3)
         };
-        let html = build_carousel_slide_html(&slide, &brand);
+        let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
         assert!(html.contains("@ankora"));
         assert!(html.contains("#0d9488"));
     }
 
     #[test]
+    fn carousel_html_renders_monospace_chrome_and_grid() {
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = CarouselSlide {
+            emoji: "✦".into(),
+            title: "Hello".into(),
+            body: "World".into(),
+            ..make_slide(3, 7)
+        };
+        let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
+        assert!(
+            html.contains("03 / 07"),
+            "counter must be zero-padded XX / YY"
+        );
+        assert!(
+            html.contains("&gt;_"),
+            "stamp must include the >_ shell prompt prefix"
+        );
+        assert!(
+            html.contains("data:image/svg+xml"),
+            "background grid must be inlined as SVG"
+        );
+        assert!(
+            html.contains("JetBrains Mono"),
+            "monospace stack must lead with JetBrains Mono"
+        );
+    }
+
+    #[test]
+    fn carousel_html_reserves_bottom_padding_for_brand_stamp() {
+        // Real bug: on LinkedIn landscape (1200×628) the brand stamp's row
+        // overlapped with the bottom line of body text — symmetric padding
+        // didn't reserve any space for the absolutely-positioned stamp.
+        // Fix: padding-bottom must be larger than padding-top so the body
+        // content box ends above the stamp row.
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = make_slide(3, 5);
+        let html = build_carousel_slide_html(&slide, 1200, 628, &brand);
+        // Asymmetric padding signature — `padding:{pad}px {pad}px {bottom_pad}px {pad}px`
+        // where bottom_pad > pad. Both values land in the inline CSS string.
+        assert!(
+            html.contains("padding:45px 45px"),
+            "expected the asymmetric 4-value padding shorthand reserving room \
+             for the stamp; got HTML without it"
+        );
+        // Title must scale to the SHORTER side, not width — otherwise the
+        // landscape canvas blows out and content overflows into the stamp.
+        assert!(
+            html.contains("font-size:51px"),
+            "title size on 1200x628 must derive from min(w,h)=628 (~51px), \
+             not width=1200 (~98px); got HTML without 51px"
+        );
+    }
+
+    #[test]
+    fn carousel_html_scales_with_canvas_dimensions() {
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = make_slide(1, 5);
+        let portrait = build_carousel_slide_html(&slide, 1080, 1350, &brand);
+        let square = build_carousel_slide_html(&slide, 1080, 1080, &brand);
+        assert!(portrait.contains("width:1080px"));
+        assert!(portrait.contains("height:1350px"));
+        assert!(square.contains("width:1080px"));
+        assert!(square.contains("height:1080px"));
+    }
+
+    #[test]
+    fn slide_label_marks_intro_and_outro_distinctly() {
+        assert_eq!(slide_label(1, 5), "intro");
+        assert_eq!(slide_label(5, 5), "à toi");
+        assert_eq!(slide_label(3, 5), "lis-moi");
+        // Single-slide carousel: opening trumps closing — keep "intro" so
+        // a degenerate 1-slide post still reads as a hook.
+        assert_eq!(slide_label(1, 1), "intro");
+    }
+
+    #[test]
+    fn role_meta_for_known_roles_returns_distinct_colors() {
+        let problem = role_meta_for(Some("problem"));
+        let tech = role_meta_for(Some("tech"));
+        let change = role_meta_for(Some("change"));
+        let moment = role_meta_for(Some("moment"));
+        assert!(
+            problem.color.is_some()
+                && tech.color.is_some()
+                && change.color.is_some()
+                && moment.color.is_some(),
+            "tagged roles must define a badge color"
+        );
+        assert_ne!(problem.color, tech.color, "each role gets its own accent");
+        assert_ne!(tech.color, change.color);
+        assert_ne!(change.color, moment.color);
+    }
+
+    #[test]
+    fn role_meta_for_brand_aligned_roles_keeps_brand_color() {
+        // hero / approach / cta intentionally inherit the brand color so the
+        // post opens, climaxes, and closes on the brand's signature accent.
+        for role in ["hero", "approach", "cta"] {
+            let meta = role_meta_for(Some(role));
+            assert!(
+                meta.color.is_none(),
+                "role {role} must inherit brand color (color = None)"
+            );
+        }
+    }
+
+    #[test]
+    fn role_meta_for_unknown_role_falls_back_to_default() {
+        let meta = role_meta_for(Some("does-not-exist"));
+        assert!(meta.color.is_none() && meta.label.is_none() && meta.mark.is_none());
+    }
+
+    #[test]
+    fn carousel_html_uses_role_label_when_provided() {
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = CarouselSlide {
+            role: Some("problem".into()),
+            ..make_slide(2, 5)
+        };
+        let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
+        assert!(
+            html.contains("le problème"),
+            "role=problem must surface its human label in the badge"
+        );
+        assert!(
+            html.contains("#ff6b6b"),
+            "role=problem must paint its red accent"
+        );
+    }
+
+    #[test]
+    fn carousel_html_falls_back_to_index_label_without_role() {
+        let brand = Brand::resolve(Some("ankora"), Some("#3ddc84"));
+        let slide = make_slide(1, 5);
+        let html = build_carousel_slide_html(&slide, 1080, 1350, &brand);
+        assert!(
+            html.contains("intro"),
+            "untagged slide 1 must use the index-derived 'intro' label"
+        );
+    }
+
+    #[test]
     fn templates_are_persona_agnostic() {
-        // No template should leak an old hardcoded handle when a different one is supplied.
         let brand = Brand::resolve(Some("ankora"), Some("#0d9488"));
         let post = build_post_html("x", &[], 1080, 1080, &brand);
         let code = build_code_html("x", "rust", None, 1080, 1080, &brand);
         let term = build_terminal_html("ls", None, 1080, 1080, &brand);
-        let slide = CarouselSlide {
-            index: 1,
-            total: 1,
-            emoji: "x".into(),
-            title: "x".into(),
-            body: "x".into(),
-        };
-        let car = build_carousel_slide_html(&slide, &brand);
+        let slide = make_slide(1, 1);
+        let car = build_carousel_slide_html(&slide, 1080, 1350, &brand);
         for html in [&post, &code, &term, &car] {
             assert!(
                 !html.contains("@terminallearning"),

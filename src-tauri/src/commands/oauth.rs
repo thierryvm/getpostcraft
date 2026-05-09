@@ -28,6 +28,9 @@ pub struct ConnectedAccount {
     /// expires_in). The frontend uses this to render the "expire dans X
     /// jours" badge and warn before the post-publish silent-401 surfaces.
     pub token_expires_at: Option<String>,
+    /// User-configured override for the brand stamp on rendered visuals.
+    /// `None` falls back to `username` at render time.
+    pub display_handle: Option<String>,
 }
 
 impl From<crate::db::accounts::Account> for ConnectedAccount {
@@ -43,6 +46,7 @@ impl From<crate::db::accounts::Account> for ConnectedAccount {
             accent_color: a.accent_color,
             visual_profile: a.visual_profile,
             token_expires_at: a.token_expires_at,
+            display_handle: a.display_handle,
         }
     }
 }
@@ -381,6 +385,25 @@ pub async fn update_account_branding(
     let brand = parse_hex_color(&brand_color)?;
     let accent = parse_hex_color(&accent_color)?;
     crate::db::accounts::update_branding(&state.db, account_id, brand, accent).await
+}
+
+/// Save or clear the display handle shown on rendered visuals (brand stamp).
+/// Empty input clears the override; the renderer then falls back to `username`.
+/// The leading `@` is stripped if present so the renderer can prepend it
+/// consistently across all templates.
+#[tauri::command]
+pub async fn update_account_display_handle(
+    state: tauri::State<'_, AppState>,
+    account_id: i64,
+    display_handle: String,
+) -> Result<(), String> {
+    let trimmed = display_handle.trim().trim_start_matches('@').trim();
+    let value = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    };
+    crate::db::accounts::update_display_handle(&state.db, account_id, value).await
 }
 
 /// Save the Instagram Meta App ID to settings.

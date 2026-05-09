@@ -16,6 +16,7 @@ import {
 } from "@/lib/tauri/oauth";
 import { ProductTruthEditor } from "./ProductTruthEditor";
 import { BrandColorsEditor } from "./BrandColorsEditor";
+import { DisplayHandleEditor } from "./DisplayHandleEditor";
 import { TokenExpiryBadge } from "./TokenExpiryBadge";
 import type { ConnectedAccount } from "@/lib/tauri/oauth";
 
@@ -114,6 +115,11 @@ export function InstagramSection({ account }: { account: ConnectedAccount | unde
               accountId={account.id}
               initialValue={account.product_truth}
               handle={account.username}
+            />
+            <DisplayHandleEditor
+              accountId={account.id}
+              fallbackUsername={account.username}
+              initialValue={account.display_handle}
             />
             <BrandColorsEditor
               accountId={account.id}

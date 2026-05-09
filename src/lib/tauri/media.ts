@@ -62,15 +62,21 @@ export async function renderTerminalImage(
   });
 }
 
-/** Render carousel slides → array of base64 PNG data URLs (same order as input). */
+/** Render carousel slides → array of base64 PNG data URLs (same order as input).
+ *  Defaults to the Instagram 4:5 portrait (1080×1350); pass `width`/`height`
+ *  to follow whatever format the user picks in the Composer. */
 export async function renderCarouselSlides(
   slides: import("@/lib/tauri/composer").CarouselSlide[],
   brand: BrandOptions = {},
+  width = 1080,
+  height = 1350,
 ): Promise<string[]> {
   return invoke<string[]>("render_carousel_slides", {
     slides,
     handle: brand.handle ?? null,
     brandColor: brand.brandColor ?? null,
+    width,
+    height,
   });
 }
 

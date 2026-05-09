@@ -4,10 +4,22 @@ The API key is passed per-call from Rust; never stored beyond this call.
 """
 import json
 import re
+import sys
 from typing import Any
 
 from openai import OpenAI
 import anthropic
+
+
+def _log_warn(msg: str) -> None:
+    """Emit a warning to stderr (Rust side captures it via the sidecar pipe).
+
+    Stdout is reserved for the JSON response — anything written there would
+    poison the parser. stderr is forwarded to the Tauri log panel and is the
+    right channel for soft failures that don't break the contract.
+    """
+    sys.stderr.write(f"[sidecar:warn] {msg}\n")
+    sys.stderr.flush()
 
 
 class AIClient:
@@ -404,14 +416,82 @@ def _parse_carousel_response(text: str, expected_count: int) -> list[dict]:
     if not isinstance(data, list):
         raise ValueError(f"Expected JSON array, got {type(data).__name__}")
 
+    # Allowed slide-role tags. Anything else (including missing) becomes None
+    # so the Rust renderer falls back to its index-derived label. This mirrors
+    # the Rust-side `role_meta_for` whitelist.
+    allowed_roles = {"hero", "problem", "approach", "tech", "change", "moment", "cta"}
+
     slides = []
     for i, slide in enumerate(data[:expected_count]):
+        raw_role = str(slide.get("role", "")).strip().lower()
+        role = raw_role if raw_role in allowed_roles else None
         slides.append({
             "emoji": _sanitize_surrogates(str(slide.get("emoji", "💡"))),
             "title": _sanitize_surrogates(str(slide.get("title", f"Slide {i + 1}"))),
             "body": _sanitize_surrogates(str(slide.get("body", ""))),
+            "role": role,
         })
+
+    # Sequence sanity — guards against degenerate LLM outputs that pass the
+    # per-slide whitelist but produce an editorially broken carousel
+    # (e.g. all 7 slides tagged "approach", or "approach" before any
+    # "problem"). On failure we strip every role to None — graceful
+    # degradation, since the Rust renderer falls back to index-derived
+    # labels + brand color, which is the pre-roles behavior.
+    if not _slide_role_sequence_is_healthy(slides):
+        roles_seen = [s["role"] for s in slides]
+        _log_warn(f"slide_role_sequence_degenerate roles={roles_seen}")
+        for s in slides:
+            s["role"] = None
+
     return slides
+
+
+def _slide_role_sequence_is_healthy(slides: list[dict]) -> bool:
+    """Return True if the role sequence is editorially coherent.
+
+    Checks (skipped if every role is None — that's the legitimate
+    "AI didn't tag anything" case, not a degenerate one):
+      1. At least one `problem` slide must appear before any `approach`.
+         The narrative arc Cowork's reference posts use is "pain → fix",
+         not "fix → pain".
+      2. No more than 60% of MIDDLE slides may share the same role.
+         Stops outputs like "5 of 5 middles tagged approach" that flatten
+         the carousel back to a single-color wall.
+
+    The first/last slot rules (hero / cta) are advisory in the prompt
+    but not hard-enforced here — the renderer's index-derived fallback
+    already carries the user-visible labels for slot 1 and slot N, so a
+    misuse there is cosmetic rather than narrative.
+    """
+    roles = [s["role"] for s in slides]
+
+    if all(r is None for r in roles):
+        return True
+
+    # Rule 1 — problem must appear before approach.
+    first_problem = next((i for i, r in enumerate(roles) if r == "problem"), None)
+    first_approach = next((i for i, r in enumerate(roles) if r == "approach"), None)
+    if first_approach is not None and (first_problem is None or first_problem > first_approach):
+        return False
+
+    # Rule 2 — max 60% of middle slides share the same role.
+    # "Middle" = everything except first and last. The 60% ratio is only
+    # meaningful with ≥3 middle slots; for shorter carousels (3-4 slides)
+    # the middle has 1-2 slots where the math degenerates to 100% by
+    # construction, so we skip the check.
+    middle = roles[1:-1]
+    if len(middle) >= 3:
+        non_none = [r for r in middle if r is not None]
+        if non_none:
+            counts: dict[str, int] = {}
+            for r in non_none:
+                counts[r] = counts.get(r, 0) + 1
+            top_count = max(counts.values())
+            if top_count / len(middle) > 0.6:
+                return False
+
+    return True
 
 
 _CTRL_ESCAPES: dict[str, str] = {

@@ -34,7 +34,7 @@ fn python_executable() -> &'static str {
 
         // Pass 1 — interpreter with the sidecar packages already installed.
         for candidate in candidates {
-            let ok = std::process::Command::new(candidate)
+            let ok = silent_std_command(candidate)
                 .arg("-c")
                 .arg("import openai, anthropic, playwright")
                 .stdout(Stdio::null())
@@ -52,7 +52,7 @@ fn python_executable() -> &'static str {
         // the in-app installer has a target. MS Store stub fails `--version`
         // too on most Windows configs, so we still skip it.
         for candidate in candidates {
-            let ok = std::process::Command::new(candidate)
+            let ok = silent_std_command(candidate)
                 .arg("--version")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -79,6 +79,38 @@ fn python_executable() -> &'static str {
 /// Source: <https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags>
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Build a `std::process::Command` that won't flash a terminal window on
+/// Windows. No-op on Unix where there's no console to hide. Used by every
+/// Python probe and pip helper across the codebase — the helper exists so
+/// adding a new spawn point doesn't accidentally regress the no-flash UX.
+pub(crate) fn silent_std_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    // `mut` is only needed when we call `creation_flags` below — that's a
+    // Windows-only branch, so on Linux/macOS clippy flags this binding as
+    // `unused_mut` and `-D warnings` blows up CI. The targeted attribute
+    // suppresses the warning on non-Windows without weakening the lint
+    // anywhere else.
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+/// `tokio::process::Command` variant of [`silent_std_command`]. Tokio's
+/// Windows-only `creation_flags` method does not need the `CommandExt` import.
+pub(crate) fn silent_tokio_command(
+    program: impl AsRef<std::ffi::OsStr>,
+) -> tokio::process::Command {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut cmd = tokio::process::Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
 
 /// Tauri 2 mangles `bundle.resources` paths starting with `..` by
 /// replacing the `..` segment with this literal in the deployed bundle.
@@ -260,7 +292,7 @@ async fn run_sidecar(json_input: String, timeout_secs: u64) -> Result<String, St
     let script = sidecar_script();
 
     timeout(Duration::from_secs(timeout_secs), async move {
-        let mut command = tokio::process::Command::new(python_executable());
+        let mut command = silent_tokio_command(python_executable());
         command
             .arg(&script)
             // Force UTF-8 I/O on all platforms; 'replace' keeps us alive
@@ -270,13 +302,6 @@ async fn run_sidecar(json_input: String, timeout_secs: u64) -> Result<String, St
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-
-        // Suppress the flashing terminal window on Windows when the Tauri GUI
-        // spawns a console subprocess. No-op on Unix — there is no console to
-        // hide when the parent has none.
-        // tokio::process::Command exposes `creation_flags` directly on Windows.
-        #[cfg(windows)]
-        command.creation_flags(CREATE_NO_WINDOW);
 
         let mut child = command
             .spawn()

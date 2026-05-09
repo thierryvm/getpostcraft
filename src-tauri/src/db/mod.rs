@@ -20,6 +20,15 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
+    // Snapshot the DB before we touch it — if a migration plants a column
+    // change that bricks the schema, the user can roll back to the file the
+    // app saw at startup. The daily auto-backup in ~/Documents covers
+    // routine recovery; this snapshot covers the "I just upgraded and
+    // things look weird" 5-minute window before the daily task fires.
+    if let Err(e) = snapshot_db_before_migrate(&db_path) {
+        log::warn!("db: pre-migration snapshot failed (non-fatal): {e}");
+    }
+
     let options =
         SqliteConnectOptions::from_str(&format!("sqlite://{}", db_path.to_string_lossy()))
             .map_err(|e| e.to_string())?
@@ -33,6 +42,24 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         .await
         .map_err(|e| e.to_string())?;
 
+    // Heal stale checksums in _sqlx_migrations BEFORE running migrate!().run().
+    //
+    // sqlx records a checksum of every migration's bytes in _sqlx_migrations
+    // and refuses to start if the current binary's embedded migration bytes
+    // differ from what's recorded — even by a single line ending. We've seen
+    // this fire when:
+    //   - A user's DB was created on a build with CRLF endings, then upgraded
+    //     to a build with LF endings (or vice versa).
+    //   - File got cosmetically reformatted (indent changes) without
+    //     functional change.
+    // The schema is fine; only the recorded hash is out of sync. Healing
+    // re-records the current bytes' hash so .run() sees no mismatch and
+    // no-ops on the already-applied migrations. Brand-new installs bypass
+    // this entirely (no _sqlx_migrations table yet).
+    heal_migration_checksums(&pool)
+        .await
+        .map_err(|e| format!("Failed to heal migration checksums: {e}"))?;
+
     // Run migrations
     sqlx::migrate!("src/db/migrations")
         .run(&pool)
@@ -40,6 +67,85 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         .map_err(|e| e.to_string())?;
 
     Ok(pool)
+}
+
+/// Copy the live DB (if it exists) to `app.db.pre-migrate.bak` next to it
+/// so a failed migration in the next step doesn't leave the user with no
+/// rollback option. Cheap (single file copy in the data dir, megabytes,
+/// not gigabytes) and best-effort: I/O failures here log a warning rather
+/// than aborting startup, since the caller can still proceed and the
+/// user has a daily auto-backup as a deeper safety net.
+///
+/// Only one snapshot is kept — overwritten each time the app starts.
+/// That's intentional: this is a "right before the most recent upgrade"
+/// safety net, not an archive. The auto-backup daily history covers
+/// archival recovery.
+fn snapshot_db_before_migrate(db_path: &std::path::Path) -> std::io::Result<()> {
+    if !db_path.exists() {
+        // First launch — no DB to snapshot yet.
+        return Ok(());
+    }
+    let snapshot_path = db_path.with_extension("db.pre-migrate.bak");
+    std::fs::copy(db_path, &snapshot_path)?;
+    log::info!(
+        "db: pre-migration snapshot saved to {}",
+        snapshot_path.display()
+    );
+    Ok(())
+}
+
+/// Reconcile `_sqlx_migrations.checksum` with the bytes embedded in this
+/// binary, for any migration row that's already present.
+///
+/// Returns the number of rows healed (0 when the DB is fresh or already
+/// in sync). Errors propagate as `sqlx::Error` so the caller can wrap
+/// them with a user-facing message.
+async fn heal_migration_checksums(pool: &SqlitePool) -> Result<usize, sqlx::Error> {
+    use sqlx::Row;
+
+    // Bail on fresh installs — no _sqlx_migrations table means there's
+    // nothing to heal and the regular migrate!().run() will create it.
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if exists == 0 {
+        return Ok(0);
+    }
+
+    let migrator = sqlx::migrate!("src/db/migrations");
+    let mut healed = 0usize;
+
+    for migration in migrator.iter() {
+        let version: i64 = migration.version;
+        let embedded_checksum: &[u8] = migration.checksum.as_ref();
+
+        let stored = sqlx::query("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
+            .bind(version)
+            .fetch_optional(pool)
+            .await?;
+        let Some(row) = stored else {
+            // Migration recorded as not-yet-applied — let .run() apply it.
+            continue;
+        };
+        let stored_checksum: Vec<u8> = row.try_get("checksum")?;
+
+        if stored_checksum != embedded_checksum {
+            sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+                .bind(embedded_checksum)
+                .bind(version)
+                .execute(pool)
+                .await?;
+            healed += 1;
+            log::warn!(
+                "db: healed migration {version} checksum (stored != embedded — \
+                 likely line-ending or whitespace drift between builds)"
+            );
+        }
+    }
+
+    Ok(healed)
 }
 
 // ── Migration regression tests (PR-C) ────────────────────────────────────────
@@ -272,6 +378,21 @@ mod migration_tests {
     }
 
     #[tokio::test]
+    async fn accounts_has_display_handle_from_migration_016() {
+        // Migration 016 adds a brand-handle override so LinkedIn accounts
+        // (whose `username` is the owner's full personal name) can render
+        // visuals with a brand handle (e.g. @terminallearning) instead of
+        // shipping the user's name on every slide. Nullable on purpose —
+        // when NULL the renderer falls back to `username`.
+        let pool = fresh_migrated_pool().await;
+        let cols = table_columns(&pool, "accounts").await;
+        assert!(
+            cols.contains(&"display_handle".to_string()),
+            "migration 016 must add display_handle column, got: {cols:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn accounts_has_token_expires_at_from_migration_014() {
         // PR-S6 introduces an OAuth token expiry column so the UI can show a
         // "expire dans X jours" badge before publishes start failing with a
@@ -281,6 +402,140 @@ mod migration_tests {
         assert!(
             cols.contains(&"token_expires_at".to_string()),
             "migration 014 must add token_expires_at column, got: {cols:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn heal_migration_checksums_repairs_drifted_row() {
+        // Reproduces the v0.3.5 → v0.3.6 startup crash: the user's _sqlx_migrations
+        // had a checksum from build A, the new binary embeds bytes from build B
+        // (CRLF/LF or whitespace drift), sqlx::migrate!().run() refused to start
+        // with "migration N was previously applied but has been modified".
+        //
+        // Fix: heal_migration_checksums re-records the embedded checksum on
+        // already-applied rows so .run() sees no mismatch and no-ops.
+        let pool = fresh_migrated_pool().await;
+
+        // Corrupt migration 1's checksum to simulate the build drift.
+        let rows_corrupted =
+            sqlx::query("UPDATE _sqlx_migrations SET checksum = X'00' WHERE version = 1")
+                .execute(&pool)
+                .await
+                .expect("corrupt checksum")
+                .rows_affected();
+        assert_eq!(rows_corrupted, 1, "must have a row at version 1 to corrupt");
+
+        // Without the heal, sqlx::migrate!().run() must fail.
+        let err = sqlx::migrate!("src/db/migrations")
+            .run(&pool)
+            .await
+            .expect_err("run must reject corrupted checksum");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("modified") || msg.contains("checksum"),
+            "expected checksum-mismatch error, got: {msg}"
+        );
+
+        // Heal — should repair the one drifted row.
+        let healed = super::heal_migration_checksums(&pool)
+            .await
+            .expect("heal must not error");
+        assert_eq!(
+            healed, 1,
+            "exactly one row was corrupted, heal must repair 1"
+        );
+
+        // Now .run() must succeed (it's all already-applied → no-op).
+        sqlx::migrate!("src/db/migrations")
+            .run(&pool)
+            .await
+            .expect("run must succeed after heal");
+    }
+
+    #[tokio::test]
+    async fn heal_migration_checksums_is_noop_on_fresh_db() {
+        // No _sqlx_migrations table yet (brand-new install). Heal must not
+        // create the table or error — it just returns 0.
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        let healed = super::heal_migration_checksums(&pool)
+            .await
+            .expect("heal on fresh db must not error");
+        assert_eq!(healed, 0);
+
+        // _sqlx_migrations table must still not exist (we didn't create it).
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query master");
+        assert_eq!(exists, 0, "heal must not touch sqlite_master on fresh DB");
+    }
+
+    #[test]
+    fn snapshot_before_migrate_copies_existing_db() {
+        // Simulates the upgrade case: an app.db already exists, init_pool
+        // must produce app.db.pre-migrate.bak so the user can roll back.
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let db_path = tmp.path().join("app.db");
+        std::fs::write(&db_path, b"sqlite database bytes here").expect("write db");
+        super::snapshot_db_before_migrate(&db_path).expect("snapshot must succeed");
+        let snap = db_path.with_extension("db.pre-migrate.bak");
+        assert!(snap.exists(), "snapshot file must be created");
+        assert_eq!(
+            std::fs::read(&snap).expect("read snap"),
+            b"sqlite database bytes here",
+            "snapshot bytes must match the source",
+        );
+    }
+
+    #[test]
+    fn snapshot_before_migrate_is_noop_on_first_launch() {
+        // Brand-new install: no app.db yet. Snapshot must succeed silently
+        // and not create anything (otherwise we'd litter empty files in
+        // the data dir on every fresh startup).
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let db_path = tmp.path().join("app.db");
+        super::snapshot_db_before_migrate(&db_path).expect("noop must succeed");
+        assert!(!db_path.with_extension("db.pre-migrate.bak").exists());
+    }
+
+    #[test]
+    fn snapshot_before_migrate_overwrites_previous_snapshot() {
+        // We keep ONLY the most recent snapshot — older ones are overwritten
+        // so the data dir doesn't accumulate copies after many startups.
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let db_path = tmp.path().join("app.db");
+        let snap = db_path.with_extension("db.pre-migrate.bak");
+
+        std::fs::write(&db_path, b"v1").expect("write db v1");
+        super::snapshot_db_before_migrate(&db_path).expect("snap v1");
+        assert_eq!(std::fs::read(&snap).expect("read snap"), b"v1");
+
+        std::fs::write(&db_path, b"v2 newer bytes").expect("write db v2");
+        super::snapshot_db_before_migrate(&db_path).expect("snap v2");
+        assert_eq!(
+            std::fs::read(&snap).expect("read snap"),
+            b"v2 newer bytes",
+            "snapshot must reflect the latest bytes",
+        );
+    }
+
+    #[tokio::test]
+    async fn heal_migration_checksums_skips_in_sync_rows() {
+        // Sanity: when the embedded bytes already match the recorded checksum,
+        // heal returns 0 and modifies nothing.
+        let pool = fresh_migrated_pool().await;
+        let healed = super::heal_migration_checksums(&pool)
+            .await
+            .expect("heal on in-sync DB must succeed");
+        assert_eq!(
+            healed, 0,
+            "no rows should need healing on a freshly-migrated DB"
         );
     }
 

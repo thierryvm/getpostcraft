@@ -1704,7 +1704,7 @@ dependencies = [
 
 [[package]]
 name = "getpostcraft"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1727,6 +1727,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "tokio-rustls",
  "url",

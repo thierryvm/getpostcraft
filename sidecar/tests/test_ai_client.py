@@ -199,6 +199,103 @@ class TestParseCarouselResponse:
         # Must not raise
         assert json.dumps(result)
 
+    def test_role_passes_through_when_in_whitelist(self):
+        slides = [
+            {"emoji": "✦", "title": "T", "body": "B", "role": "problem"},
+            {"emoji": "✦", "title": "T", "body": "B", "role": "approach"},
+            {"emoji": "✦", "title": "T", "body": "B", "role": "cta"},
+        ]
+        raw = json.dumps(slides)
+        result = _parse_carousel_response(raw, 3)
+        assert result[0]["role"] == "problem"
+        assert result[1]["role"] == "approach"
+        assert result[2]["role"] == "cta"
+
+    def test_role_normalises_case_and_whitespace(self):
+        slides = [{"emoji": "✦", "title": "T", "body": "B", "role": "  PROBLEM  "}]
+        raw = json.dumps(slides)
+        result = _parse_carousel_response(raw, 1)
+        assert result[0]["role"] == "problem"
+
+    def test_unknown_role_becomes_none(self):
+        slides = [{"emoji": "✦", "title": "T", "body": "B", "role": "fluffy-cat"}]
+        raw = json.dumps(slides)
+        result = _parse_carousel_response(raw, 1)
+        assert result[0]["role"] is None
+
+    def test_missing_role_becomes_none(self):
+        slides = [{"emoji": "✦", "title": "T", "body": "B"}]
+        raw = json.dumps(slides)
+        result = _parse_carousel_response(raw, 1)
+        assert result[0]["role"] is None
+
+
+# ── Sequence sanity check ────────────────────────────────────────────────────
+#
+# These tests assert the editorial-coherence guard added on top of the
+# per-slide whitelist. They feed the parser whole carousels (not just one
+# slide) and check that degenerate sequences get all roles stripped to None.
+
+class TestSlideRoleSequence:
+    def _carousel(self, roles: list[str | None]) -> str:
+        slides = [
+            {
+                "emoji": "✦",
+                "title": f"S{i+1}",
+                "body": "B",
+                **({"role": r} if r is not None else {}),
+            }
+            for i, r in enumerate(roles)
+        ]
+        return json.dumps(slides)
+
+    def test_healthy_sequence_keeps_roles(self):
+        # hero → problem → approach → tech → cta is the canonical arc.
+        raw = self._carousel(["hero", "problem", "approach", "tech", "cta"])
+        result = _parse_carousel_response(raw, 5)
+        assert [s["role"] for s in result] == [
+            "hero",
+            "problem",
+            "approach",
+            "tech",
+            "cta",
+        ]
+
+    def test_no_problem_before_approach_strips_all(self):
+        # Approach without any prior problem is the "fix without pain" anti-pattern.
+        raw = self._carousel(["hero", "approach", "tech", "tech", "cta"])
+        result = _parse_carousel_response(raw, 5)
+        assert all(s["role"] is None for s in result)
+
+    def test_majority_same_role_strips_all(self):
+        # 4 of 5 middle slots tagged "tech" → 80% > 60% threshold.
+        # (Middle = slides 2..6 in a 7-slide post, so we need 7 total here.)
+        raw = self._carousel(
+            ["hero", "tech", "tech", "tech", "tech", "problem", "cta"]
+        )
+        result = _parse_carousel_response(raw, 7)
+        assert all(s["role"] is None for s in result)
+
+    def test_first_slide_not_hero_warns_but_keeps(self):
+        # First slot mistagged is cosmetic — renderer's index fallback
+        # carries the user-visible "intro" label, so we keep the rest.
+        raw = self._carousel(["tech", "problem", "approach", "tech", "cta"])
+        result = _parse_carousel_response(raw, 5)
+        # All roles preserved (no degenerate-strip) — sequence is otherwise fine.
+        assert [s["role"] for s in result] == [
+            "tech",
+            "problem",
+            "approach",
+            "tech",
+            "cta",
+        ]
+
+    def test_no_roles_at_all_is_valid(self):
+        # Legitimate "AI didn't tag anything" — sequence check must not fire.
+        raw = self._carousel([None, None, None, None, None])
+        result = _parse_carousel_response(raw, 5)
+        assert all(s["role"] is None for s in result)
+
 
 # ── _respond_error (via main module) ─────────────────────────────────────────
 

@@ -86,11 +86,15 @@ pub fn get_carousel_prompt(network: &str, slide_count: u8) -> String {
          Si un contexte BRAND IDENTITY est fourni ci-dessous, la persona, le projet et la niche \
          viennent de là — base-toi UNIQUEMENT sur ces faits, ne les invente pas.\n\n\
          Retourne UNIQUEMENT un tableau JSON valide — pas de markdown, pas de texte avant ou après :\n\
-         [{{\"emoji\": \"emoji\", \"title\": \"titre max 8 mots\", \"body\": \"2-3 phrases directes\"}}, ...]\n\n\
-         Règles :\n\
-         - Slide 1 : accroche percutante (question, fait surprenant, ou promesse forte)\n\
-         - Slides 2 à {last_content} : contenu concret, actionnable, une idée par slide\n\
-         - Slide {slide_count} : récapitulatif + CTA (ex : \"Sauvegarde ce carrousel\" ou \"Tag quelqu'un 👇\")\n\
+         [{{\"emoji\": \"emoji\", \"title\": \"titre max 8 mots\", \"body\": \"2-3 phrases directes\", \"role\": \"hero|problem|approach|tech|change|moment|cta\"}}, ...]\n\n\
+         Règles structurelles :\n\
+         - Slide 1 : role=\"hero\" — accroche percutante (question, fait surprenant, promesse forte)\n\
+         - Slides 2 à {last_content} : choisis le rôle qui colle au contenu de la slide\n\
+         - Slide {slide_count} : role=\"cta\" — récapitulatif + appel à l'action (ex : \"Sauvegarde ce carrousel\" ou \"Tag quelqu'un 👇\")\n\
+         - Au moins une slide \"problem\" (le pain point) avant la slide \"approach\" (la solution proposée)\n\
+         - Une slide \"tech\" pour les détails concrets (stack, archi, chiffre précis)\n\
+         - \"change\" pour les transformations / résultats, \"moment\" pour les exemples vécus\n\n\
+         Règles éditoriales :\n\
          - Titres : courts, impactants, max 8 mots\n\
          - Body : 2-3 phrases claires et directes\n\
          - Langue : française\n\
@@ -105,7 +109,8 @@ pub fn get_carousel_prompt(network: &str, slide_count: u8) -> String {
          Si l'un apparaît, réécris la slide.\n\n\
          AUTO-VÉRIFICATION AVANT DE RÉPONDRE : pour chaque slide, vérifie que (1) le titre \
          tient en 8 mots max, (2) le body évite les AI-tells, (3) aucun chiffre n'est inventé, \
-         (4) tous les accents français sont en place. Si une vérification échoue, recommence."
+         (4) tous les accents français sont en place, (5) le role choisi reflète bien le contenu \
+         (problem ne se met pas sur une slide qui décrit la solution). Si une vérification échoue, recommence."
     )
 }
 

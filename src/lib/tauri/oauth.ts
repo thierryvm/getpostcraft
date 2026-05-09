@@ -17,6 +17,13 @@ export interface ConnectedAccount {
    * Used to render the "expire dans X jours" badge.
    */
   token_expires_at: string | null;
+  /**
+   * Brand handle to display on rendered visuals (without the leading '@').
+   * Optional; when null the renderer falls back to `username`. Used to
+   * override LinkedIn's full-name `username` with a brand handle like
+   * "terminallearning".
+   */
+  display_handle: string | null;
 }
 
 export function listAccounts(): Promise<ConnectedAccount[]> {
@@ -99,5 +106,20 @@ export function updateAccountBranding(
     accountId,
     brandColor,
     accentColor,
+  });
+}
+
+/**
+ * Save or clear the display handle for the brand stamp on rendered visuals.
+ * Empty string clears (renderer falls back to `username`). The leading '@'
+ * is stripped server-side so callers don't need to normalise.
+ */
+export function updateAccountDisplayHandle(
+  accountId: number,
+  displayHandle: string
+): Promise<void> {
+  return invoke<void>("update_account_display_handle", {
+    accountId,
+    displayHandle,
   });
 }

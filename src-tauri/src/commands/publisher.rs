@@ -7,7 +7,6 @@ use crate::state::AppState;
 const IG_API_DEFAULT: &str = "https://graph.instagram.com/v21.0";
 const IMGBB_API: &str = "https://api.imgbb.com/1/upload";
 const CATBOX_API: &str = "https://catbox.moe/user/api.php";
-const LITTERBOX_API: &str = "https://litterbox.catbox.moe/resources/internals/api.php";
 const TMPFILES_API: &str = "https://tmpfiles.org/api/v1/upload";
 const NULLPTRME_API: &str = "https://0x0.st";
 
@@ -120,47 +119,6 @@ async fn upload_image_to_nullptrme(
     }
 }
 
-/// Upload an image to Litterbox (catbox.moe temporary CDN — separate endpoint, more reliable).
-/// Files expire after 1 hour, which is fine: Instagram fetches the image immediately.
-async fn upload_image_to_litterbox(
-    client: &reqwest::Client,
-    bytes: Vec<u8>,
-) -> Result<String, String> {
-    let part = reqwest::multipart::Part::bytes(bytes)
-        .file_name("image.png")
-        .mime_str("image/png")
-        .map_err(|e| format!("Litterbox mime error: {e}"))?;
-
-    let form = reqwest::multipart::Form::new()
-        .text("reqtype", "fileupload")
-        .text("time", "1h")
-        .part("fileToUpload", part);
-
-    let resp = client
-        .post(LITTERBOX_API)
-        .multipart(form)
-        .timeout(std::time::Duration::from_secs(20))
-        .send()
-        .await
-        .map_err(|e| format!("Litterbox network error: {e}"))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("Litterbox upload failed: HTTP {}", resp.status()));
-    }
-
-    let url = resp
-        .text()
-        .await
-        .map_err(|e| format!("Litterbox response error: {e}"))?;
-    let url = url.trim().to_string();
-
-    if url.starts_with("https://") {
-        Ok(url)
-    } else {
-        Err(format!("Litterbox returned unexpected response: {url}"))
-    }
-}
-
 /// Upload an image to tmpfiles.org (no API key, files expire after 1 hour).
 async fn upload_image_to_tmpfiles(
     client: &reqwest::Client,
@@ -218,8 +176,16 @@ async fn upload_image_to_tmpfiles(
 }
 
 /// Upload image with automatic fallback chain:
-///   Catbox → Litterbox → tmpfiles.org → 0x0.st
-/// If all fail, returns a consolidated error with hints to configure imgbb.
+///   Catbox → 0x0.st → tmpfiles.org
+///
+/// Litterbox (`litter.catbox.moe`) is intentionally excluded: Meta's CDN
+/// rejects fetches from that host with error code 9004 / subcode 2207052
+/// ("Only photo or video can be accepted as media type"), making it unusable
+/// for Instagram even though it works for storage. Last-resort uploads should
+/// rely on imgbb (configured by the user) rather than a host Meta is known
+/// to refuse.
+///
+/// If all hosts fail, returns a consolidated error with hints to configure imgbb.
 async fn upload_image_free(image_source: &str) -> Result<String, String> {
     let bytes = decode_image_bytes(image_source)?;
     let client = reqwest::Client::new();
@@ -236,15 +202,8 @@ async fn upload_image_free(image_source: &str) -> Result<String, String> {
     }
 
     try_host!("Catbox", upload_image_to_catbox(&client, bytes.clone()));
-    try_host!(
-        "Litterbox",
-        upload_image_to_litterbox(&client, bytes.clone())
-    );
-    try_host!(
-        "tmpfiles.org",
-        upload_image_to_tmpfiles(&client, bytes.clone())
-    );
-    try_host!("0x0.st", upload_image_to_nullptrme(&client, bytes));
+    try_host!("0x0.st", upload_image_to_nullptrme(&client, bytes.clone()));
+    try_host!("tmpfiles.org", upload_image_to_tmpfiles(&client, bytes));
 
     Err(format!(
         "Tous les hébergeurs gratuits sont indisponibles :\n{}\n\n\
@@ -487,7 +446,8 @@ async fn publish_ig_flow(
 enum ImageUploader {
     /// User configured an imgbb key — direct upload, faster & more reliable.
     Imgbb(String),
-    /// Default: round-robin through Catbox → Litterbox → tmpfiles → 0x0.st.
+    /// Default: round-robin through Catbox → 0x0.st → tmpfiles.org. Litterbox
+    /// is excluded because Meta's CDN refuses `litter.catbox.moe` URLs.
     Free,
 }
 
@@ -593,8 +553,18 @@ pub async fn publish_post(
     // 1. Load the draft
     let post = crate::db::history::get_by_id(&state.db, post_id).await?;
 
-    if post.status == "published" {
-        return Err("This post is already published".to_string());
+    // Defensive: refuse if either the status flipped to "published" OR a
+    // network media id is already attached. The status check is the happy
+    // path; the ig_media_id check catches the out-of-sync case where a
+    // prior publish completed on Meta's side but the local DB write was
+    // interrupted (crash mid-update, network drop, etc.). Without this
+    // second guard the user could double-publish to Instagram.
+    if post.status == "published" || post.ig_media_id.is_some() {
+        return Err(
+            "Ce post est déjà publié. Ouvre-le depuis l'historique et clique sur \
+             « Voir sur Instagram » pour le retrouver."
+                .to_string(),
+        );
     }
     if post.images.is_empty() {
         return Err("No image attached to this post. Generate an image first.".to_string());
@@ -727,8 +697,15 @@ pub async fn publish_linkedin_post(
     // 1. Load the draft
     let post = crate::db::history::get_by_id(&state.db, post_id).await?;
 
-    if post.status == "published" {
-        return Err("This post is already published".to_string());
+    // Same defensive guard as publish_post — see the comment there. ig_media_id
+    // doubles as the LinkedIn URN, so a non-null value means a publish
+    // completed on LinkedIn even if the local status update missed.
+    if post.status == "published" || post.ig_media_id.is_some() {
+        return Err(
+            "Ce post est déjà publié. Ouvre-le depuis l'historique et clique sur \
+             « Voir sur LinkedIn » pour le retrouver."
+                .to_string(),
+        );
     }
 
     // 2. Resolve the account this draft targets — see `resolve_post_account`.

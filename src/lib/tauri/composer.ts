@@ -61,12 +61,27 @@ export async function generateVariants(
   });
 }
 
+/** Allowed values for `CarouselSlide.role`. Mirrors the Rust whitelist
+ *  in `commands::media::role_meta_for`. Anything else is normalised to
+ *  `null` by the sidecar before reaching the frontend. */
+export type CarouselSlideRole =
+  | "hero"
+  | "problem"
+  | "approach"
+  | "tech"
+  | "change"
+  | "moment"
+  | "cta";
+
 export interface CarouselSlide {
   index: number;
   total: number;
   emoji: string;
   title: string;
   body: string;
+  /** Section role suggested by the AI; drives badge color and label in
+   *  the rendered image. `null` falls back to an index-derived label. */
+  role: CarouselSlideRole | null;
 }
 
 export async function generateCarousel(

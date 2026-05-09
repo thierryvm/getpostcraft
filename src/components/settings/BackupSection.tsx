@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { revealItemInDir, openPath } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Database, FileJson, FolderOpen, Loader2, X } from "lucide-react";
 import { exportBackupZip, exportPortableZip } from "@/lib/tauri/dataExport";
@@ -76,15 +76,18 @@ export function BackupSection() {
   async function revealInFolder() {
     if (!exportedPath) return;
     try {
-      await invoke("plugin:opener|reveal_item_in_dir", { path: exportedPath });
-    } catch {
-      // Fallback: open the parent folder if reveal_item_in_dir is unsupported
-      // by the current opener plugin version.
+      await revealItemInDir(exportedPath);
+    } catch (firstErr) {
+      // Fallback: open the parent folder if reveal-item-in-dir failed
+      // (some Linux desktops don't implement it). The two failures are
+      // wrapped together so the user gets context if both fail.
       const parent = exportedPath.replace(/[\\/][^\\/]+$/, "");
       try {
-        await invoke("plugin:opener|open_path", { path: parent });
-      } catch (e) {
-        console.error("Cannot open folder:", e);
+        await openPath(parent);
+      } catch (secondErr) {
+        setError(
+          `Impossible d'ouvrir le dossier : ${String(secondErr)} (reveal: ${String(firstErr)})`,
+        );
       }
     }
   }

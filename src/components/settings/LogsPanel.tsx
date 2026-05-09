@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RefreshCw, Copy, FolderOpen, Trash2 } from "lucide-react";
@@ -50,9 +51,12 @@ export function LogsPanel() {
   async function openLogFile() {
     try {
       const path = await invoke<string>("get_log_file_path");
-      await invoke("plugin:opener|open_path", { path });
+      // revealItemInDir highlights the file inside its parent — better UX than
+      // opening the .log file directly which would launch whichever editor
+      // is associated with the extension (often Notepad, sometimes nothing).
+      await revealItemInDir(path);
     } catch (e) {
-      console.error("Cannot open log file:", e);
+      setError(`Impossible d'ouvrir le fichier de log : ${String(e)}`);
     }
   }
 

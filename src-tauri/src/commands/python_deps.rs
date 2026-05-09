@@ -1,3 +1,4 @@
+use crate::sidecar::{silent_std_command, silent_tokio_command};
 /// Install / verify the Python packages the sidecar imports.
 ///
 /// ## Why this exists
@@ -22,7 +23,6 @@
 /// command. The `--no-warn-script-location` flag silences the
 /// "this script is not on PATH" warning that confuses users.
 use std::process::Stdio;
-use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
 /// Locate the `requirements.txt` shipped alongside the sidecar `.py` files.
@@ -69,7 +69,7 @@ fn python_executable() -> &'static str {
     static CACHED: OnceLock<&'static str> = OnceLock::new();
     CACHED.get_or_init(|| {
         for candidate in ["python3", "python", "py"] {
-            let ok = std::process::Command::new(candidate)
+            let ok = silent_std_command(candidate)
                 .arg("--version")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -98,7 +98,7 @@ pub async fn check_python_deps() -> Result<Vec<String>, String> {
                  \t\tmissing.append(m)\n\
                  print(','.join(missing))\n";
 
-    let output = Command::new(py)
+    let output = silent_tokio_command(py)
         .arg("-c")
         .arg(probe)
         .stdout(Stdio::piped())
@@ -147,7 +147,7 @@ pub async fn install_python_deps() -> Result<String, String> {
     // large, even on a slow connection.
     let result = timeout(
         Duration::from_secs(600),
-        Command::new(py)
+        silent_tokio_command(py)
             .arg("-m")
             .arg("pip")
             .arg("install")
@@ -175,7 +175,7 @@ pub async fn install_python_deps() -> Result<String, String> {
     // HTML → PNG. Without it the render flow fails on the first call with
     // an opaque "Browser is not installed" error. This is fast (browser
     // already cached if anything Playwright-related ran before) and idempotent.
-    let _ = Command::new(py)
+    let _ = silent_tokio_command(py)
         .arg("-m")
         .arg("playwright")
         .arg("install")
