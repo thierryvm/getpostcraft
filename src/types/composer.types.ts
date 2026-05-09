@@ -106,4 +106,11 @@ export interface PostRecord {
    * NULL on legacy rows (pre-migration 013).
    */
   account_id: number | null;
+  /**
+   * Public URL of the published post on its network — Instagram permalink
+   * (`/p/{shortcode}/`) or LinkedIn `/feed/update/{urn}/`. NULL for drafts
+   * and for legacy published rows from before migration 017. The
+   * "Voir sur {network}" button prefers this over derived URLs.
+   */
+  published_url: string | null;
 }

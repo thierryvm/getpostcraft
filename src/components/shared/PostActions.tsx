@@ -37,13 +37,22 @@ export function canPublishInline(post: PostRecord): boolean {
 }
 
 /** Build the public URL for a published post, or `null` if we can't.
- *  - LinkedIn: deep link via the URN we stored as ig_media_id.
- *  - Instagram: link to the connected account's profile feed (full
- *    permalink fetch is a v0.3.7 enhancement). */
+ *
+ *  Priority order:
+ *  1. `published_url` from the DB — populated at publish time in v0.3.7+
+ *     (LinkedIn URN-derived deterministically, Instagram fetched via
+ *     Graph API `?fields=permalink`). Always exact when present.
+ *  2. URN-derived LinkedIn fallback for legacy rows from before migration 017.
+ *  3. Instagram profile feed fallback — when we have neither permalink nor
+ *     URN-style id (i.e. a published_url older than v0.3.7 with only the
+ *     numeric media_id), we send the user to their feed where the most
+ *     recent post sits at the top.
+ */
 function buildPublicUrl(
   post: PostRecord,
   username: string | null,
 ): string | null {
+  if (post.published_url) return post.published_url;
   if (!post.ig_media_id) return null;
   if (post.network === "linkedin") {
     return `https://www.linkedin.com/feed/update/${encodeURIComponent(post.ig_media_id)}/`;

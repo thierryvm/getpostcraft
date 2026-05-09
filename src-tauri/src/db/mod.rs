@@ -378,6 +378,20 @@ mod migration_tests {
     }
 
     #[tokio::test]
+    async fn post_history_has_published_url_from_migration_017() {
+        // Migration 017 adds the deep-link URL column so the "Voir sur
+        // {network}" button can target the actual post instead of the
+        // account's profile feed (Instagram) or rebuild from URN
+        // (LinkedIn). Nullable on purpose for legacy rows.
+        let pool = fresh_migrated_pool().await;
+        let cols = table_columns(&pool, "post_history").await;
+        assert!(
+            cols.contains(&"published_url".to_string()),
+            "migration 017 must add published_url column, got: {cols:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn accounts_has_display_handle_from_migration_016() {
         // Migration 016 adds a brand-handle override so LinkedIn accounts
         // (whose `username` is the owner's full personal name) can render

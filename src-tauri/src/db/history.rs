@@ -25,6 +25,13 @@ pub struct PostRecord {
     /// accounts on the same network. NULL on legacy rows or generation flows
     /// that ran without an account selection (preview-only).
     pub account_id: Option<i64>,
+    /// Public URL of the published post on its network. Populated by the
+    /// publish flow after a successful upload (Instagram fetches via
+    /// `/{media_id}?fields=permalink`, LinkedIn derives from URN at
+    /// publish time). NULL for drafts and legacy published rows from
+    /// before migration 017 — the frontend then falls back to a URN-
+    /// derived URL or the account profile feed.
+    pub published_url: Option<String>,
 }
 
 pub async fn insert_draft(
@@ -65,7 +72,7 @@ pub async fn insert_draft(
 pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<PostRecord, String> {
     let row = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id, account_id
+                scheduled_at, image_path, images, ig_media_id, account_id, published_url
          FROM post_history WHERE id = ?",
     )
     .bind(id)
@@ -98,7 +105,7 @@ pub async fn update_status(
 pub async fn list_recent(pool: &SqlitePool, limit: i64) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id, account_id
+                scheduled_at, image_path, images, ig_media_id, account_id, published_url
          FROM post_history ORDER BY created_at DESC LIMIT ?",
     )
     .bind(limit)
@@ -117,7 +124,7 @@ pub async fn list_in_range(
 ) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id, account_id
+                scheduled_at, image_path, images, ig_media_id, account_id, published_url
          FROM post_history
          WHERE (scheduled_at IS NOT NULL AND scheduled_at BETWEEN ? AND ?)
             OR (scheduled_at IS NULL AND created_at BETWEEN ? AND ?)
@@ -254,7 +261,26 @@ fn row_to_post_record(r: &SqliteRow) -> Result<PostRecord, String> {
         images,
         ig_media_id: r.try_get("ig_media_id").map_err(|e| e.to_string())?,
         account_id: r.try_get("account_id").ok().flatten(),
+        published_url: r.try_get("published_url").ok().flatten(),
     })
+}
+
+/// Set the public URL of a published post (Instagram permalink or LinkedIn
+/// post URL). Called by the publisher after a successful upload — separate
+/// from `update_status` so the URL fetch can fail (e.g. transient Graph API
+/// hiccup) without rolling back the publish.
+pub async fn update_published_url(
+    pool: &SqlitePool,
+    id: i64,
+    published_url: &str,
+) -> Result<(), String> {
+    sqlx::query("UPDATE post_history SET published_url = ? WHERE id = ?")
+        .bind(published_url)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

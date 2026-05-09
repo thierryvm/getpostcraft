@@ -373,6 +373,41 @@ async fn create_ig_carousel_parent(
     Ok(r.id)
 }
 
+/// Fetch the public permalink (`https://www.instagram.com/p/{shortcode}/`) of
+/// a freshly-published Instagram media. The publish response only returns the
+/// numeric media id — the shortcode that builds the public URL lives on a
+/// follow-up `?fields=permalink` call.
+///
+/// Best-effort: a failure here returns Err and the caller is expected to
+/// log + continue without the URL (the post is still successfully published,
+/// the user just won't get a deep link in the UI). Times out at 10 s so a
+/// transient Graph API hiccup doesn't stall the publish flow.
+async fn fetch_ig_permalink(media_id: &str, access_token: &str) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct PermalinkResponse {
+        permalink: String,
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/{media_id}", ig_api_base()))
+        .query(&[("fields", "permalink"), ("access_token", access_token)])
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("permalink fetch network error: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("permalink fetch HTTP {}", resp.status()));
+    }
+
+    let body: PermalinkResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("permalink parse error: {e}"))?;
+    Ok(body.permalink)
+}
+
 /// Step 2: Publish the container. Returns the Instagram media ID.
 /// Used for both single-image and carousel parent containers — the Graph API
 /// endpoint is the same.
@@ -612,6 +647,20 @@ pub async fn publish_post(
     )
     .await?;
 
+    // 8. Fetch the public permalink so the "Voir sur Instagram" button can
+    //    deep-link to the actual /p/{shortcode}/ URL instead of the account
+    //    profile feed. Best-effort — a failure here doesn't roll back the
+    //    publish; the frontend falls back to the profile URL when this
+    //    column stays NULL.
+    if let Ok(permalink) = fetch_ig_permalink(&media_id, &access_token).await {
+        let _ = crate::db::history::update_published_url(&state.db, post_id, &permalink).await;
+    } else {
+        log::warn!(
+            "publisher: IG permalink fetch failed for media {media_id} — \
+             frontend will fall back to profile feed URL"
+        );
+    }
+
     Ok(PublishResult {
         post_id,
         media_id,
@@ -808,6 +857,16 @@ pub async fn publish_linkedin_post(
         Some(&post_urn),
     )
     .await?;
+
+    // 7. Store the public deep-link URL. LinkedIn URNs build their post URL
+    //    deterministically (no API round-trip needed), so we can populate
+    //    this column in-flight unlike Instagram which needs a follow-up
+    //    Graph API call.
+    let public_url = format!(
+        "https://www.linkedin.com/feed/update/{}/",
+        urlencoding::encode(&post_urn)
+    );
+    let _ = crate::db::history::update_published_url(&state.db, post_id, &public_url).await;
 
     Ok(PublishResult {
         post_id,
