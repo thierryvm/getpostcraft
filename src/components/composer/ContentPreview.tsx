@@ -181,6 +181,7 @@ export function ContentPreview() {
     setNetwork,
     setPendingDraftId,
     setAccountId,
+    setBrief,
   } = useComposerStore();
   const queryClient = useQueryClient();
   const { captionLimit, hashtagLimit, foldLimit, minRecommendedLength, recommendedLimit, label: networkLabel } = NETWORK_META[network];
@@ -242,7 +243,15 @@ export function ContentPreview() {
     },
   });
 
-  // Sync local hashtag state whenever a new result arrives; reset image + publish state
+  // Sync local hashtag state whenever a new result arrives; reset image + publish state.
+  //
+  // The `else` branch fires when "Nouveau post" / chip × is clicked: the
+  // store calls `resetForNewPost` which clears `result`, but ContentPreview
+  // also owns a dozen pieces of local state (hashtags, carousel images,
+  // template choice, code/terminal inputs…) that aren't in the store. Without
+  // this branch the right panel would keep showing the previous draft's
+  // caption / hashtags / carousel preview after the chip disappeared,
+  // confusing the user about whether the reset actually happened.
   useEffect(() => {
     if (result) {
       setHashtags(result.hashtags);
@@ -250,6 +259,24 @@ export function ContentPreview() {
       setRenderError(null);
       setPublishedInSession(false);
       setIsEditingCaption(false);
+    } else {
+      setHashtags([]);
+      setImageUrl(null);
+      setCarouselImages(null);
+      setCarouselSlides(null);
+      setCarouselIndex(0);
+      setRenderError(null);
+      setCarouselError(null);
+      setExportSuccess(null);
+      setIsEditingCaption(false);
+      setEditCaption("");
+      setPublishedInSession(false);
+      setTemplate("post");
+      setCode("");
+      setLanguage("bash");
+      setFilename("");
+      setTermCommand("");
+      setTermOutput("");
     }
   }, [result]);
 
@@ -282,6 +309,13 @@ export function ContentPreview() {
         setHashtags(post.hashtags);
         setDraftId(post.id);
         setPublishedInSession(post.status === "published");
+        // Restore a usable brief so "Régénérer" / carousel "Générer" buttons
+        // don't silently no-op. We don't store the original brief on the
+        // post (only caption + hashtags), so the caption itself becomes the
+        // working brief — the user can edit it in the left panel before
+        // regenerating. Trim to 480 chars so the brief schema's max(500)
+        // doesn't reject long published captions.
+        setBrief(post.caption.slice(0, 480));
         // Carousel vs single decided by image count, mirrors the publish backend.
         if (post.images.length > 1) {
           setTemplate("carousel");
@@ -318,7 +352,14 @@ export function ContentPreview() {
   }, [imageUrl]);
 
   const handleRegenerate = async () => {
-    if (!brief) return;
+    if (!brief.trim()) {
+      // Surface the precondition instead of silent-failing — used to be a
+      // bare `return` that left the user wondering why nothing happened
+      // (especially after reopening a draft, where the brief field is
+      // visible but easy to miss).
+      setError("Saisis un brief dans le panneau de gauche avant de régénérer.");
+      return;
+    }
     setIsLoading(true);
     setError(null);
     setResult(null);
@@ -367,7 +408,12 @@ export function ContentPreview() {
   };
 
   const handleGenerateCarousel = async () => {
-    if (!brief) return;
+    if (!brief.trim()) {
+      setCarouselError(
+        "Saisis un brief dans le panneau de gauche avant de générer le carrousel.",
+      );
+      return;
+    }
     setIsCarouselLoading(true);
     setCarouselError(null);
     setCarouselSlides(null);

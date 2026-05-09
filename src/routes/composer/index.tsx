@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { FileText, Plus, X } from "lucide-react";
+import { FileText, Plus, X, ArrowLeft } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 import { BriefForm } from "@/components/composer/BriefForm";
 import { ContentPreview } from "@/components/composer/ContentPreview";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,7 @@ function ProviderBadge({ info }: { info: ProviderInfo | null }) {
 }
 
 export function ComposerPage() {
+  const navigate = useNavigate();
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const draftId = useComposerStore((s) => s.draftId);
   const result = useComposerStore((s) => s.result);
@@ -38,11 +40,29 @@ export function ComposerPage() {
   // being forced through publish.
   const isDraftLoaded = draftId !== null || result !== null;
 
+  /** Reset state AND leave the composer page entirely. The chip × and
+   *  "Nouveau post" buttons reset in place; this one closes the workspace
+   *  for users who want "fermer" semantics rather than "fresh start". */
+  const closeAndExit = () => {
+    resetForNewPost();
+    navigate({ to: "/" });
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* Top bar */}
       <div className="flex items-center justify-between border-b border-border px-4 sm:px-6 py-2 shrink-0 gap-3">
         <div className="flex items-center gap-2 min-w-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs gap-1 -ml-2 text-muted-foreground hover:text-foreground"
+            onClick={closeAndExit}
+            title="Retour au tableau de bord (le brouillon reste sauvegardé)"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            Retour
+          </Button>
           <span className="text-sm font-medium text-foreground">Composer</span>
           {isDraftLoaded && draftId !== null && (
             <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 border border-primary/30 px-2 py-0.5 text-[11px] font-mono text-primary">
