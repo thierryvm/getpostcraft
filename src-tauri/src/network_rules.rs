@@ -174,6 +174,10 @@ fn pricing_map() -> &'static [(&'static str, f64, f64)] {
 /// the given model ID. `estimated = true` when no entry matched and we fell
 /// back to a conservative default — the UI surfaces this as an approximation
 /// flag so users know the figure isn't authoritative.
+///
+/// Static lookup against the hardcoded `pricing_map`. For live OpenRouter
+/// rates that adapt to provider price changes between releases, prefer
+/// `price_for_with_live_cache` which consults the in-process cache first.
 pub fn price_for(model: &str) -> (f64, f64, bool) {
     for (key, p_in, p_out) in pricing_map() {
         if model.contains(key) {
@@ -183,6 +187,25 @@ pub fn price_for(model: &str) -> (f64, f64, bool) {
     // Fallback: roughly mid-tier OpenAI rates so unknown OpenRouter models
     // don't read as suspiciously cheap. Marked estimated.
     (0.50, 2.00, true)
+}
+
+/// Live-aware variant of `price_for`. Checks the OpenRouter pricing cache
+/// first (populated from `https://openrouter.ai/api/v1/models`), falls back
+/// to the static `pricing_map` when the model isn't in the cache or the
+/// cache hasn't been populated yet (e.g. offline at startup).
+///
+/// `estimated` is `false` when either source returned an exact match;
+/// `true` only when both sources missed and we used the conservative
+/// `(0.50, 2.00)` default. Live data is treated as authoritative because
+/// providers can shift rates between Getpostcraft releases.
+pub fn price_for_with_live_cache(
+    model: &str,
+    cache: &crate::openrouter_pricing::PricingCache,
+) -> (f64, f64, bool) {
+    if let Some(live) = crate::openrouter_pricing::lookup_live(cache, model) {
+        return (live.input_per_million, live.output_per_million, false);
+    }
+    price_for(model)
 }
 
 /// Returns a tone-specific system prompt enriched with the account's product truth.

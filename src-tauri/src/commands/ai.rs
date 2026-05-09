@@ -920,7 +920,37 @@ pub async fn get_post_by_id(
 pub async fn get_ai_usage_summary(
     state: tauri::State<'_, AppState>,
 ) -> Result<crate::db::ai_usage::UsageSummary, String> {
-    crate::db::ai_usage::summarise(&state.db).await
+    crate::db::ai_usage::summarise(&state.db, &state.pricing_cache).await
+}
+
+/// Force-refresh the OpenRouter pricing catalog. Returns the number of
+/// models indexed and the pricing snapshot (so the UI can show the
+/// last-refreshed timestamp + any error). Safe to call at any time;
+/// rate-limited by the user's network and OpenRouter's own throttling.
+#[tauri::command]
+pub async fn refresh_openrouter_pricing(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::openrouter_pricing::PricingSnapshot, String> {
+    crate::openrouter_pricing::refresh(&state.pricing_cache).await?;
+    let snap = state
+        .pricing_cache
+        .read()
+        .map_err(|e| format!("pricing_cache read poisoned: {e}"))?;
+    Ok(snap.clone())
+}
+
+/// Read the current cached snapshot without triggering a network fetch.
+/// The UI calls this on mount to show the last-refreshed badge before
+/// deciding whether to fire a manual refresh.
+#[tauri::command]
+pub fn get_openrouter_pricing_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::openrouter_pricing::PricingSnapshot, String> {
+    let snap = state
+        .pricing_cache
+        .read()
+        .map_err(|e| format!("pricing_cache read poisoned: {e}"))?;
+    Ok(snap.clone())
 }
 
 #[cfg(test)]

@@ -2,6 +2,8 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::openrouter_pricing::{new_cache, PricingCache};
+
 pub struct ActiveProvider {
     /// "openrouter" | "anthropic" | "ollama"
     pub provider: String,
@@ -15,6 +17,11 @@ pub struct AppState {
     pub key_cache: Mutex<HashMap<String, String>>,
     /// SQLite connection pool — initialized async at startup.
     pub db: SqlitePool,
+    /// Live pricing snapshot from OpenRouter `/api/v1/models`. Empty until
+    /// the first refresh runs; `network_rules::price_for` falls back to the
+    /// static table when a model isn't here. Refreshed on startup and on
+    /// manual user request from the AI usage panel.
+    pub pricing_cache: PricingCache,
 }
 
 impl AppState {
@@ -26,6 +33,7 @@ impl AppState {
             }),
             key_cache: Mutex::new(HashMap::new()),
             db,
+            pricing_cache: new_cache(),
         }
     }
 }

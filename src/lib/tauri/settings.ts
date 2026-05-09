@@ -59,3 +59,24 @@ export interface UsageSummary {
 export async function getAiUsageSummary(): Promise<UsageSummary> {
   return invoke<UsageSummary>("get_ai_usage_summary");
 }
+
+// ── OpenRouter live pricing ─────────────────────────────────────────────────
+
+export interface PricingSnapshot {
+  /** Map of model id → [input, output] price per million tokens, USD. */
+  prices: Record<string, [number, number]>;
+  /** RFC 3339 UTC timestamp of last successful fetch, or null if never run. */
+  last_refreshed_at: string | null;
+  /** Last error from a failed fetch, or null if last fetch succeeded. */
+  last_error: string | null;
+}
+
+/** Read the current cached OpenRouter pricing snapshot without hitting the network. */
+export async function getOpenRouterPricingSnapshot(): Promise<PricingSnapshot> {
+  return invoke<PricingSnapshot>("get_openrouter_pricing_snapshot");
+}
+
+/** Force-refresh the OpenRouter pricing catalog. Returns the new snapshot. */
+export async function refreshOpenRouterPricing(): Promise<PricingSnapshot> {
+  return invoke<PricingSnapshot>("refresh_openrouter_pricing");
+}

@@ -4,6 +4,7 @@ mod commands;
 mod db;
 mod log_redact;
 mod network_rules;
+mod openrouter_pricing;
 mod sidecar;
 mod state;
 mod token_store;
@@ -112,6 +113,24 @@ pub fn run() {
                 }
             });
 
+            // Fire-and-forget OpenRouter pricing refresh on startup. Falls
+            // back silently to the static `pricing_map` if the user is
+            // offline; subsequent app opens will pick up live rates the
+            // moment connectivity returns.
+            let pricing_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use tokio::time::{sleep, Duration};
+                // Small delay so the UI paints before we hit the network.
+                sleep(Duration::from_secs(5)).await;
+                let state: tauri::State<'_, AppState> = pricing_handle.state();
+                match crate::openrouter_pricing::refresh(&state.pricing_cache).await {
+                    Ok(n) => log::info!("openrouter_pricing: refreshed {n} models"),
+                    Err(e) => {
+                        log::info!("openrouter_pricing: skipping startup refresh ({e})")
+                    }
+                }
+            });
+
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -125,6 +144,8 @@ pub fn run() {
             commands::ai::get_post_history,
             commands::ai::get_post_by_id,
             commands::ai::get_ai_usage_summary,
+            commands::ai::refresh_openrouter_pricing,
+            commands::ai::get_openrouter_pricing_snapshot,
             commands::ai::scrape_url_for_brief,
             commands::ai::warmup_sidecar,
             commands::ai::generate_carousel,

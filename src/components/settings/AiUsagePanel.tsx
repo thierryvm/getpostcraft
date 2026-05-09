@@ -1,7 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, TrendingUp } from "lucide-react";
-import { getAiUsageSummary } from "@/lib/tauri/settings";
+import { Button } from "@/components/ui/button";
+import { Loader2, TrendingUp, RefreshCw } from "lucide-react";
+import {
+  getAiUsageSummary,
+  getOpenRouterPricingSnapshot,
+  refreshOpenRouterPricing,
+} from "@/lib/tauri/settings";
+import { format, formatDistanceToNow } from "date-fns";
+import { fr } from "date-fns/locale";
 
 /**
  * Settings → IA panel that shows the user's BYOK spend.
@@ -16,11 +23,29 @@ import { getAiUsageSummary } from "@/lib/tauri/settings";
  * accounting — the provider's own dashboard remains the source of truth.
  */
 export function AiUsagePanel() {
+  const qc = useQueryClient();
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["ai-usage-summary"],
     queryFn: getAiUsageSummary,
     // Refetch when the user generates content so the table stays live.
     staleTime: 30_000,
+  });
+
+  const { data: pricing } = useQuery({
+    queryKey: ["openrouter-pricing-snapshot"],
+    queryFn: getOpenRouterPricingSnapshot,
+    // Static snapshot — only changes when the user clicks Refresh.
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+  const refresh = useMutation({
+    mutationFn: refreshOpenRouterPricing,
+    onSuccess: () => {
+      // Invalidate both — the new pricing recalculates the cost summary.
+      qc.invalidateQueries({ queryKey: ["openrouter-pricing-snapshot"] });
+      qc.invalidateQueries({ queryKey: ["ai-usage-summary"] });
+    },
   });
 
   if (isLoading) {
@@ -48,9 +73,52 @@ export function AiUsagePanel() {
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
         Compteur de tokens basé sur ce que les SDKs renvoient. Coût calculé
-        depuis une table de prix interne — c'est <em>indicatif</em>, ton
-        dashboard fournisseur reste la source de vérité.
+        depuis les tarifs <strong>OpenRouter en direct</strong> (avec fallback
+        sur une table interne quand le modèle n'est pas dans leur catalogue).
+        Ton dashboard fournisseur reste la source de vérité pour la facturation.
       </p>
+
+      {/* Pricing freshness banner — shows when OpenRouter rates were last
+          pulled and lets the user trigger a manual refresh. The startup
+          task already runs once 5s after launch; this button covers the
+          "I just changed my model and want today's rate now" case. */}
+      <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-foreground">
+            Tarifs OpenRouter
+            {pricing?.last_refreshed_at ? (
+              <span className="ml-1 text-muted-foreground">
+                · {Object.keys(pricing.prices).length} modèles ·
+                rafraîchis {formatDistanceToNow(new Date(pricing.last_refreshed_at), { locale: fr, addSuffix: true })}
+              </span>
+            ) : (
+              <span className="ml-1 text-muted-foreground">· non chargés (offline ?)</span>
+            )}
+          </span>
+          {pricing?.last_error && (
+            <span className="text-destructive">Dernière erreur : {pricing.last_error}</span>
+          )}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs gap-1.5"
+          onClick={() => refresh.mutate()}
+          disabled={refresh.isPending}
+          title={
+            pricing?.last_refreshed_at
+              ? `Dernière sync : ${format(new Date(pricing.last_refreshed_at), "d MMM yyyy · HH:mm:ss", { locale: fr })}`
+              : "Charger les tarifs depuis openrouter.ai"
+          }
+        >
+          {refresh.isPending ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3 w-3" />
+          )}
+          Rafraîchir
+        </Button>
+      </div>
 
       {/* Top-line stats */}
       <div className="grid grid-cols-3 gap-3">
