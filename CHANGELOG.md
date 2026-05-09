@@ -8,12 +8,78 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-05-09
+
 ### Fixed
 - **Instagram publish failed via Litterbox URL** — Meta's CDN rejects fetches
   from `litter.catbox.moe` with error code 9004 / subcode 2207052 ("Only photo
   or video can be accepted as media type"). Litterbox is removed from the free
   upload fallback chain. New chain: **Catbox → 0x0.st → tmpfiles.org**. If all
   free hosts fail, configure an imgbb key in Settings → Publication.
+
+### Added — Drafts go from dead-ends to one-click ship
+- **Actionable drafts everywhere** — every saved post (Dashboard list,
+  Calendar cells, detail modals) now shows its generated thumbnail plus
+  inline buttons to **Ouvrir** in the Composer, **Publier maintenant**, or
+  **Supprimer**. No more dead drafts.
+- **Carousel-aware previews** — multi-slide drafts show all slides in a
+  scrollable strip with a slide count badge. Single posts get a tall
+  preview.
+- **Calendar planning UX** — every day cell has a discreet `+` button on
+  hover that opens a picker of unscheduled drafts; pick a draft + time
+  and it's on the calendar in one click. Per-cell mini-thumbnails and
+  network-color dots make the editorial view scannable at a glance. A
+  network filter row hides what you're not planning right now. The
+  reschedule modal now lets you set both date and time directly,
+  without needing to drag-and-drop.
+- **Network filter on Calendar** — multi-network users can mute one
+  channel while planning another.
+
+### Added — Visual renderer Niveau A + B
+- **4:5 portrait by default for IG carousels** (1080×1350) — square stays
+  selectable. The portrait gives the typography-heavy templates more room
+  and matches the IG mobile feed's optimal ratio.
+- **Subtle 60×60 grid background** drawn from an inline SVG data URI —
+  zero extra HTTP, just a tech-niche texture under the content.
+- **Monospace counter top-right** (`01 / 07`), **brand stamp bottom-right**
+  (`>_ @handle`) — anchors the post visually like a terminal session.
+- **Left-aligned hero typography** at ~88px — replaces the centered
+  emoji-and-bar layout that read as a slide deck.
+- **Slide roles drive badge color and label** — the AI now tags each
+  slide with one of `hero`, `problem`, `approach`, `tech`, `change`,
+  `moment`, `cta`. Brand-aligned roles (hero, approach, cta) inherit
+  the brand color so the post opens, climaxes, and closes on the brand
+  signature; problem is red, tech is blue, change is amber, moment is
+  violet — a 7-slide carousel reads like a colour-coded narrative arc.
+
+### Changed
+- `render_carousel_slides` now accepts optional `width` / `height` and
+  defaults to 1080×1350. The Composer forwards the user-picked
+  `imageFormat` so the rendered slides follow the chosen ratio.
+- The carousel JSON contract gained a `role` field. Sidecar parser
+  whitelists known roles + normalises case; unknown values become
+  `null` so the Rust renderer falls back to its index-derived label.
+
+### Hardened
+- **Brand color validation** — `Brand::resolve` now rejects anything
+  that isn't a strict `#RRGGBB` hex (no `rgb()`, no 8-digit, no named
+  colors) and falls back to the default with a warn log. Prevents
+  silent CSS corruption when `{brand_color}55` is concatenated.
+- **Role sequence sanity** — the sidecar's carousel parser refuses
+  degenerate outputs ("approach" before any "problem", or one role
+  flooding > 60 % of the middle slides) and strips all roles to
+  `None` on failure. Graceful degradation: index-derived labels keep
+  rendering. Logged to stderr so the user can re-generate if they
+  want a tagged version.
+
+### Tests
+- **+15 Rust** tests (visual chrome, role mapping, canvas-scaling,
+  brand hex validation across 7 invalid/valid inputs) → **174 / 174**.
+- **+9 Python** tests (role whitelist + sequence sanity check) →
+  **60 / 60** green.
+- **Frontend** tests retargeted at the new Dashboard / PostActions
+  flow (single-button delete toggle, network-routed publish,
+  inline edit) → **99 / 99** green.
 
 ## [0.2.0] — 2026-05-07
 
