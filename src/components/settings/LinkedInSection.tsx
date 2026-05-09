@@ -16,6 +16,7 @@ import {
 } from "@/lib/tauri/oauth";
 import { ProductTruthEditor } from "./ProductTruthEditor";
 import { BrandColorsEditor } from "./BrandColorsEditor";
+import { DisplayHandleEditor } from "./DisplayHandleEditor";
 import { TokenExpiryBadge } from "./TokenExpiryBadge";
 import type { ConnectedAccount } from "@/lib/tauri/oauth";
 
@@ -115,6 +116,11 @@ export function LinkedInSection({ account }: { account: ConnectedAccount | undef
             accountId={account.id}
             initialValue={account.product_truth}
             handle={account.display_name ?? account.username}
+          />
+          <DisplayHandleEditor
+            accountId={account.id}
+            fallbackUsername={account.username}
+            initialValue={account.display_handle}
           />
           <BrandColorsEditor
             accountId={account.id}

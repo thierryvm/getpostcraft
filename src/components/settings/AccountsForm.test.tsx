@@ -146,7 +146,10 @@ describe("AccountsForm — compte connecté", () => {
     renderWithQuery(<AccountsForm />);
     await waitFor(() => {
       expect(screen.getByText("Connecté")).toBeInTheDocument();
-      expect(screen.getByText("@terminallearning")).toBeInTheDocument();
+      // DisplayHandleEditor's preview line also renders "@terminallearning"
+      // when no override is set, so the username can legitimately appear in
+      // multiple spots — use `getAllByText` and assert at least one match.
+      expect(screen.getAllByText("@terminallearning").length).toBeGreaterThan(0);
     });
   });
 
@@ -173,7 +176,10 @@ describe("AccountsForm — compte connecté", () => {
 
     renderWithQuery(<AccountsForm />);
     await waitFor(() => {
-      expect(screen.getByText("@terminallearning")).toBeInTheDocument();
+      // DisplayHandleEditor's preview line also renders "@terminallearning"
+      // when no override is set, so the username can legitimately appear in
+      // multiple spots — use `getAllByText` and assert at least one match.
+      expect(screen.getAllByText("@terminallearning").length).toBeGreaterThan(0);
     });
 
     const disconnectBtn = screen.getByRole("button", { name: /déconnecter/i });
@@ -211,7 +217,10 @@ describe("AccountsForm — sécurité IPC", () => {
 
     renderWithQuery(<AccountsForm />);
     await waitFor(() => {
-      expect(screen.getByText("@terminallearning")).toBeInTheDocument();
+      // DisplayHandleEditor's preview line also renders "@terminallearning"
+      // when no override is set, so the username can legitimately appear in
+      // multiple spots — use `getAllByText` and assert at least one match.
+      expect(screen.getAllByText("@terminallearning").length).toBeGreaterThan(0);
     });
 
     // Le token_key ne doit pas apparaître dans le DOM

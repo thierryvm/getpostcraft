@@ -195,8 +195,13 @@ export function ContentPreview() {
   });
   const brand: BrandOptions = useMemo(() => {
     const account = allAccounts.find((a) => a.id === accountId);
+    // Prefer the user-configured display_handle (e.g. "@terminallearning")
+    // over `username`. LinkedIn's OAuth fills username with the owner's
+    // full personal name, which is the wrong identity for the brand stamp;
+    // letting the user override fixes that without affecting Instagram
+    // accounts whose username is already a handle.
     return {
-      handle: account?.username ?? null,
+      handle: account?.display_handle ?? account?.username ?? null,
       brandColor: account?.brand_color ?? null,
     };
   }, [allAccounts, accountId]);
@@ -420,18 +425,31 @@ export function ContentPreview() {
     setCarouselImages(null);
     setExportSuccess(null);
     try {
-      const slides = await generateCarousel(brief, network, slideCount, accountId);
+      // Run slide generation and caption generation in parallel — both consume
+      // the same brief and ProductTruth, just with different system prompts,
+      // so the user pays one round-trip's worth of latency for both. The
+      // earlier shortcut (caption = slide1.emoji + title + body) shipped
+      // ~200-char captions on LinkedIn where the algo wants 1500-2100, and
+      // dropped the actual narrative + CTA the user expected.
+      const [slides, captionResult] = await Promise.all([
+        generateCarousel(brief, network, slideCount, accountId),
+        generateContent(brief, network, accountId),
+      ]);
       setCarouselSlides(slides);
       setCarouselIndex(0);
       const images = await renderCarouselSlides(slides, brand, imageFormat.width, imageFormat.height);
       setCarouselImages(images);
-      // Save draft so the publish button becomes available.
-      // Caption = first slide title + body; image = first slide render.
-      const firstSlide = slides[0];
-      const carouselCaption = firstSlide
-        ? `${firstSlide.emoji} ${firstSlide.title}\n${firstSlide.body}`
-        : brief;
-      const id = await saveDraft(network, carouselCaption, hashtags, accountId).catch(() => null);
+      // Surface the proper caption + hashtags in the right panel so the user
+      // sees the text they're about to publish. setResult also clears variants
+      // and primes the per-result useEffect (hashtag sync, render reset).
+      setResult({ caption: captionResult.caption, hashtags: captionResult.hashtags });
+      setHashtags(captionResult.hashtags);
+      const id = await saveDraft(
+        network,
+        captionResult.caption,
+        captionResult.hashtags,
+        accountId,
+      ).catch(() => null);
       if (id !== null) {
         setDraftId(id);
         // Save ALL carousel slides — publish flow reads the full array and

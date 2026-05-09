@@ -24,11 +24,17 @@ pub struct Account {
     /// the publish flow then falls back to the upstream-API behaviour
     /// (silent 401 from Meta/LinkedIn) until the user reconnects.
     pub token_expires_at: Option<String>,
+    /// Brand handle to display on rendered visuals (e.g. `@terminallearning`).
+    /// Nullable so the renderer can fall back to `username` for accounts
+    /// that already have a handle-style username (Instagram). Use this
+    /// for LinkedIn where OAuth fills `username` with the owner's full
+    /// personal name. Preserved across re-connections by `upsert_and_get`.
+    pub display_handle: Option<String>,
 }
 
 const SELECT_COLUMNS: &str = "id, provider, user_id, username, display_name, token_key, \
      created_at, updated_at, product_truth, brand_color, accent_color, visual_profile, \
-     token_expires_at";
+     token_expires_at, display_handle";
 
 fn row_to_account(row: &SqliteRow) -> Account {
     Account {
@@ -45,6 +51,7 @@ fn row_to_account(row: &SqliteRow) -> Account {
         accent_color: row.get("accent_color"),
         visual_profile: row.try_get("visual_profile").ok().flatten(),
         token_expires_at: row.try_get("token_expires_at").ok().flatten(),
+        display_handle: row.try_get("display_handle").ok().flatten(),
     }
 }
 
@@ -146,6 +153,24 @@ pub async fn update_branding(
     )
     .bind(brand_color)
     .bind(accent_color)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Save or clear the brand handle to display on rendered visuals.
+/// Pass `None` to clear (falls back to `username` at render time).
+pub async fn update_display_handle(
+    pool: &SqlitePool,
+    id: i64,
+    display_handle: Option<&str>,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE accounts SET display_handle = ?, updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(display_handle)
     .bind(id)
     .execute(pool)
     .await

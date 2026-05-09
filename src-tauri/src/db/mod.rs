@@ -378,6 +378,21 @@ mod migration_tests {
     }
 
     #[tokio::test]
+    async fn accounts_has_display_handle_from_migration_016() {
+        // Migration 016 adds a brand-handle override so LinkedIn accounts
+        // (whose `username` is the owner's full personal name) can render
+        // visuals with a brand handle (e.g. @terminallearning) instead of
+        // shipping the user's name on every slide. Nullable on purpose —
+        // when NULL the renderer falls back to `username`.
+        let pool = fresh_migrated_pool().await;
+        let cols = table_columns(&pool, "accounts").await;
+        assert!(
+            cols.contains(&"display_handle".to_string()),
+            "migration 016 must add display_handle column, got: {cols:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn accounts_has_token_expires_at_from_migration_014() {
         // PR-S6 introduces an OAuth token expiry column so the UI can show a
         // "expire dans X jours" badge before publishes start failing with a
