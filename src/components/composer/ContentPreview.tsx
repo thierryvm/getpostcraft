@@ -1,4 +1,5 @@
-import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers, Pencil, Trash2 } from "lucide-react";
+import { RefreshCw, Copy, Check, X, Plus, ImageDown, Loader2, ChevronLeft, ChevronRight, Download, Layers, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -952,13 +953,43 @@ export function ContentPreview() {
                 )}
               </Button>
             )}
-            {/* Success badge replaces button after publish */}
-            {publishedInSession && (
-              <span className="flex-1 flex items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary">
-                <Check className="h-4 w-4" />
-                Publié ✓
-              </span>
-            )}
+            {/* Success state — clickable link to the live post on the network.
+                LinkedIn URN deep-links directly via /feed/update/{urn}/.
+                Instagram has no permalink in the publish response, so we
+                send the user to the account's profile feed where the post
+                is sitting on top — full permalink fetch is a v0.3.7 enhancement. */}
+            {publishedInSession && (() => {
+              const account = allAccounts.find((a) => a.id === accountId);
+              const mediaId = publishMutation.data?.media_id;
+              let url: string | null = null;
+              if (network === "linkedin" && mediaId) {
+                url = `https://www.linkedin.com/feed/update/${encodeURIComponent(mediaId)}/`;
+              } else if (network === "instagram" && account?.username) {
+                url = `https://www.instagram.com/${encodeURIComponent(account.username)}/`;
+              }
+              const baseClass =
+                "flex-1 flex items-center justify-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary";
+              if (!url) {
+                return (
+                  <span className={baseClass}>
+                    <Check className="h-4 w-4" />
+                    Publié ✓
+                  </span>
+                );
+              }
+              return (
+                <button
+                  type="button"
+                  onClick={() => openUrl(url).catch(() => {})}
+                  className={`${baseClass} hover:bg-primary/20 transition-colors cursor-pointer`}
+                  title={`Ouvrir le post publié sur ${networkLabel}`}
+                >
+                  <Check className="h-4 w-4" />
+                  Publié ✓ — voir sur {networkLabel}
+                  <ExternalLink className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
+                </button>
+              );
+            })()}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
