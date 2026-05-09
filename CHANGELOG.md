@@ -8,6 +8,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+- **Instagram publish failed via Litterbox URL** — Meta's CDN rejects fetches
+  from `litter.catbox.moe` with error code 9004 / subcode 2207052 ("Only photo
+  or video can be accepted as media type"). Litterbox is removed from the free
+  upload fallback chain. New chain: **Catbox → 0x0.st → tmpfiles.org**. If all
+  free hosts fail, configure an imgbb key in Settings → Publication.
+
 ## [0.2.0] — 2026-05-07
 
 ### Added
