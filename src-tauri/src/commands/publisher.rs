@@ -553,8 +553,18 @@ pub async fn publish_post(
     // 1. Load the draft
     let post = crate::db::history::get_by_id(&state.db, post_id).await?;
 
-    if post.status == "published" {
-        return Err("This post is already published".to_string());
+    // Defensive: refuse if either the status flipped to "published" OR a
+    // network media id is already attached. The status check is the happy
+    // path; the ig_media_id check catches the out-of-sync case where a
+    // prior publish completed on Meta's side but the local DB write was
+    // interrupted (crash mid-update, network drop, etc.). Without this
+    // second guard the user could double-publish to Instagram.
+    if post.status == "published" || post.ig_media_id.is_some() {
+        return Err(
+            "Ce post est déjà publié. Ouvre-le depuis l'historique et clique sur \
+             « Voir sur Instagram » pour le retrouver."
+                .to_string(),
+        );
     }
     if post.images.is_empty() {
         return Err("No image attached to this post. Generate an image first.".to_string());
@@ -687,8 +697,15 @@ pub async fn publish_linkedin_post(
     // 1. Load the draft
     let post = crate::db::history::get_by_id(&state.db, post_id).await?;
 
-    if post.status == "published" {
-        return Err("This post is already published".to_string());
+    // Same defensive guard as publish_post — see the comment there. ig_media_id
+    // doubles as the LinkedIn URN, so a non-null value means a publish
+    // completed on LinkedIn even if the local status update missed.
+    if post.status == "published" || post.ig_media_id.is_some() {
+        return Err(
+            "Ce post est déjà publié. Ouvre-le depuis l'historique et clique sur \
+             « Voir sur LinkedIn » pour le retrouver."
+                .to_string(),
+        );
     }
 
     // 2. Resolve the account this draft targets — see `resolve_post_account`.

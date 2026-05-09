@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { FileEdit, Send, Trash2, Loader2 } from "lucide-react";
+import { FileEdit, Send, Trash2, Loader2, ExternalLink } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { useComposerStore } from "@/stores/composer.store";
 import { publishPost, publishLinkedinPost } from "@/lib/tauri/publisher";
 import { deletePost } from "@/lib/tauri/calendar";
+import { listAccounts } from "@/lib/tauri/oauth";
+import { useQuery } from "@tanstack/react-query";
+import { NETWORK_META, type Network } from "@/types/composer.types";
 import type { PostRecord } from "@/types/composer.types";
 
 interface PostActionsProps {
@@ -22,11 +26,32 @@ interface PostActionsProps {
 }
 
 /** Determines whether a draft can be published immediately from a list view.
- *  IG requires at least one image; LinkedIn accepts text-only posts. */
+ *  IG requires at least one image; LinkedIn accepts text-only posts.
+ *  Posts with a non-null ig_media_id are excluded — they've been published
+ *  before (even if status got desynced), so re-publishing would duplicate. */
 export function canPublishInline(post: PostRecord): boolean {
   if (post.status !== "draft") return false;
+  if (post.ig_media_id !== null) return false;
   if (post.network === "instagram") return post.images.length > 0;
   return true; // linkedin / twitter / tiktok — text-only allowed
+}
+
+/** Build the public URL for a published post, or `null` if we can't.
+ *  - LinkedIn: deep link via the URN we stored as ig_media_id.
+ *  - Instagram: link to the connected account's profile feed (full
+ *    permalink fetch is a v0.3.7 enhancement). */
+function buildPublicUrl(
+  post: PostRecord,
+  username: string | null,
+): string | null {
+  if (!post.ig_media_id) return null;
+  if (post.network === "linkedin") {
+    return `https://www.linkedin.com/feed/update/${encodeURIComponent(post.ig_media_id)}/`;
+  }
+  if (post.network === "instagram" && username) {
+    return `https://www.instagram.com/${encodeURIComponent(username)}/`;
+  }
+  return null;
 }
 
 /**
@@ -47,8 +72,22 @@ export function PostActions({
   const queryClient = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Resolve the connected account so we can build an Instagram profile URL
+  // (which needs `username`). Cached query — same listAccounts call all
+  // surfaces share, so this is effectively free after the first mount.
+  const { data: allAccounts = [] } = useQuery({
+    queryKey: ["accounts"],
+    queryFn: listAccounts,
+  });
+  const accountUsername =
+    allAccounts.find((a) => a.id === post.account_id)?.username ?? null;
+  const publicUrl = buildPublicUrl(post, accountUsername);
+  const networkLabel =
+    NETWORK_META[post.network as Network]?.label ?? post.network;
+
   const isDraft = post.status === "draft";
   const showPublish = !hidePublish && canPublishInline(post);
+  const showViewLink = publicUrl !== null;
 
   const handleOpen = () => {
     setPendingDraftId(post.id);
@@ -113,6 +152,18 @@ export function PostActions({
             {isPublishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           </Button>
         )}
+        {showViewLink && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-primary hover:text-primary hover:bg-primary/10"
+            title={`Voir sur ${networkLabel}`}
+            onClick={() => publicUrl && openUrl(publicUrl).catch(() => {})}
+            aria-label={`Voir sur ${networkLabel}`}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
@@ -146,6 +197,22 @@ export function PostActions({
         >
           {isPublishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           Publier maintenant
+        </Button>
+      )}
+      {showViewLink && (
+        <Button
+          variant="default"
+          size="sm"
+          className="gap-1.5"
+          onClick={() => publicUrl && openUrl(publicUrl).catch(() => {})}
+          title={
+            post.network === "instagram"
+              ? "Ouvre ton profil Instagram (le post fraîchement publié est en haut)"
+              : `Ouvre le post sur ${networkLabel}`
+          }
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          Voir sur {networkLabel}
         </Button>
       )}
       <Button
