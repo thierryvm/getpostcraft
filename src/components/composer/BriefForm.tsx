@@ -181,29 +181,57 @@ export function BriefForm() {
             Aucun compte {network} connecté — génération sans Product Truth.
           </p>
         ) : (
-          <Select
-            value={accountId !== null ? String(accountId) : "none"}
-            onValueChange={(val) =>
-              setAccountId(val === "none" ? null : Number(val))
-            }
-          >
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder="Choisir un compte…" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">
-                <span className="text-muted-foreground">Aucun (générique)</span>
-              </SelectItem>
-              {networkAccounts.map((a) => (
-                <SelectItem key={a.id} value={String(a.id)}>
-                  @{a.username}
-                  {a.product_truth && (
-                    <span className="ml-1.5 text-xs text-primary">✓ Product Truth</span>
-                  )}
+          <>
+            <Select
+              value={accountId !== null ? String(accountId) : "none"}
+              onValueChange={(val) =>
+                setAccountId(val === "none" ? null : Number(val))
+              }
+            >
+              <SelectTrigger className="w-64">
+                <SelectValue placeholder="Choisir un compte…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">
+                  <span className="text-muted-foreground">Aucun (générique)</span>
                 </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                {networkAccounts.map((a) => (
+                  <SelectItem key={a.id} value={String(a.id)}>
+                    @{a.username}
+                    {a.product_truth && (
+                      <span className="ml-1.5 text-xs text-primary">✓ Product Truth</span>
+                    )}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* Clarify the role of ProductTruth — the user shouldn't feel
+                they have to also paste their site URL in the brief if the
+                ProductTruth is already filled. */}
+            {(() => {
+              const selected = networkAccounts.find((a) => a.id === accountId);
+              if (selected?.product_truth) {
+                return (
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    ✓ Product Truth chargé pour <span className="font-mono">@{selected.username}</span>{" "}
+                    — le brief n'a besoin que du{" "}
+                    <span className="text-foreground">sujet précis</span> de ce
+                    post (l'IA connaît déjà ta marque, ton stack, tes chiffres).
+                  </p>
+                );
+              }
+              if (selected && !selected.product_truth) {
+                return (
+                  <p className="text-[11px] text-orange-400/90 leading-snug">
+                    ⚠ Pas de Product Truth pour <span className="font-mono">@{selected.username}</span>.
+                    Génération générique — l'IA peut inventer des features.
+                    Configure-le dans Paramètres → Comptes.
+                  </p>
+                );
+              }
+              return null;
+            })()}
+          </>
         )}
       </div>
 
@@ -287,8 +315,12 @@ export function BriefForm() {
             {scrapeError && (
               <p className="text-xs text-destructive">{scrapeError}</p>
             )}
-            <p className="text-xs text-muted-foreground">
-              Fonctionne avec des articles de blog, README GitHub, pages de doc…
+            <p className="text-xs text-muted-foreground leading-snug">
+              URL HTTP(S) publique uniquement (article de blog, README GitHub,
+              page de doc, ta propre page produit déployée). Pas de chemin
+              local <span className="font-mono">file://</span> ni de dossier
+              de projet — utilise le mode <span className="font-mono">Texte</span>{" "}
+              et colle ton README à la place.
             </p>
           </div>
         ) : (

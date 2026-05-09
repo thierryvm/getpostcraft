@@ -590,29 +590,67 @@ export function ContentPreview() {
             )}
           </div>
 
-          {/* Template selector */}
-          <div className="flex flex-wrap gap-1 p-1 bg-secondary/50 rounded-lg w-fit">
-            {(["post", "code", "terminal", "carousel"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => {
-                  setTemplate(t);
-                  setImageUrl(null);
-                  setRenderError(null);
-                  setCarouselError(null);
-                  setExportSuccess(null);
-                }}
-                className={`flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors font-medium ${
-                  template === t
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {t === "carousel" && <Layers className="h-3 w-3" />}
-                {t === "post" ? "Post" : t === "code" ? "Code" : t === "terminal" ? "Terminal" : "Carrousel"}
-              </button>
-            ))}
+          {/* Template selector — short label in the pill, longer hint right
+              below so the user knows which template to pick before clicking. */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap gap-1 p-1 bg-secondary/50 rounded-lg w-fit">
+              {(["post", "code", "terminal", "carousel"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => {
+                    setTemplate(t);
+                    setImageUrl(null);
+                    setRenderError(null);
+                    setCarouselError(null);
+                    setExportSuccess(null);
+                  }}
+                  className={`flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors font-medium ${
+                    template === t
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t === "carousel" && <Layers className="h-3 w-3" />}
+                  {t === "post" ? "Post" : t === "code" ? "Code" : t === "terminal" ? "Terminal" : "Carrousel"}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              {template === "post" && (
+                <>
+                  <span className="text-foreground font-medium">Post</span> ·
+                  carte simple avec ta caption + hashtags rendus dans une fenêtre
+                  terminal stylée. Le plus rapide — clique « Générer », pas
+                  d'input à fournir.
+                </>
+              )}
+              {template === "code" && (
+                <>
+                  <span className="text-foreground font-medium">Code</span> ·
+                  bloc de code coloré (style éditeur, dots macOS) avec langage
+                  + nom de fichier. Idéal pour partager un snippet, une
+                  fonction utile, un one-liner. Colle le code dans la zone
+                  ci-dessous.
+                </>
+              )}
+              {template === "terminal" && (
+                <>
+                  <span className="text-foreground font-medium">Terminal</span>{" "}
+                  · mockup de session shell — une commande + son output. Bien
+                  pour montrer le résultat d'une commande Linux, le payload
+                  d'un curl, une trace d'erreur. Saisis la commande et l'output.
+                </>
+              )}
+              {template === "carousel" && (
+                <>
+                  <span className="text-foreground font-medium">Carrousel</span>{" "}
+                  · 3-10 slides séquentielles à partir du brief, chaque slide
+                  taggée par rôle (problème · approche · technique · CTA…).
+                  Le plus engageant côté algo IG. ~30s à générer.
+                </>
+              )}
+            </p>
           </div>
 
           {/* Template-specific inputs */}

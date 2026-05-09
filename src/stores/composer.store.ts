@@ -32,6 +32,13 @@ interface ComposerState {
   setError: (error: string | null) => void;
   setDraftId: (id: number | null) => void;
   setPendingDraftId: (id: number | null) => void;
+  /**
+   * Reset everything that's "the post we're working on" but keep the user's
+   * current network + account selection so they can start a fresh draft on
+   * the same target without re-picking it. Used by the "Nouveau post" button
+   * to break out of an opened-draft session without forcing a publish.
+   */
+  resetForNewPost: () => void;
 }
 
 export const useComposerStore = create<ComposerState>((set) => ({
@@ -55,4 +62,18 @@ export const useComposerStore = create<ComposerState>((set) => ({
   setError: (error) => set({ error }),
   setDraftId: (draftId) => set({ draftId }),
   setPendingDraftId: (pendingDraftId) => set({ pendingDraftId }),
+  resetForNewPost: () =>
+    set((s) => ({
+      brief: "",
+      result: null,
+      variants: null,
+      isLoading: false,
+      error: null,
+      draftId: null,
+      pendingDraftId: null,
+      // Reset image format to the network's default — switching IG↔LinkedIn
+      // would otherwise stick with the previous draft's format.
+      imageFormat: getDefaultFormat(s.network),
+      // network + accountId intentionally preserved.
+    })),
 }));
