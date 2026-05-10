@@ -8,26 +8,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
-### Added — foundation for v0.3.9 multi-network composer
-- **Migration 018 — `post_groups` parent table + nullable
-  `post_history.group_id` column.** Sibling-row model: each network
-  keeps its own `post_history` row (so every existing query keeps
-  working) and the new `group_id` is the only join key. NULL on every
-  legacy / single-network row → no backfill, no retrocompat trap.
-- **`db::groups` Rust module** — atomic `create_with_drafts(brief,
-  children)` (transaction-wrapped), `get_with_members(group_id)`,
-  `delete_keeping_children(group_id)` (soft cascade enforced in code
-  since SQLite refuses `ADD COLUMN ... REFERENCES`).
-- This PR is foundation only — no Composer UX change, no new Tauri
-  command, no sidecar work yet. The next 3 PRs in the stack consume
-  this module.
+### Added — multi-network composer pipeline (v0.3.9 stack)
+- **Migration 018 + `db::groups`** (PR #56) — sibling-row model that
+  lets one Composer pass produce N drafts (one per network) bound by
+  a shared `group_id`. NULL on legacy rows, no backfill needed.
+- **`generate_and_save_group` Tauri command** — fans out N sidecar
+  calls in parallel via `tokio::task::spawn` (same pattern as
+  `generate_variants`), then persists successes as a transactional
+  `post_groups` parent + N sibling drafts via
+  `db::groups::create_with_drafts`. Best-effort: a single failing
+  network does NOT abort the whole flow; the user gets per-network
+  status and can retry just the failures.
+- **Frontend wrapper** `generateAndSaveGroup` in
+  `src/lib/tauri/composer.ts` plus the `GroupNetworkRequest`,
+  `GroupMemberResult`, `GroupGenerationResult` types — ready for the
+  Composer UI rewrite that lands in the next PR.
+- The Composer UX change (multi-select checkbox grid, tabs preview,
+  cost estimate banner) and the dashboard / calendar group badge
+  ship in the two follow-up PRs of the v0.3.9 stack.
 
-### Tests
-- **+4 Rust** tests on `db::groups`: atomic insert of parent + N
-  children, fetch ordered by id, missing-id returns None, soft cascade
-  drops parent and survives children with NULL group_id.
-- **+1 Rust** migration regression test: `post_groups` table exists
-  after migration 018, `post_history.group_id` exists and is nullable.
+### Security notes
+- API key resolved once from the keychain and passed by reference
+  into each parallel sidecar call. Same discipline as
+  `generate_content` — never logged, never returned to the renderer,
+  never persisted in cleartext on disk.
+- Hard caps on the new command: brief ≥ 10 chars, 1–3 networks per
+  group, no duplicate networks. Each is enforced before any AI call
+  fires so a malformed payload can't waste tokens.
 
 ## [0.3.8] — 2026-05-10
 

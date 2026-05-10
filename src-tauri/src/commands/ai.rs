@@ -233,6 +233,300 @@ pub async fn generate_variants(
     Ok(variants)
 }
 
+// ── Multi-network composer (v0.3.9) ──────────────────────────────────────────
+
+/// One network slot the user selected in the multi-network Composer.
+/// `account_id` is per-network because the user may have multiple
+/// LinkedIn accounts but only one Instagram account, etc.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GroupNetworkRequest {
+    pub network: String,
+    pub account_id: Option<i64>,
+}
+
+/// Per-network outcome of a group generation.
+///
+/// On success: `post_id`, `caption`, and `hashtags` are populated and
+/// `error_message` is `None`. On failure: `post_id` is `None` and
+/// `error_message` carries the upstream sidecar error so the UI can
+/// show a network-specific retry hint without reopening the whole flow.
+#[derive(Debug, Serialize)]
+pub struct GroupMemberResult {
+    pub network: String,
+    pub status: String, // "ok" | "error"
+    pub post_id: Option<i64>,
+    pub caption: Option<String>,
+    pub hashtags: Option<Vec<String>>,
+    pub error_message: Option<String>,
+}
+
+/// Result of a multi-network generation. The `group_id` is `None` when
+/// every member failed (no parent created — we don't want phantom empty
+/// groups in the dashboard). Otherwise the group exists with as many
+/// child rows as members reported `status = "ok"`.
+#[derive(Debug, Serialize)]
+pub struct GroupGenerationResult {
+    pub group_id: Option<i64>,
+    pub members: Vec<GroupMemberResult>,
+}
+
+/// Generate captions for N networks in parallel and persist them as a
+/// single `post_groups` parent + N sibling drafts. Best-effort: a single
+/// failing network does NOT abort the whole flow — the user gets the
+/// successes immediately and a per-network error message for the ones
+/// that failed, so they can retry just those.
+///
+/// SECURITY: API key resolved once from keychain, passed by reference
+/// into each parallel sidecar call. Never logged, never returned to the
+/// renderer. Same discipline as the single-network `generate_content`.
+#[tauri::command]
+pub async fn generate_and_save_group(
+    state: tauri::State<'_, AppState>,
+    brief: String,
+    networks: Vec<GroupNetworkRequest>,
+) -> Result<GroupGenerationResult, String> {
+    if brief.trim().len() < 10 {
+        return Err("Le brief doit contenir au moins 10 caractères.".to_string());
+    }
+    if networks.is_empty() {
+        return Err("Sélectionne au moins un réseau pour générer un groupe.".to_string());
+    }
+    // 3 is the V1 ceiling per the brief — beyond that the cost banner
+    // gets misleading and the tabs UI starts breaking on small screens.
+    // Raising the cap is a deliberate V2 decision, not a soft default.
+    if networks.len() > 3 {
+        return Err("Maximum 3 réseaux par groupe en V1.".to_string());
+    }
+    // Reject duplicate network entries up front. A user clicking
+    // "Instagram" twice in the multi-select would otherwise double-bill
+    // the AI and produce two siblings on the same network — confusing
+    // and pure waste of tokens.
+    let mut seen = std::collections::HashSet::new();
+    for req in &networks {
+        if !seen.insert(req.network.as_str()) {
+            return Err(format!(
+                "Le réseau « {} » est sélectionné deux fois.",
+                req.network
+            ));
+        }
+    }
+
+    // Snapshot provider info without holding the lock across await.
+    let (provider, model) = {
+        let active = state.active_provider.lock().map_err(|e| e.to_string())?;
+        (active.provider.clone(), active.model.clone())
+    };
+
+    // Resolve the API key once — every parallel call shares it.
+    let api_key: Option<String> = if provider == "ollama" {
+        None
+    } else {
+        let cached = state
+            .key_cache
+            .lock()
+            .ok()
+            .and_then(|c| c.get(&provider).cloned());
+        let key = cached
+            .or_else(|| crate::ai_keys::get_key(&provider).ok())
+            .ok_or_else(|| {
+                format!(
+                    "Aucune clé API pour « {provider} ». \
+                     Configure-la dans Paramètres → Intelligence Artificielle."
+                )
+            })?;
+        Some(key)
+    };
+
+    let base_url: Option<String> = match provider.as_str() {
+        "ollama" => Some("http://localhost:11434/v1".to_string()),
+        _ => None,
+    };
+
+    // Pre-fetch every account's product_truth in one pass so each parallel
+    // task has its own immutable string handy without re-querying the DB
+    // mid-flight (sqlx pool can serialise behind concurrent reads, and
+    // we'd rather pay one async hit per account than N sequentially).
+    let mut product_truths: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    for req in &networks {
+        if let Some(aid) = req.account_id {
+            let truth = crate::db::accounts::get_by_id(&state.db, aid)
+                .await
+                .ok()
+                .and_then(|a| a.product_truth);
+            product_truths.insert(req.network.clone(), truth);
+        } else {
+            product_truths.insert(req.network.clone(), None);
+        }
+    }
+
+    // Build one sidecar request per network and fire them in parallel.
+    // Each `tokio::task::spawn` gets its own Python process — same
+    // pattern as `generate_variants` so the warmup / cost profile is
+    // identical, just keyed by network instead of tone.
+    let mut handles = Vec::with_capacity(networks.len());
+    for req in &networks {
+        let network = req.network.clone();
+        let truth = product_truths.get(&network).cloned().flatten();
+        let base_prompt = crate::network_rules::get_system_prompt(&network);
+        let system_prompt =
+            crate::network_rules::inject_product_truth(base_prompt, truth.as_deref());
+        let sidecar_request = crate::sidecar::SidecarRequest {
+            action: "generate_content".to_string(),
+            provider: provider.clone(),
+            api_key: api_key.clone(),
+            model: model.clone(),
+            base_url: base_url.clone(),
+            brief: brief.clone(),
+            network: network.clone(),
+            system_prompt,
+        };
+        log::info!(
+            "AI: group generating — provider={provider} model={model} network={network} \
+             account_id={:?} product_truth={}",
+            req.account_id,
+            truth.is_some()
+        );
+        handles.push((
+            network,
+            req.account_id,
+            tokio::task::spawn(crate::sidecar::call_sidecar(sidecar_request)),
+        ));
+    }
+
+    // Collect results in the same order the user selected the networks
+    // so the Composer tabs render predictably (the first checkbox the
+    // user ticks always gets the leftmost tab).
+    let mut outcomes: Vec<(
+        String,
+        Option<i64>,
+        Result<crate::sidecar::SidecarData, String>,
+    )> = Vec::with_capacity(handles.len());
+    for (network, account_id, handle) in handles {
+        match handle.await {
+            Ok(res) => outcomes.push((network, account_id, res)),
+            Err(join_err) => outcomes.push((
+                network,
+                account_id,
+                Err(format!("Tâche interrompue : {join_err}")),
+            )),
+        }
+    }
+
+    // Cost tracking: persist token usage per successful call. Failures
+    // here are intentionally swallowed — bookkeeping must never block
+    // the user-facing return, exactly like single-network generate_content.
+    for (_, _, res) in &outcomes {
+        if let Ok(data) = res {
+            if let Some(usage) = &data.usage {
+                if let Err(e) = crate::db::ai_usage::insert(
+                    &state.db,
+                    &provider,
+                    &model,
+                    "generate_content_group",
+                    usage.input_tokens,
+                    usage.output_tokens,
+                )
+                .await
+                {
+                    log::warn!("ai_usage: insert failed (non-fatal): {e}");
+                }
+            }
+        }
+    }
+
+    // Split successes and failures. Only the successes become children
+    // of the new group; failures are surfaced per-network so the user
+    // can retry. If everything failed we skip the group creation entirely
+    // — better no parent than a parent with zero children.
+    let mut children = Vec::new();
+    let mut child_meta = Vec::new(); // parallel index → (network, account_id, caption, hashtags)
+    let mut errors: Vec<(String, String)> = Vec::new();
+    for (network, account_id, res) in outcomes {
+        match res {
+            Ok(data) => {
+                child_meta.push((
+                    network.clone(),
+                    account_id,
+                    data.caption.clone(),
+                    data.hashtags.clone(),
+                ));
+                children.push(crate::db::groups::GroupChildInput {
+                    network,
+                    caption: data.caption,
+                    hashtags: data.hashtags,
+                    image_path: None,
+                    account_id,
+                });
+            }
+            Err(err) => errors.push((network, err)),
+        }
+    }
+
+    if children.is_empty() {
+        // Surface the first error so the user has something to act on
+        // (the per-network detail is in the members vec returned below
+        // for callers that want to display all of them).
+        let mut members: Vec<GroupMemberResult> = errors
+            .into_iter()
+            .map(|(network, err)| GroupMemberResult {
+                network,
+                status: "error".to_string(),
+                post_id: None,
+                caption: None,
+                hashtags: None,
+                error_message: Some(err),
+            })
+            .collect();
+        members.sort_by(|a, b| a.network.cmp(&b.network));
+        return Ok(GroupGenerationResult {
+            group_id: None,
+            members,
+        });
+    }
+
+    let create_result = crate::db::groups::create_with_drafts(&state.db, &brief, &children).await?;
+
+    // Compose the public response. Match successful child_ids back to
+    // their networks via positional alignment with `child_meta` (the
+    // db function preserves insertion order and we built children in
+    // the same order as child_meta).
+    let mut members: Vec<GroupMemberResult> = child_meta
+        .into_iter()
+        .zip(create_result.child_ids.iter().copied())
+        .map(
+            |((network, _, caption, hashtags), post_id)| GroupMemberResult {
+                network,
+                status: "ok".to_string(),
+                post_id: Some(post_id),
+                caption: Some(caption),
+                hashtags: Some(hashtags),
+                error_message: None,
+            },
+        )
+        .collect();
+    members.extend(errors.into_iter().map(|(network, err)| GroupMemberResult {
+        network,
+        status: "error".to_string(),
+        post_id: None,
+        caption: None,
+        hashtags: None,
+        error_message: Some(err),
+    }));
+
+    log::info!(
+        "AI: group saved — group_id={} members_ok={} members_err={}",
+        create_result.group_id,
+        members.iter().filter(|m| m.status == "ok").count(),
+        members.iter().filter(|m| m.status == "error").count(),
+    );
+
+    Ok(GroupGenerationResult {
+        group_id: Some(create_result.group_id),
+        members,
+    })
+}
+
 /// SSRF guard for the URL-accepting commands. Rejects schemes other than
 /// http(s), explicit private/loopback IP literals, and the AWS IMDS
 /// address. Hostnames that *resolve* to private IPs (DNS rebinding) are
