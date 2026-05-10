@@ -12,7 +12,7 @@ from, and the order to try them in.
 | App database (drafts, accounts, settings, post history) | `%APPDATA%\getpostcraft\app.db` (Windows) · `~/Library/Application Support/getpostcraft/app.db` (macOS) · `~/.local/share/getpostcraft/app.db` (Linux) | ✅ — installer never touches the data dir |
 | API keys + OAuth tokens | OS keychain (DPAPI / Keychain / libsecret) | ✅ — keychain entries are never deleted by Getpostcraft |
 | Daily auto-backup (`.gpcbak` ZIPs) | `~/Documents/Getpostcraft/backups/` | ✅ — Documents folder is outside the app dir |
-| Pre-migration snapshot | `<data dir>/app.db.pre-migrate.bak` | ✅ — sits next to `app.db` |
+| Pre-migration snapshots (last 3) | `<data dir>/app.db.pre-migrate-{TIMESTAMP}.bak` | ✅ — sit next to `app.db` |
 | Rendered images cache | `<data dir>/renders/` | ✅ but disposable — deleted after upload |
 
 Reinstalling never deletes any of the above. **Do not** run a "clean
@@ -56,22 +56,29 @@ If you're stuck on an older version that crashes with this:
 
 The schema may be corrupt. Roll back:
 
-1. **First**, check whether `app.db.pre-migrate.bak` exists next to
-   `app.db`. If it does AND you have NOT relaunched the app multiple
-   times since the failure, this is your fastest rollback:
+1. **First**, list the rotation snapshots next to `app.db`. From v0.3.7
+   the app keeps the **three most recent** pre-migration snapshots,
+   named with a UTC timestamp: `app.db.pre-migrate-{YYYYMMDDTHHMMSSnnn}.bak`.
+   Pick the one immediately *before* the failed boot:
    ```powershell
    # Windows
    cd $env:APPDATA\getpostcraft
+   Get-ChildItem app.db.pre-migrate-*.bak | Sort-Object Name -Descending
    Copy-Item app.db app.db.broken
-   Copy-Item app.db.pre-migrate.bak app.db
+   # Replace <TS> with the timestamp you picked from the list above:
+   Copy-Item app.db.pre-migrate-<TS>.bak app.db
    ```
    Then start the app.
 
-   ⚠️ **Caveat**: the snapshot is overwritten on every successful
-   startup. If you launched the app 2+ times after the migration
-   failure, the snapshot may already reflect the broken state.
-   Compare `app.db` and `app.db.pre-migrate.bak` byte sizes — if
-   they're identical, fall through to the daily backup below.
+   ⚠️ **Caveat**: each successful startup adds one snapshot and prunes
+   the oldest, so after **3** boots past the failure the original good
+   copy is gone. Compare byte sizes if you're unsure which snapshot is
+   pre-failure — if they're all identical to `app.db.broken`, fall
+   through to the daily backup below.
+
+   *Pre-v0.3.7 installs* used a single non-rotated `app.db.pre-migrate.bak`
+   that was overwritten on every boot. The first v0.3.7 launch removes
+   that legacy file once at least one timestamped snapshot exists.
 
 2. **If the snapshot is gone or already broken**, restore from the
    daily auto-backup:
