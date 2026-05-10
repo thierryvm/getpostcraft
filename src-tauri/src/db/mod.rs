@@ -69,28 +69,135 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
     Ok(pool)
 }
 
-/// Copy the live DB (if it exists) to `app.db.pre-migrate.bak` next to it
-/// so a failed migration in the next step doesn't leave the user with no
-/// rollback option. Cheap (single file copy in the data dir, megabytes,
-/// not gigabytes) and best-effort: I/O failures here log a warning rather
-/// than aborting startup, since the caller can still proceed and the
-/// user has a daily auto-backup as a deeper safety net.
+/// Number of pre-migration snapshots kept on disk. Three balances disk cost
+/// (a `.db` is typically 1–5 MB so the cap is single-digit MB) against
+/// recovery breathing room: a user can mis-launch the app twice after a
+/// botched migration and still have the original pre-failure copy on disk.
+const MAX_PRE_MIGRATE_SNAPSHOTS: usize = 3;
+
+const SNAPSHOT_SUFFIX: &str = ".bak";
+
+/// Copy the live DB (if it exists) into a timestamped `<name>.pre-migrate-{ts}.bak`
+/// next to it so a failed migration in the next step doesn't leave the user
+/// with no rollback option. Cheap (single file copy in the data dir, MB not
+/// GB) and best-effort: I/O failures log a warning rather than aborting
+/// startup, since the caller can still proceed and the daily auto-backup
+/// remains as a deeper safety net.
 ///
-/// Only one snapshot is kept — overwritten each time the app starts.
-/// That's intentional: this is a "right before the most recent upgrade"
-/// safety net, not an archive. The auto-backup daily history covers
-/// archival recovery.
+/// Up to `MAX_PRE_MIGRATE_SNAPSHOTS` snapshots are retained. Older ones are
+/// pruned in the same call. The previous behaviour kept exactly one
+/// (overwritten on every boot) — that left users with one window of
+/// recovery and no margin if the app was restarted after the failure
+/// before the user noticed something was wrong.
 fn snapshot_db_before_migrate(db_path: &std::path::Path) -> std::io::Result<()> {
     if !db_path.exists() {
-        // First launch — no DB to snapshot yet.
         return Ok(());
     }
-    let snapshot_path = db_path.with_extension("db.pre-migrate.bak");
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%3f").to_string();
+    snapshot_db_before_migrate_with(db_path, &timestamp, MAX_PRE_MIGRATE_SNAPSHOTS)
+}
+
+/// Test-friendly core. The production entry-point feeds the current UTC
+/// instant; tests inject a deterministic timestamp so we can reason about
+/// rotation order without hitting a real clock.
+fn snapshot_db_before_migrate_with(
+    db_path: &std::path::Path,
+    timestamp: &str,
+    keep: usize,
+) -> std::io::Result<()> {
+    if !db_path.exists() {
+        return Ok(());
+    }
+    // Hard-fail rather than fall back silently: a `db_path` without a parent
+    // would land snapshots in the process CWD, and one without a stem would
+    // collide on every snapshot. Both indicate a misconfigured caller — we
+    // want the boot to fail loudly so the bug surfaces in init logs instead
+    // of producing orphan files in unexpected locations.
+    let parent = db_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("db_path {} has no parent directory", db_path.display()),
+        )
+    })?;
+    let stem = db_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("db_path {} has no usable stem", db_path.display()),
+            )
+        })?;
+
+    // Naming MUST match the previous `db_path.with_extension("db.pre-migrate.bak")`
+    // semantic so deployments whose DB file isn't `app.db` (e.g. `notes.sqlite3`)
+    // keep their legacy snapshots discoverable by the cleanup below. Deriving
+    // from the stem gives us:
+    //   - `app.db`         → `app.db.pre-migrate-{ts}.bak`        (legacy: `app.db.pre-migrate.bak`)
+    //   - `notes.sqlite3`  → `notes.db.pre-migrate-{ts}.bak`      (legacy: `notes.db.pre-migrate.bak`)
+    // The `-{ts}` separator (rather than `.{ts}`) avoids a `.with_extension`
+    // collision with the legacy unrotated file and keeps glob matching trivial.
+    let prefix = format!("{stem}.db.pre-migrate-");
+    let snapshot_path = parent.join(format!("{prefix}{timestamp}{SNAPSHOT_SUFFIX}"));
     std::fs::copy(db_path, &snapshot_path)?;
     log::info!(
         "db: pre-migration snapshot saved to {}",
         snapshot_path.display()
     );
+
+    // One-shot migration: pre-rotation builds wrote a single
+    // `{stem}.db.pre-migrate.bak` and overwrote it on every boot. After we've
+    // produced at least one timestamped snapshot, the legacy file is
+    // redundant — and inflates the rotation accounting since it has no
+    // timestamp to sort by. Best-effort cleanup, never fatal.
+    let legacy = parent.join(format!("{stem}.db.pre-migrate.bak"));
+    if legacy.exists() {
+        if let Err(e) = std::fs::remove_file(&legacy) {
+            log::warn!(
+                "db: could not remove legacy snapshot {}: {e}",
+                legacy.display()
+            );
+        }
+    }
+
+    if let Err(e) = prune_pre_migrate_snapshots(parent, &prefix, keep) {
+        log::warn!("db: snapshot rotation cleanup failed (non-fatal): {e}");
+    }
+
+    Ok(())
+}
+
+/// Delete all but the `keep` newest snapshots that match `<prefix>*<SUFFIX>`
+/// in `dir`. The timestamp embedded in the filename is fixed-width
+/// `%Y%m%dT%H%M%S%3f`, so a lexicographic sort matches chronological order
+/// without parsing.
+fn prune_pre_migrate_snapshots(
+    dir: &std::path::Path,
+    prefix: &str,
+    keep: usize,
+) -> std::io::Result<()> {
+    let mut snapshots: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with(prefix) && n.ends_with(SNAPSHOT_SUFFIX))
+        })
+        .map(|e| e.path())
+        .collect();
+    // Sort by file name (which encodes the fixed-width timestamp), not by
+    // full path. `read_dir` only returns entries from `dir`, so for now the
+    // two are equivalent, but future refactors that pass nested or absolute
+    // paths through here would silently sort by parent first and break the
+    // chronological assumption. Sorting on `file_name` keeps the contract
+    // invariant under that change.
+    snapshots.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    let to_remove = snapshots.len().saturating_sub(keep);
+    for old in snapshots.iter().take(to_remove) {
+        if let Err(e) = std::fs::remove_file(old) {
+            log::warn!("db: could not remove old snapshot {}: {e}", old.display());
+        }
+    }
     Ok(())
 }
 
@@ -490,53 +597,165 @@ mod migration_tests {
         assert_eq!(exists, 0, "heal must not touch sqlite_master on fresh DB");
     }
 
+    /// Helper: list all rotation snapshots in `dir` for the given db filename.
+    fn list_snapshots(dir: &std::path::Path, db_filename: &str) -> Vec<String> {
+        let prefix = format!("{db_filename}.pre-migrate-");
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("read tempdir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with(&prefix) && n.ends_with(".bak"))
+            .collect();
+        names.sort();
+        names
+    }
+
     #[test]
-    fn snapshot_before_migrate_copies_existing_db() {
-        // Simulates the upgrade case: an app.db already exists, init_pool
-        // must produce app.db.pre-migrate.bak so the user can roll back.
+    fn snapshot_creates_timestamped_file_and_drops_legacy() {
+        // Upgrade case: app.db plus a leftover legacy unrotated
+        // `app.db.pre-migrate.bak` from pre-rotation versions. The new
+        // snapshot must land under the timestamped name and the legacy
+        // file must be removed so it doesn't pollute the rotation count.
         let tmp = tempfile::tempdir().expect("create tempdir");
         let db_path = tmp.path().join("app.db");
         std::fs::write(&db_path, b"sqlite database bytes here").expect("write db");
-        super::snapshot_db_before_migrate(&db_path).expect("snapshot must succeed");
-        let snap = db_path.with_extension("db.pre-migrate.bak");
-        assert!(snap.exists(), "snapshot file must be created");
+
+        let legacy = tmp.path().join("app.db.pre-migrate.bak");
+        std::fs::write(&legacy, b"old legacy snapshot").expect("write legacy");
+
+        super::snapshot_db_before_migrate_with(&db_path, "20260510T120000000", 3)
+            .expect("snapshot must succeed");
+
+        let new_snap = tmp.path().join("app.db.pre-migrate-20260510T120000000.bak");
+        assert!(new_snap.exists(), "timestamped snapshot must be created");
         assert_eq!(
-            std::fs::read(&snap).expect("read snap"),
+            std::fs::read(&new_snap).expect("read snap"),
             b"sqlite database bytes here",
             "snapshot bytes must match the source",
+        );
+        assert!(
+            !legacy.exists(),
+            "legacy unrotated snapshot must be removed once a timestamped one exists",
         );
     }
 
     #[test]
-    fn snapshot_before_migrate_is_noop_on_first_launch() {
+    fn snapshot_is_noop_on_first_launch() {
         // Brand-new install: no app.db yet. Snapshot must succeed silently
         // and not create anything (otherwise we'd litter empty files in
         // the data dir on every fresh startup).
         let tmp = tempfile::tempdir().expect("create tempdir");
         let db_path = tmp.path().join("app.db");
-        super::snapshot_db_before_migrate(&db_path).expect("noop must succeed");
-        assert!(!db_path.with_extension("db.pre-migrate.bak").exists());
+        super::snapshot_db_before_migrate_with(&db_path, "20260510T120000000", 3)
+            .expect("noop must succeed");
+        assert!(list_snapshots(tmp.path(), "app.db").is_empty());
     }
 
     #[test]
-    fn snapshot_before_migrate_overwrites_previous_snapshot() {
-        // We keep ONLY the most recent snapshot — older ones are overwritten
-        // so the data dir doesn't accumulate copies after many startups.
+    fn snapshot_keeps_at_most_three_newest_after_many_runs() {
+        // Five sequential snapshots — only the three newest must survive.
+        // The fixed-width timestamp gives us deterministic lexicographic
+        // = chronological ordering across all five files.
         let tmp = tempfile::tempdir().expect("create tempdir");
         let db_path = tmp.path().join("app.db");
-        let snap = db_path.with_extension("db.pre-migrate.bak");
+        std::fs::write(&db_path, b"db v1").expect("write db");
 
-        std::fs::write(&db_path, b"v1").expect("write db v1");
-        super::snapshot_db_before_migrate(&db_path).expect("snap v1");
-        assert_eq!(std::fs::read(&snap).expect("read snap"), b"v1");
+        let timestamps = [
+            "20260510T120000001",
+            "20260510T120000002",
+            "20260510T120000003",
+            "20260510T120000004",
+            "20260510T120000005",
+        ];
+        for ts in timestamps {
+            super::snapshot_db_before_migrate_with(&db_path, ts, 3).expect("snapshot must succeed");
+        }
 
-        std::fs::write(&db_path, b"v2 newer bytes").expect("write db v2");
-        super::snapshot_db_before_migrate(&db_path).expect("snap v2");
+        let kept = list_snapshots(tmp.path(), "app.db");
         assert_eq!(
-            std::fs::read(&snap).expect("read snap"),
-            b"v2 newer bytes",
-            "snapshot must reflect the latest bytes",
+            kept.len(),
+            3,
+            "rotation must keep exactly 3 snapshots, got: {kept:?}",
         );
+        // Verify the surviving set is the newest three (003, 004, 005).
+        for ts in &timestamps[2..] {
+            let name = format!("app.db.pre-migrate-{ts}.bak");
+            assert!(
+                kept.contains(&name),
+                "must keep newest snapshot {name}, got: {kept:?}",
+            );
+        }
+        // ...and the two oldest are gone.
+        for ts in &timestamps[..2] {
+            let name = format!("app.db.pre-migrate-{ts}.bak");
+            assert!(
+                !kept.contains(&name),
+                "must have pruned older snapshot {name}, got: {kept:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_naming_matches_legacy_with_extension_for_non_default_db() {
+        // Regression guard: the previous implementation used
+        // `db_path.with_extension("db.pre-migrate.bak")` which, for a DB
+        // named `notes.sqlite3`, replaced `.sqlite3` and produced
+        // `notes.db.pre-migrate.bak`. The rewrite must derive snapshot
+        // names from the stem so non-default DB filenames still map onto
+        // the legacy naming scheme — otherwise the legacy-cleanup branch
+        // would silently miss the user's old snapshot file.
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let db_path = tmp.path().join("notes.sqlite3");
+        std::fs::write(&db_path, b"db bytes").expect("write db");
+
+        let legacy = tmp.path().join("notes.db.pre-migrate.bak");
+        std::fs::write(&legacy, b"old legacy snapshot").expect("write legacy");
+
+        super::snapshot_db_before_migrate_with(&db_path, "20260510T120000000", 3)
+            .expect("snapshot must succeed");
+
+        let new_snap = tmp
+            .path()
+            .join("notes.db.pre-migrate-20260510T120000000.bak");
+        assert!(
+            new_snap.exists(),
+            "stem-derived timestamped snapshot must be created",
+        );
+        assert!(
+            !legacy.exists(),
+            "legacy `<stem>.db.pre-migrate.bak` must be removed even when DB is non-default",
+        );
+    }
+
+    #[test]
+    fn snapshot_rotation_does_not_touch_unrelated_bak_files() {
+        // The data dir holds other caches (e.g. test fixtures, user-named
+        // backups). Pruning must only target files matching our prefix —
+        // never an arbitrary `.bak` next door.
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let db_path = tmp.path().join("app.db");
+        std::fs::write(&db_path, b"db").expect("write db");
+
+        let unrelated_a = tmp.path().join("app.db.before-recovery.bak");
+        let unrelated_b = tmp.path().join("notes.bak");
+        std::fs::write(&unrelated_a, b"manual recovery copy").expect("write unrelated a");
+        std::fs::write(&unrelated_b, b"unrelated bak").expect("write unrelated b");
+
+        // Run enough rotations to trigger the pruner.
+        for ts in [
+            "20260510T120000001",
+            "20260510T120000002",
+            "20260510T120000003",
+            "20260510T120000004",
+        ] {
+            super::snapshot_db_before_migrate_with(&db_path, ts, 3).expect("snapshot");
+        }
+
+        assert!(
+            unrelated_a.exists(),
+            "manual recovery copy must be untouched"
+        );
+        assert!(unrelated_b.exists(), "unrelated .bak must be untouched");
     }
 
     #[tokio::test]

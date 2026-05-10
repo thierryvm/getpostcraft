@@ -8,6 +8,32 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- **Rotated pre-migration snapshots (N=3)** — `init_pool` now keeps the
+  three most recent pre-migration DB copies, named
+  `app.db.pre-migrate-{UTC-TIMESTAMP}.bak`, instead of a single
+  overwritten file. A user who relaunches the app once or twice after a
+  bad migration still has the pre-failure copy on disk. Legacy single
+  `app.db.pre-migrate.bak` from earlier versions is removed on first
+  v0.3.7+ launch once a timestamped snapshot exists. Disk cost is
+  bounded — three SQLite files for the typical drafts-only DB add up to
+  single-digit MB.
+- **Dev-mode IPC fallback** — every `invoke()` runs through
+  `src/lib/tauri/invoke.ts`, which detects a missing
+  `window.__TAURI_INTERNALS__` and rejects with a typed
+  `TauriRuntimeUnavailableError` instead of the cryptic
+  `Cannot read properties of undefined`. A `DevModeBanner` shows once
+  at the app root in Vite-only mode; production (Tauri WebView) is a
+  no-op. AI usage panel now renders a muted hint instead of a
+  destructive red block when the runtime is absent.
+
+### Tests
+- +4 Rust snapshot rotation tests (timestamped creation + legacy
+  cleanup, first-launch no-op, N=3 retention across many runs, unrelated
+  `.bak` files untouched).
+- Test setup injects a stub `__TAURI_INTERNALS__` so existing
+  `vi.mock("@tauri-apps/api/core")` keeps driving unit tests.
+
 ## [0.3.7] — 2026-05-10
 
 ### Added
