@@ -29,7 +29,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Tests
 - +4 Rust snapshot rotation tests (timestamped creation + legacy
-  cleanup, first-launch noop, N=3 retention across many runs, unrelated
+  cleanup, first-launch no-op, N=3 retention across many runs, unrelated
   `.bak` files untouched).
 - Test setup injects a stub `__TAURI_INTERNALS__` so existing
   `vi.mock("@tauri-apps/api/core")` keeps driving unit tests.

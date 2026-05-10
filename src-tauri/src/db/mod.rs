@@ -108,18 +108,36 @@ fn snapshot_db_before_migrate_with(
     if !db_path.exists() {
         return Ok(());
     }
-    let parent = db_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    let db_filename = db_path
-        .file_name()
+    // Hard-fail rather than fall back silently: a `db_path` without a parent
+    // would land snapshots in the process CWD, and one without a stem would
+    // collide on every snapshot. Both indicate a misconfigured caller — we
+    // want the boot to fail loudly so the bug surfaces in init logs instead
+    // of producing orphan files in unexpected locations.
+    let parent = db_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("db_path {} has no parent directory", db_path.display()),
+        )
+    })?;
+    let stem = db_path
+        .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("app.db");
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("db_path {} has no usable stem", db_path.display()),
+            )
+        })?;
 
-    // Format `<name>.pre-migrate-<TS>.bak`. The `-<TS>` separator (rather
-    // than `.<TS>`) avoids a `.with_extension` collision with the legacy
-    // unrotated `<name>.pre-migrate.bak` and keeps glob matching trivial.
-    let prefix = format!("{db_filename}.pre-migrate-");
+    // Naming MUST match the previous `db_path.with_extension("db.pre-migrate.bak")`
+    // semantic so deployments whose DB file isn't `app.db` (e.g. `notes.sqlite3`)
+    // keep their legacy snapshots discoverable by the cleanup below. Deriving
+    // from the stem gives us:
+    //   - `app.db`         → `app.db.pre-migrate-{ts}.bak`        (legacy: `app.db.pre-migrate.bak`)
+    //   - `notes.sqlite3`  → `notes.db.pre-migrate-{ts}.bak`      (legacy: `notes.db.pre-migrate.bak`)
+    // The `-{ts}` separator (rather than `.{ts}`) avoids a `.with_extension`
+    // collision with the legacy unrotated file and keeps glob matching trivial.
+    let prefix = format!("{stem}.db.pre-migrate-");
     let snapshot_path = parent.join(format!("{prefix}{timestamp}{SNAPSHOT_SUFFIX}"));
     std::fs::copy(db_path, &snapshot_path)?;
     log::info!(
@@ -128,11 +146,11 @@ fn snapshot_db_before_migrate_with(
     );
 
     // One-shot migration: pre-rotation builds wrote a single
-    // `<name>.pre-migrate.bak` and overwrote it on every boot. After we've
+    // `{stem}.db.pre-migrate.bak` and overwrote it on every boot. After we've
     // produced at least one timestamped snapshot, the legacy file is
     // redundant — and inflates the rotation accounting since it has no
     // timestamp to sort by. Best-effort cleanup, never fatal.
-    let legacy = parent.join(format!("{db_filename}.pre-migrate.bak"));
+    let legacy = parent.join(format!("{stem}.db.pre-migrate.bak"));
     if legacy.exists() {
         if let Err(e) = std::fs::remove_file(&legacy) {
             log::warn!(
@@ -167,7 +185,13 @@ fn prune_pre_migrate_snapshots(
         })
         .map(|e| e.path())
         .collect();
-    snapshots.sort();
+    // Sort by file name (which encodes the fixed-width timestamp), not by
+    // full path. `read_dir` only returns entries from `dir`, so for now the
+    // two are equivalent, but future refactors that pass nested or absolute
+    // paths through here would silently sort by parent first and break the
+    // chronological assumption. Sorting on `file_name` keeps the contract
+    // invariant under that change.
+    snapshots.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
     let to_remove = snapshots.len().saturating_sub(keep);
     for old in snapshots.iter().take(to_remove) {
         if let Err(e) = std::fs::remove_file(old) {
@@ -669,6 +693,38 @@ mod migration_tests {
                 "must have pruned older snapshot {name}, got: {kept:?}",
             );
         }
+    }
+
+    #[test]
+    fn snapshot_naming_matches_legacy_with_extension_for_non_default_db() {
+        // Regression guard: the previous implementation used
+        // `db_path.with_extension("db.pre-migrate.bak")` which, for a DB
+        // named `notes.sqlite3`, replaced `.sqlite3` and produced
+        // `notes.db.pre-migrate.bak`. The rewrite must derive snapshot
+        // names from the stem so non-default DB filenames still map onto
+        // the legacy naming scheme — otherwise the legacy-cleanup branch
+        // would silently miss the user's old snapshot file.
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let db_path = tmp.path().join("notes.sqlite3");
+        std::fs::write(&db_path, b"db bytes").expect("write db");
+
+        let legacy = tmp.path().join("notes.db.pre-migrate.bak");
+        std::fs::write(&legacy, b"old legacy snapshot").expect("write legacy");
+
+        super::snapshot_db_before_migrate_with(&db_path, "20260510T120000000", 3)
+            .expect("snapshot must succeed");
+
+        let new_snap = tmp
+            .path()
+            .join("notes.db.pre-migrate-20260510T120000000.bak");
+        assert!(
+            new_snap.exists(),
+            "stem-derived timestamped snapshot must be created",
+        );
+        assert!(
+            !legacy.exists(),
+            "legacy `<stem>.db.pre-migrate.bak` must be removed even when DB is non-default",
+        );
     }
 
     #[test]
