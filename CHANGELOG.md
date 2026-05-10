@@ -8,32 +8,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
-### Added
-- **Rotated pre-migration snapshots (N=3)** — `init_pool` now keeps the
-  three most recent pre-migration DB copies, named
-  `app.db.pre-migrate-{UTC-TIMESTAMP}.bak`, instead of a single
-  overwritten file. A user who relaunches the app once or twice after a
-  bad migration still has the pre-failure copy on disk. Legacy single
-  `app.db.pre-migrate.bak` from earlier versions is removed on first
-  v0.3.7+ launch once a timestamped snapshot exists. Disk cost is
-  bounded — three SQLite files for the typical drafts-only DB add up to
-  single-digit MB.
-- **Dev-mode IPC fallback** — every `invoke()` runs through
-  `src/lib/tauri/invoke.ts`, which detects a missing
-  `window.__TAURI_INTERNALS__` and rejects with a typed
-  `TauriRuntimeUnavailableError` instead of the cryptic
-  `Cannot read properties of undefined`. A `DevModeBanner` shows once
-  at the app root in Vite-only mode; production (Tauri WebView) is a
-  no-op. AI usage panel now renders a muted hint instead of a
-  destructive red block when the runtime is absent.
-
-### Tests
-- +4 Rust snapshot rotation tests (timestamped creation + legacy
-  cleanup, first-launch no-op, N=3 retention across many runs, unrelated
-  `.bak` files untouched).
-- Test setup injects a stub `__TAURI_INTERNALS__` so existing
-  `vi.mock("@tauri-apps/api/core")` keeps driving unit tests.
-
 ## [0.3.7] — 2026-05-10
 
 ### Added
@@ -48,6 +22,30 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **Pricing freshness banner** in the AI usage panel: shows model count,
   last-refresh relative time ("il y a 3 minutes"), and any error from
   the most recent fetch.
+- **Instagram + LinkedIn permalink** stored at publish time so the
+  "Voir sur {network}" button deep-links to the actual post instead of
+  the account profile feed (Instagram) or a rebuilt URN (LinkedIn).
+  Migration 017 adds the nullable `published_url` column on
+  `post_history`; legacy rows keep their previous behaviour.
+- **Rotated pre-migration snapshots (N=3)** — `init_pool` now keeps the
+  three most recent pre-migration DB copies, named
+  `<stem>.db.pre-migrate-{UTC-TIMESTAMP}.bak`, instead of a single
+  overwritten file. A user who relaunches the app once or twice after a
+  bad migration still has the pre-failure copy on disk. The legacy
+  unrotated `<stem>.db.pre-migrate.bak` is removed on first v0.3.7
+  launch once a timestamped snapshot exists. Disk cost is bounded —
+  three SQLite files for the typical drafts-only DB add up to
+  single-digit MB. See [docs/guides/recovery.md](docs/guides/recovery.md)
+  for the rollback procedure.
+- **Dev-mode IPC fallback** — every `invoke()` runs through
+  `src/lib/tauri/invoke.ts`, which detects a missing
+  `window.__TAURI_INTERNALS__` and rejects with a typed
+  `TauriRuntimeUnavailableError` instead of the cryptic
+  `Cannot read properties of undefined`. A `DevModeBanner` shows once
+  at the app root in Vite-only mode (gated on both
+  `import.meta.env.DEV` AND the runtime probe so it can never appear
+  in a production bundle); the AI usage panel renders a muted hint
+  instead of a destructive red block when the runtime is absent.
 
 ### Changed
 - `network_rules::price_for_with_live_cache` joins the live cache lookup
@@ -56,11 +54,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `db::ai_usage::summarise` now takes a `&PricingCache` so cost
   computation uses live rates when available.
 
+### Fixed
+- **Native time/date picker icons** — Chrome's default
+  `::-webkit-calendar-picker-indicator` was nearly invisible on the
+  dark theme. CSS now inverts and dims them for contrast.
+
 ### Tests
 - **+5 Rust** tests on the pricing cache (new_cache empty, populated lookup,
-  is_stale never-filled / freshly-refreshed / older-than-max-age) →
-  **187 / 187** Rust.
-- Frontend + Python unchanged.
+  is_stale never-filled / freshly-refreshed / older-than-max-age).
+- **+5 Rust** snapshot rotation tests (timestamped creation + legacy
+  cleanup, first-launch no-op, N=3 retention across many runs, unrelated
+  `.bak` files untouched, non-default DB filename keeps legacy compat).
+- Test setup injects a stub `__TAURI_INTERNALS__` so the existing
+  `vi.mock("@tauri-apps/api/core")` keeps driving unit tests after the
+  IPC wrapper migration. Frontend stays at 103/103 green.
 
 ## [0.3.6] — 2026-05-09
 
