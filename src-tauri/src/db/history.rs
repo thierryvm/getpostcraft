@@ -126,10 +126,17 @@ pub async fn list_recent(pool: &SqlitePool, limit: i64) -> Result<Vec<PostRecord
 /// keep matching the May 9 range forever — confusing for users tracking
 /// what actually went out.
 ///
+/// `WHERE` and `ORDER BY` share the same `COALESCE(...)` expression —
+/// SQLite's `COALESCE` returns the first non-NULL argument, which is
+/// the precedence we want. `created_at` is `NOT NULL` in the schema, so
+/// the expression itself is never NULL and `BETWEEN` works without a
+/// guard. Keeping a single expression in both clauses avoids the
+/// drift class of bugs where the filter and the sort disagree on which
+/// date defines the post.
+///
 /// `DISTINCT` is defensive: post_history.id is unique so the JOIN-free
-/// query can't currently produce duplicates, but if a future
-/// refactor adds a JOIN we don't want a row to appear twice in the
-/// calendar.
+/// query can't currently produce duplicates, but if a future refactor
+/// adds a JOIN we don't want a row to appear twice in the calendar.
 pub async fn list_in_range(
     pool: &SqlitePool,
     from: &str,
@@ -139,15 +146,9 @@ pub async fn list_in_range(
         "SELECT DISTINCT id, network, caption, hashtags, status, created_at, published_at,
                 scheduled_at, image_path, images, ig_media_id, account_id, published_url
          FROM post_history
-         WHERE (published_at IS NOT NULL AND published_at BETWEEN ? AND ?)
-            OR (published_at IS NULL AND scheduled_at IS NOT NULL AND scheduled_at BETWEEN ? AND ?)
-            OR (published_at IS NULL AND scheduled_at IS NULL AND created_at BETWEEN ? AND ?)
+         WHERE COALESCE(published_at, scheduled_at, created_at) BETWEEN ? AND ?
          ORDER BY COALESCE(published_at, scheduled_at, created_at) ASC",
     )
-    .bind(from)
-    .bind(to)
-    .bind(from)
-    .bind(to)
     .bind(from)
     .bind(to)
     .fetch_all(pool)

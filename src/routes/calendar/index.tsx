@@ -116,10 +116,27 @@ function getPostDate(post: PostRecord): string {
  */
 type CalendarPostStatus = "published" | "scheduled" | "draft" | "failed";
 
+/**
+ * Exhaustive mapping from `PostRecord.status` to the calendar pill state.
+ * The `switch` is intentional — TypeScript flags any new status added to
+ * the backend `PostRecord["status"]` union (e.g. a future `"publishing"`
+ * or `"queued"`) so we don't silently lump it into "draft" or "scheduled"
+ * and ship the wrong colour. The `_exhaustive: never` final branch makes
+ * that drift a compile error, not a runtime guess.
+ */
 function postStatusForCalendar(post: PostRecord): CalendarPostStatus {
-  if (post.status === "published") return "published";
-  if (post.status === "failed") return "failed";
-  return post.scheduled_at ? "scheduled" : "draft";
+  switch (post.status) {
+    case "published":
+      return "published";
+    case "failed":
+      return "failed";
+    case "draft":
+      return post.scheduled_at ? "scheduled" : "draft";
+    default: {
+      const _exhaustive: never = post.status;
+      return _exhaustive;
+    }
+  }
 }
 
 const STATUS_PILL_CLASS: Record<CalendarPostStatus, string> = {
