@@ -8,24 +8,55 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
-### Added — multi-network composer pipeline (v0.3.9 stack)
+### Added — multi-network composer (v0.3.9 stack)
 - **Migration 018 + `db::groups`** (PR #56) — sibling-row model that
   lets one Composer pass produce N drafts (one per network) bound by
   a shared `group_id`. NULL on legacy rows, no backfill needed.
-- **`generate_and_save_group` Tauri command** — fans out N sidecar
-  calls in parallel via `tokio::task::spawn` (same pattern as
-  `generate_variants`), then persists successes as a transactional
-  `post_groups` parent + N sibling drafts via
-  `db::groups::create_with_drafts`. Best-effort: a single failing
-  network does NOT abort the whole flow; the user gets per-network
-  status and can retry just the failures.
-- **Frontend wrapper** `generateAndSaveGroup` in
-  `src/lib/tauri/composer.ts` plus the `GroupNetworkRequest`,
-  `GroupMemberResult`, `GroupGenerationResult` types — ready for the
-  Composer UI rewrite that lands in the next PR.
-- The Composer UX change (multi-select checkbox grid, tabs preview,
-  cost estimate banner) and the dashboard / calendar group badge
-  ship in the two follow-up PRs of the v0.3.9 stack.
+- **`generate_and_save_group` Tauri command** (PR #57) — fans out N
+  sidecar calls in parallel via `tokio::task::spawn`, persists
+  successes as a transactional `post_groups` parent + N sibling
+  drafts. Best-effort: a single failing network does NOT abort the
+  whole flow.
+- **Composer UI multi-network mode** — checkbox grid replaces the
+  v0.3.8 single-network dropdown. 1 ticked → existing single flow
+  (zero behaviour change for solo users). 2-3 ticked → new group
+  flow. Per-network account selectors cascade-reveal under each
+  checked network so the IG and LinkedIn picks stay independent.
+  Hard-cap of 3 networks per group is enforced both in the UI
+  (4th checkbox disabled) and in the Tauri command (rejected
+  before any AI call fires).
+- **Cost estimate banner** in the Composer — surfaces an
+  upper-bound USD estimate for the upcoming generation
+  (≈ $0.0028 for IG+LinkedIn on Sonnet 4.6) sourced from the
+  OpenRouter pricing snapshot already used by the AI usage panel,
+  so a model change in Settings reflects automatically. Hidden in
+  dev mode (no Tauri runtime → no pricing data).
+- **Group result panel** replaces the rich ContentPreview when a
+  multi-network generation completes. Per-member tile shows
+  status (ok / error), caption preview, hashtag preview, and a
+  "Continuer sur {network}" button that loads that sibling as the
+  active draft (single-network mode) for the rich edit/publish
+  flow. Failed members get an inline retry that re-runs just that
+  network and merges the result back without losing the other
+  siblings.
+
+### Changed
+- `composer.store` carries `selectedNetworks: Set<Network>`,
+  `accountIds: Partial<Record<Network, number | null>>`, and
+  `groupResult` alongside the legacy `network` / `accountId` /
+  `result`. The legacy fields stay in sync with the new ones so
+  unmodified callers (single-network code paths) keep working.
+- The ×3 variants button is mono-network only — running 3 tones × 2
+  networks would be 6 parallel AI calls, which both blows the cost
+  banner and turns the preview UI into a 6-tab grid that doesn't fit
+  on a laptop screen. The button is disabled with a tooltip
+  explaining the constraint when 2+ networks are ticked.
+
+### Tests
+- Frontend tests updated to match the multi-network store shape
+  (`selectedNetworks`, `accountIds`, `groupResult`). 105/105 still
+  green, no behavioural regression on the legacy single-network
+  flow that the existing tests exercise.
 
 ### Security notes
 - API key resolved once from the keychain and passed by reference

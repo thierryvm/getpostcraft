@@ -22,26 +22,36 @@ import { getDefaultFormat } from "@/types/composer.types";
 const storeFns = {
   setBrief: vi.fn(),
   setNetwork: vi.fn(),
+  toggleNetwork: vi.fn(),
   setAccountId: vi.fn(),
+  setAccountIdFor: vi.fn(),
   setImageFormat: vi.fn(),
   setResult: vi.fn(),
   setVariants: vi.fn(),
+  setGroupResult: vi.fn(),
   setIsLoading: vi.fn(),
   setError: vi.fn(),
   setDraftId: vi.fn(),
 };
 
-// Mock Zustand store so each test gets a clean empty brief (no cross-test bleed)
+// Mock Zustand store so each test gets a clean empty brief (no cross-test bleed).
+// Multi-network state (v0.3.9) is initialised to a single Instagram selection
+// to keep the legacy tests on the same default (mono-network → existing flow).
 vi.mock("@/stores/composer.store", () => ({
   useComposerStore: vi.fn(() => ({
     brief: "",
     network: "instagram" as const,
+    selectedNetworks: new Set<"instagram" | "linkedin" | "twitter" | "tiktok">([
+      "instagram",
+    ]),
     accountId: null,
+    accountIds: { instagram: null },
     imageFormat: getDefaultFormat("instagram"),
     isLoading: false,
     error: null,
     result: null,
     variants: null,
+    groupResult: null,
     draftId: null,
     ...storeFns,
   })),
