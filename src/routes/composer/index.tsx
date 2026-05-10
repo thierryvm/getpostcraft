@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { FileText, Plus, X, ArrowLeft } from "lucide-react";
+import { FileText, Plus, X, ArrowLeft, Layers } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { BriefForm } from "@/components/composer/BriefForm";
 import { ContentPreview } from "@/components/composer/ContentPreview";
+import { GroupResultPanel } from "@/components/composer/GroupResultPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getActiveProvider } from "@/lib/tauri/settings";
@@ -28,6 +29,7 @@ export function ComposerPage() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const draftId = useComposerStore((s) => s.draftId);
   const result = useComposerStore((s) => s.result);
+  const groupResult = useComposerStore((s) => s.groupResult);
   const resetForNewPost = useComposerStore((s) => s.resetForNewPost);
 
   useEffect(() => {
@@ -35,10 +37,10 @@ export function ComposerPage() {
     warmupSidecar(); // fire-and-forget — pre-loads Python interpreter
   }, []);
 
-  // We're "in a draft session" if we have either a saved draft or a generated
-  // result. A "Nouveau post" button shows up so the user can break out without
-  // being forced through publish.
-  const isDraftLoaded = draftId !== null || result !== null;
+  // We're "in a draft session" if we have a saved draft, a single-network
+  // generation result, or a multi-network group. The "Nouveau post" button
+  // shows up so the user can break out without being forced through publish.
+  const isDraftLoaded = draftId !== null || result !== null || groupResult !== null;
 
   /** Reset state AND leave the composer page entirely. The chip × and
    *  "Nouveau post" buttons reset in place; this one closes the workspace
@@ -64,7 +66,7 @@ export function ComposerPage() {
             Retour
           </Button>
           <span className="text-sm font-medium text-foreground">Composer</span>
-          {isDraftLoaded && draftId !== null && (
+          {isDraftLoaded && draftId !== null && groupResult === null && (
             <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 border border-primary/30 px-2 py-0.5 text-[11px] font-mono text-primary">
               <FileText className="h-3 w-3" aria-hidden="true" />
               Brouillon #{draftId}
@@ -73,6 +75,21 @@ export function ComposerPage() {
                 onClick={resetForNewPost}
                 title="Quitter le brouillon (il reste sauvegardé)"
                 aria-label="Quitter le brouillon"
+                className="ml-0.5 text-primary/70 hover:text-primary"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {groupResult !== null && groupResult.group_id !== null && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 border border-primary/30 px-2 py-0.5 text-[11px] font-mono text-primary">
+              <Layers className="h-3 w-3" aria-hidden="true" />
+              Groupe #{groupResult.group_id}
+              <button
+                type="button"
+                onClick={resetForNewPost}
+                title="Quitter le groupe (les brouillons restent sauvegardés)"
+                aria-label="Quitter le groupe"
                 className="ml-0.5 text-primary/70 hover:text-primary"
               >
                 <X className="h-3 w-3" />
@@ -104,9 +121,13 @@ export function ComposerPage() {
           <div className="w-full lg:w-80 lg:shrink-0">
             <BriefForm />
           </div>
-          {/* Preview panel — grows to fill on desktop, natural height on mobile */}
+          {/* Preview panel — grows to fill on desktop, natural height on mobile.
+              Routes to the GroupResultPanel when the user just ran a multi-
+              network generation (the lighter summary view), and to the rich
+              ContentPreview otherwise (single-network: image render, edit,
+              publish flow). The two are mutually exclusive in the store. */}
           <div className="flex-1 min-w-0">
-            <ContentPreview />
+            {groupResult !== null ? <GroupResultPanel /> : <ContentPreview />}
           </div>
         </div>
       </div>
