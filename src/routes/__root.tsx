@@ -11,6 +11,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { HelpSheet } from "@/components/shared/HelpSheet";
+import { DevModeBanner } from "@/components/shared/DevModeBanner";
 import { RestorePromptDialog } from "@/components/RestorePromptDialog";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/ui.store";
@@ -135,6 +136,11 @@ export function RootLayout() {
 
       {/* Main content */}
       <main className="flex flex-1 flex-col overflow-auto">
+        {/* No-op in production (Tauri WebView always exposes
+            __TAURI_INTERNALS__). Renders an inline banner only when
+            running under Vite dev server, so devs don't waste minutes
+            debugging "Cannot read properties of undefined" per panel. */}
+        <DevModeBanner />
         <Outlet />
       </main>
 

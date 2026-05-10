@@ -7,6 +7,7 @@ import {
   getOpenRouterPricingSnapshot,
   refreshOpenRouterPricing,
 } from "@/lib/tauri/settings";
+import { TauriRuntimeUnavailableError } from "@/lib/tauri/invoke";
 import { format, formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
 
@@ -58,6 +59,19 @@ export function AiUsagePanel() {
   }
 
   if (error) {
+    // Dev-server (no Tauri runtime) hits this on every mount. Render a
+    // muted hint instead of a red error so dev-mode pages aren't littered
+    // with destructive blocks. Real backend errors still get the
+    // destructive treatment so they don't blend into the chrome.
+    if (error instanceof TauriRuntimeUnavailableError) {
+      return (
+        <p className="text-xs text-muted-foreground bg-muted/30 rounded p-3">
+          Données indisponibles en mode dev. Lance{" "}
+          <code className="font-mono">npm run tauri dev</code>{" "}
+          ou installe l'app desktop pour voir les coûts d'usage.
+        </p>
+      );
+    }
     return (
       <p className="text-sm text-destructive bg-destructive/10 rounded p-2">
         Erreur : {String(error)}

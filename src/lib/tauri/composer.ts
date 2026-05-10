@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./invoke";
 import type { GeneratedContent, Network, PostRecord } from "@/types/composer.types";
 
 /** Scrape a URL and return extracted text ready to use as a brief. */
