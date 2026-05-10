@@ -19,8 +19,15 @@ function isoDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function getPostDate(post: { scheduled_at: string | null; created_at: string }): string {
-  const iso = post.scheduled_at ?? post.created_at;
+function getPostDate(post: {
+  published_at: string | null;
+  scheduled_at: string | null;
+  created_at: string;
+}): string {
+  // Most-concrete-event-wins: the post lives on the day it actually
+  // shipped (published_at), or the day it was planned (scheduled_at),
+  // or the day it was created (fallback for unscheduled drafts).
+  const iso = post.published_at ?? post.scheduled_at ?? post.created_at;
   return isoDate(new Date(iso));
 }
 
@@ -57,6 +64,7 @@ describe("calendar — timezone bucketing", () => {
     const post = {
       created_at: "2026-05-09T18:25:00.000Z",
       scheduled_at: null,
+      published_at: null,
     };
     const localDay = isoDate(new Date(post.created_at));
     expect(getPostDate(post)).toBe(localDay);
@@ -74,8 +82,35 @@ describe("calendar — timezone bucketing", () => {
     const post = {
       created_at: "2026-05-09T18:25:00.000Z",
       scheduled_at: "2026-05-15T09:00:00.000Z",
+      published_at: null,
     };
     expect(getPostDate(post)).toBe(isoDate(new Date(post.scheduled_at!)));
+  });
+
+  it("published_at takes precedence over scheduled_at", () => {
+    // Regression guard for the v0.3.8 calendar bug: a draft scheduled for
+    // May 9 but actually published on May 10 used to stay glued on May 9
+    // because getPostDate ignored published_at. Now the publish event
+    // wins — which matches what a user tracking what actually went out
+    // expects to see in the editorial calendar.
+    const post = {
+      created_at: "2026-05-08T10:00:00.000Z",
+      scheduled_at: "2026-05-09T09:00:00.000Z",
+      published_at: "2026-05-10T12:26:00.000Z",
+    };
+    expect(getPostDate(post)).toBe(isoDate(new Date(post.published_at!)));
+  });
+
+  it("published_at wins even when set without a prior scheduled_at", () => {
+    // "Publish now" path: the user clicks Publier maintenant on an
+    // unscheduled draft. published_at gets set, scheduled_at stays NULL.
+    // Bucketing must follow the publish day, not the draft creation day.
+    const post = {
+      created_at: "2026-05-08T10:00:00.000Z",
+      scheduled_at: null,
+      published_at: "2026-05-10T12:26:00.000Z",
+    };
+    expect(getPostDate(post)).toBe(isoDate(new Date(post.published_at!)));
   });
 
   it("isoDate output is 10 characters in YYYY-MM-DD", () => {

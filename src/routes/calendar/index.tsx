@@ -91,16 +91,50 @@ function weekRangeISO(weekStart: Date): [string, string] {
 
 /**
  * Bucket a post into a calendar day. Same local-time discipline as `isoDate`:
- * we parse the stored UTC ISO timestamp into a Date and read its LOCAL day
- * components so a post created at 20:25 CET on May 9 lands on May 9, not
- * May 10. The previous `slice(0, 10)` chopped the UTC string directly,
- * which mis-bucketed any post stamped between local midnight and the
- * UTC-offset boundary.
+ * parse the stored UTC ISO timestamp and read its LOCAL day components so
+ * a post created at 20:25 CET on May 9 lands on May 9, not May 10.
+ *
+ * Precedence is **most-concrete-event-wins**:
+ *   1. `published_at` — the post actually shipped on this day (Meta /
+ *      LinkedIn timestamp). After publish this is the authoritative date.
+ *   2. `scheduled_at` — the day the user planned the post for.
+ *   3. `created_at`  — fallback for unscheduled drafts.
+ *
+ * Pre-v0.3.8 the helper used `scheduled_at ?? created_at`, so a draft
+ * scheduled for May 9 and published on May 10 stayed glued on May 9 in
+ * the calendar — confusing for users tracking what actually went out.
  */
 function getPostDate(post: PostRecord): string {
-  const iso = post.scheduled_at ?? post.created_at;
+  const iso = post.published_at ?? post.scheduled_at ?? post.created_at;
   return isoDate(new Date(iso));
 }
+
+/**
+ * Visual status applied as a tiny coloured pill on each calendar tile.
+ * Maps the post status to the same palette the dashboard / detail modal
+ * already use so the user sees one visual language across surfaces.
+ */
+type CalendarPostStatus = "published" | "scheduled" | "draft" | "failed";
+
+function postStatusForCalendar(post: PostRecord): CalendarPostStatus {
+  if (post.status === "published") return "published";
+  if (post.status === "failed") return "failed";
+  return post.scheduled_at ? "scheduled" : "draft";
+}
+
+const STATUS_PILL_CLASS: Record<CalendarPostStatus, string> = {
+  published: "bg-primary/15 text-primary border-primary/30",
+  scheduled: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+  draft: "bg-muted text-muted-foreground border-border",
+  failed: "bg-destructive/15 text-destructive border-destructive/30",
+};
+
+const STATUS_PILL_LABEL: Record<CalendarPostStatus, string> = {
+  published: "Publié",
+  scheduled: "Planifié",
+  draft: "Brouillon",
+  failed: "Échec",
+};
 
 const MONTH_NAMES = [
   "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
@@ -603,39 +637,55 @@ function DayCell({
       </div>
 
       <div className="flex flex-col gap-0.5 overflow-hidden">
-        {posts.slice(0, maxVisible).map((post) => (
-          <button
-            key={post.id}
-            type="button"
-            draggable
-            onDragStart={(e) => e.dataTransfer.setData("postId", String(post.id))}
-            onClick={() => onPostClick(post)}
-            className={cn(
-              "flex items-center gap-1 w-full rounded px-1 py-0.5 text-left",
-              "border border-transparent hover:border-border hover:bg-secondary/50 transition-colors",
-            )}
-            title={post.caption}
-          >
-            <span
+        {posts.slice(0, maxVisible).map((post) => {
+          const status = postStatusForCalendar(post);
+          return (
+            <button
+              key={post.id}
+              type="button"
+              draggable
+              onDragStart={(e) => e.dataTransfer.setData("postId", String(post.id))}
+              onClick={() => onPostClick(post)}
               className={cn(
-                "h-1.5 w-1.5 rounded-full shrink-0",
-                NETWORK_DOT_COLORS[post.network] ?? "bg-muted-foreground",
+                "flex items-center gap-1 w-full rounded px-1 py-0.5 text-left",
+                "border border-transparent hover:border-border hover:bg-secondary/50 transition-colors",
               )}
-              aria-hidden="true"
-            />
-            {post.images?.[0] && (
-              <img
-                src={post.images[0]}
-                alt=""
-                className="h-4 w-4 rounded-sm object-cover shrink-0"
-                loading="lazy"
+              title={`${STATUS_PILL_LABEL[status]} · ${post.caption}`}
+            >
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full shrink-0",
+                  NETWORK_DOT_COLORS[post.network] ?? "bg-muted-foreground",
+                )}
+                aria-hidden="true"
               />
-            )}
-            <span className="text-[10px] leading-4 text-foreground/90 truncate">
-              {post.caption}
-            </span>
-          </button>
-        ))}
+              {post.images?.[0] && (
+                <img
+                  src={post.images[0]}
+                  alt=""
+                  className="h-4 w-4 rounded-sm object-cover shrink-0"
+                  loading="lazy"
+                />
+              )}
+              {/* Status pill — single source of visual truth on each tile.
+                  Lets the user see at a glance whether a slot holds a
+                  draft, a scheduled draft, a published post, or a failed
+                  attempt, without having to open the detail modal. */}
+              <span
+                className={cn(
+                  "shrink-0 rounded border px-1 text-[8px] uppercase tracking-wider leading-3",
+                  STATUS_PILL_CLASS[status],
+                )}
+                aria-label={STATUS_PILL_LABEL[status]}
+              >
+                {STATUS_PILL_LABEL[status]}
+              </span>
+              <span className="text-[10px] leading-4 text-foreground/90 truncate">
+                {post.caption}
+              </span>
+            </button>
+          );
+        })}
         {overflow > 0 && (
           <span className="text-[9px] text-muted-foreground pl-1">+{overflow} de plus</span>
         )}

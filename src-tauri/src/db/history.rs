@@ -116,20 +116,36 @@ pub async fn list_recent(pool: &SqlitePool, limit: i64) -> Result<Vec<PostRecord
     rows.iter().map(row_to_post_record).collect()
 }
 
-/// List posts whose scheduled_at falls within [from, to] (ISO-8601 date strings).
+/// List posts whose effective calendar date falls within [from, to]
+/// (ISO-8601 date strings).
+///
+/// "Effective date" is the most-concrete-event-wins precedence the
+/// frontend relies on: `published_at` > `scheduled_at` > `created_at`.
+/// Pre-v0.3.8 the query only filtered on `scheduled_at`/`created_at`,
+/// which meant a post scheduled for May 9 and published on May 10 would
+/// keep matching the May 9 range forever — confusing for users tracking
+/// what actually went out.
+///
+/// `DISTINCT` is defensive: post_history.id is unique so the JOIN-free
+/// query can't currently produce duplicates, but if a future
+/// refactor adds a JOIN we don't want a row to appear twice in the
+/// calendar.
 pub async fn list_in_range(
     pool: &SqlitePool,
     from: &str,
     to: &str,
 ) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
-        "SELECT id, network, caption, hashtags, status, created_at, published_at,
+        "SELECT DISTINCT id, network, caption, hashtags, status, created_at, published_at,
                 scheduled_at, image_path, images, ig_media_id, account_id, published_url
          FROM post_history
-         WHERE (scheduled_at IS NOT NULL AND scheduled_at BETWEEN ? AND ?)
-            OR (scheduled_at IS NULL AND created_at BETWEEN ? AND ?)
-         ORDER BY COALESCE(scheduled_at, created_at) ASC",
+         WHERE (published_at IS NOT NULL AND published_at BETWEEN ? AND ?)
+            OR (published_at IS NULL AND scheduled_at IS NOT NULL AND scheduled_at BETWEEN ? AND ?)
+            OR (published_at IS NULL AND scheduled_at IS NULL AND created_at BETWEEN ? AND ?)
+         ORDER BY COALESCE(published_at, scheduled_at, created_at) ASC",
     )
+    .bind(from)
+    .bind(to)
     .bind(from)
     .bind(to)
     .bind(from)
@@ -330,5 +346,169 @@ mod tests {
         assert_eq!(result.len(), 5);
         assert_eq!(result[0], "slide-1");
         assert_eq!(result[4], "slide-5");
+    }
+
+    // ── list_in_range integration tests ───────────────────────────────────────
+    //
+    // Regression guards for the v0.3.8 calendar bucketing fix. The previous
+    // SQL only filtered on scheduled_at/created_at, so a post scheduled for
+    // May 9 and published on May 10 stayed glued on May 9 in the calendar
+    // view forever. The fix adds published_at as the primary precedence and
+    // these tests lock the contract in.
+
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    /// Fresh in-memory pool with all migrations applied. `max_connections=1`
+    /// because in-memory SQLite is private to the connection that opened it.
+    async fn fresh_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        sqlx::migrate!("src/db/migrations")
+            .run(&pool)
+            .await
+            .expect("migrations apply cleanly");
+        pool
+    }
+
+    /// Insert a post with explicit dates so we can exercise list_in_range
+    /// against every combination of (published_at, scheduled_at, created_at).
+    async fn insert_with_dates(
+        pool: &SqlitePool,
+        caption: &str,
+        status: &str,
+        created_at: &str,
+        scheduled_at: Option<&str>,
+        published_at: Option<&str>,
+    ) -> i64 {
+        let row = sqlx::query(
+            "INSERT INTO post_history \
+                (network, caption, hashtags, status, created_at, scheduled_at, published_at, images) \
+             VALUES ('linkedin', ?, '[]', ?, ?, ?, ?, '[]') \
+             RETURNING id",
+        )
+        .bind(caption)
+        .bind(status)
+        .bind(created_at)
+        .bind(scheduled_at)
+        .bind(published_at)
+        .fetch_one(pool)
+        .await
+        .expect("insert post_history");
+        row.try_get::<i64, _>("id").expect("read inserted id")
+    }
+
+    #[tokio::test]
+    async fn list_in_range_buckets_published_post_on_publish_day_not_schedule_day() {
+        // The v0.3.8 calendar bug: a draft scheduled May 9 and published
+        // May 10 was returned for the May 9 range and stayed visible there
+        // even though the post had actually shipped May 10. After the fix,
+        // a calendar query for May 10 must return the post; a query for
+        // May 9 must NOT.
+        let pool = fresh_pool().await;
+        let id = insert_with_dates(
+            &pool,
+            "287 tests pour un sanitizer",
+            "published",
+            "2026-05-09T08:00:00Z",       // created May 9
+            Some("2026-05-09T09:00:00Z"), // scheduled May 9
+            Some("2026-05-10T12:26:00Z"), // actually published May 10
+        )
+        .await;
+
+        let may10 = list_in_range(&pool, "2026-05-10T00:00:00Z", "2026-05-10T23:59:59Z")
+            .await
+            .expect("list May 10");
+        assert!(
+            may10.iter().any(|p| p.id == id),
+            "published post must be visible on its publish day (May 10)",
+        );
+
+        let may9 = list_in_range(&pool, "2026-05-09T00:00:00Z", "2026-05-09T23:59:59Z")
+            .await
+            .expect("list May 9");
+        assert!(
+            !may9.iter().any(|p| p.id == id),
+            "published post must NOT be visible on its old scheduled day (May 9)",
+        );
+    }
+
+    #[tokio::test]
+    async fn list_in_range_falls_back_to_scheduled_then_created() {
+        // Three posts covering the precedence ladder:
+        //   A: published_at set    → bucketed by published_at
+        //   B: scheduled, not yet published → bucketed by scheduled_at
+        //   C: unscheduled draft   → bucketed by created_at
+        let pool = fresh_pool().await;
+        let a = insert_with_dates(
+            &pool,
+            "A — published",
+            "published",
+            "2026-05-01T00:00:00Z",
+            Some("2026-05-02T00:00:00Z"),
+            Some("2026-05-15T00:00:00Z"),
+        )
+        .await;
+        let b = insert_with_dates(
+            &pool,
+            "B — scheduled",
+            "draft",
+            "2026-05-01T00:00:00Z",
+            Some("2026-05-15T00:00:00Z"),
+            None,
+        )
+        .await;
+        let c = insert_with_dates(
+            &pool,
+            "C — unscheduled draft",
+            "draft",
+            "2026-05-15T00:00:00Z",
+            None,
+            None,
+        )
+        .await;
+
+        let may15 = list_in_range(&pool, "2026-05-15T00:00:00Z", "2026-05-15T23:59:59Z")
+            .await
+            .expect("list May 15");
+        let ids: Vec<i64> = may15.iter().map(|p| p.id).collect();
+        assert!(
+            ids.contains(&a),
+            "A must be returned via published_at = May 15"
+        );
+        assert!(
+            ids.contains(&b),
+            "B must be returned via scheduled_at = May 15"
+        );
+        assert!(
+            ids.contains(&c),
+            "C must be returned via created_at = May 15"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_in_range_returns_each_post_only_once() {
+        // Defensive against future JOIN-introducing refactors. A post that
+        // matches the range via multiple date columns (e.g. created_at AND
+        // scheduled_at AND published_at all on the same day) must still
+        // appear exactly once in the result.
+        let pool = fresh_pool().await;
+        let id = insert_with_dates(
+            &pool,
+            "all-three-dates same day",
+            "published",
+            "2026-05-10T08:00:00Z",
+            Some("2026-05-10T09:00:00Z"),
+            Some("2026-05-10T12:00:00Z"),
+        )
+        .await;
+
+        let may10 = list_in_range(&pool, "2026-05-10T00:00:00Z", "2026-05-10T23:59:59Z")
+            .await
+            .expect("list May 10");
+        let count = may10.iter().filter(|p| p.id == id).count();
+        assert_eq!(count, 1, "post must appear exactly once, got {count}");
     }
 }
