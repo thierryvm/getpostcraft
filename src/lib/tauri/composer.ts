@@ -61,6 +61,53 @@ export async function generateVariants(
   });
 }
 
+// ── Multi-network composer (v0.3.9) ──────────────────────────────────────────
+
+/** One slot in the multi-network Composer. account_id is per-network so the
+ *  user can target a specific connected account on networks where they have
+ *  several (only LinkedIn supports that today, but the type is forward-
+ *  compatible). */
+export interface GroupNetworkRequest {
+  network: Network;
+  account_id: number | null;
+}
+
+/** Per-network outcome of a group generation. On success, post_id +
+ *  caption + hashtags are populated and error_message is null; on failure
+ *  the inverse. The Composer renders one tab per member regardless of
+ *  status so the user can retry just the failures. */
+export interface GroupMemberResult {
+  network: Network;
+  status: "ok" | "error";
+  post_id: number | null;
+  caption: string | null;
+  hashtags: string[] | null;
+  error_message: string | null;
+}
+
+/** Result of a multi-network generation. group_id is null when EVERY
+ *  member failed — the backend skips creating a parent in that case so
+ *  the dashboard never shows phantom empty groups. */
+export interface GroupGenerationResult {
+  group_id: number | null;
+  members: GroupMemberResult[];
+}
+
+/** Generate captions for N networks in parallel and persist them as a
+ *  single post_groups parent + N sibling drafts. Best-effort: a single
+ *  failing network does NOT abort the whole flow — the user gets the
+ *  successes immediately. The brief must be ≥ 10 chars and `networks`
+ *  must hold 1-3 distinct entries (V1 ceiling). */
+export async function generateAndSaveGroup(
+  brief: string,
+  networks: GroupNetworkRequest[],
+): Promise<GroupGenerationResult> {
+  return invoke<GroupGenerationResult>("generate_and_save_group", {
+    brief,
+    networks,
+  });
+}
+
 /** Allowed values for `CarouselSlide.role`. Mirrors the Rust whitelist
  *  in `commands::media::role_meta_for`. Anything else is normalised to
  *  `null` by the sidecar before reaching the frontend. */

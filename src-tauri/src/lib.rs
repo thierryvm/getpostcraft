@@ -140,6 +140,7 @@ pub fn run() {
             // AI
             commands::ai::generate_content,
             commands::ai::generate_variants,
+            commands::ai::generate_and_save_group,
             commands::ai::save_draft,
             commands::ai::get_post_history,
             commands::ai::get_post_by_id,

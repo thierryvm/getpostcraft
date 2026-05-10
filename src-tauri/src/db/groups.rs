@@ -11,22 +11,19 @@
 //! and delete the parent while keeping the children alive as standalone
 //! drafts the user can still publish or delete one by one.
 //!
-//! ## Why `dead_code` is allowed module-wide
-//!
-//! This module is the foundation of a 4-PR feature stack. The CRUD
-//! surface is verified by the tests at the bottom of the file but no
-//! Tauri command consumes it yet — the consumer arrives in the next PR
-//! (`generate_and_save_group`). Without the allow, clippy `-D warnings`
-//! would block CI on a perfectly correct intermediate landing.
-
-#![allow(dead_code)]
-
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use super::history::{row_to_post_record, PostRecord};
 
+// `PostGroup`, `create`, `get_with_members`, `delete_keeping_children`
+// are landed alongside `create_with_drafts` (already consumed by the
+// `generate_and_save_group` Tauri command). They become live in the
+// frontend / dashboard PRs of the v0.3.9 stack and are exercised by
+// the unit tests below in the meantime — the targeted allows keep
+// clippy `-D warnings` green without dropping coverage.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostGroup {
     pub id: i64,
@@ -41,6 +38,7 @@ pub struct PostGroup {
 /// responsible for inserting child `post_history` rows that reference
 /// this id within the same transaction; see `create_with_drafts` for
 /// the typical multi-network composer flow.
+#[allow(dead_code)]
 pub async fn create(pool: &SqlitePool, brief: &str) -> Result<i64, String> {
     let now = Utc::now().to_rfc3339();
     sqlx::query("INSERT INTO post_groups (brief, created_at) VALUES (?, ?)")
@@ -116,6 +114,7 @@ pub async fn create_with_drafts(
 /// id doesn't exist (legacy mono-network rows have `group_id = NULL`
 /// and never collide with a parent id, so a missing parent is a
 /// genuine 404, not a retrocompat case).
+#[allow(dead_code)]
 pub async fn get_with_members(
     pool: &SqlitePool,
     group_id: i64,
@@ -161,6 +160,7 @@ pub async fn get_with_members(
 /// schema has no FK so we manually NULL out `post_history.group_id`
 /// before dropping the parent. Wrapped in a transaction so a crash
 /// between the UPDATE and the DELETE can't leave dangling references.
+#[allow(dead_code)]
 pub async fn delete_keeping_children(pool: &SqlitePool, group_id: i64) -> Result<(), String> {
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     sqlx::query("UPDATE post_history SET group_id = NULL WHERE group_id = ?")
