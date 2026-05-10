@@ -8,11 +8,15 @@ import { isInTauriContext } from "@/lib/tauri/invoke";
  * user has to scroll through cryptic per-panel TypeError messages to figure
  * out why nothing loads.
  *
- * The banner renders nothing in production (Tauri WebView always exposes
- * the global), so the cost in the shipped binary is one boolean check at
- * mount time.
+ * Gated on BOTH `import.meta.env.DEV` and the missing-runtime probe:
+ * the build-time flag guarantees the banner is dead-code-eliminated from
+ * production bundles even if `__TAURI_INTERNALS__` is unexpectedly absent
+ * (e.g. a regression in Tauri's WebView injection); the runtime probe
+ * keeps it hidden when devs run `npm run tauri dev` (Tauri shell over a
+ * dev build) where the runtime IS present.
  */
 export function DevModeBanner() {
+  if (!import.meta.env.DEV) return null;
   if (isInTauriContext()) return null;
 
   return (

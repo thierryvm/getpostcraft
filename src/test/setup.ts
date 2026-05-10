@@ -6,8 +6,16 @@ import { vi } from "vitest";
 // short-circuits with `TauriRuntimeUnavailableError` and bypasses the
 // `vi.mock("@tauri-apps/api/core")` below — breaking ~23 tests that assert
 // behavior against a mocked invoke.
+//
+// We only inject the stub when one isn't already present. Future
+// integration-style tests that boot a real Tauri WebView (or a more
+// realistic mock) shouldn't have their carefully-set global silently
+// clobbered by this setup file.
 if (typeof window !== "undefined") {
-  (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+  const w = window as unknown as Record<string, unknown>;
+  if (w.__TAURI_INTERNALS__ === undefined) {
+    w.__TAURI_INTERNALS__ = {};
+  }
 }
 
 // Mock Tauri IPC — no native bridge in test environment
