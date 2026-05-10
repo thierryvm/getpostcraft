@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 pub mod accounts;
 pub mod ai_usage;
+pub mod groups;
 pub mod history;
 pub mod settings_db;
 
@@ -495,6 +496,65 @@ mod migration_tests {
         assert!(
             cols.contains(&"published_url".to_string()),
             "migration 017 must add published_url column, got: {cols:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_groups_table_and_group_id_column_exist_after_migration_018() {
+        // Migration 018 introduces sibling-row groups for cross-network
+        // publishing. Two structural guarantees this test locks in:
+        //   1. The `post_groups` parent table exists with the expected
+        //      columns. The composer transaction depends on it.
+        //   2. `post_history.group_id` exists and stays nullable. Legacy
+        //      mono-network rows leave it NULL — backfill is intentionally
+        //      skipped, so a NOT NULL constraint here would crash on
+        //      first launch for any v0.3.8 user upgrading.
+        // The cascade-on-delete behaviour is a soft contract enforced in
+        // `db::groups::delete_keeping_children` (SQLite refuses
+        // ALTER TABLE ADD COLUMN ... REFERENCES, see migration 013's
+        // hotfix history). The test for that contract lives in
+        // `db::groups::tests`.
+        let pool = fresh_migrated_pool().await;
+
+        // post_groups table exists.
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='post_groups'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query master");
+        assert_eq!(count, 1, "migration 018 must create the post_groups table");
+
+        let group_cols = table_columns(&pool, "post_groups").await;
+        for c in ["id", "brief", "created_at"] {
+            assert!(
+                group_cols.contains(&c.to_string()),
+                "post_groups missing column `{c}`, got: {group_cols:?}"
+            );
+        }
+
+        // post_history.group_id exists.
+        let history_cols = table_columns(&pool, "post_history").await;
+        assert!(
+            history_cols.contains(&"group_id".to_string()),
+            "migration 018 must add post_history.group_id, got: {history_cols:?}"
+        );
+
+        // group_id must be nullable. PRAGMA table_info reports a
+        // `notnull` flag; we check it stays at 0 so a backfill isn't
+        // required for legacy single-network rows.
+        let rows = sqlx::query("PRAGMA table_info(post_history)")
+            .fetch_all(&pool)
+            .await
+            .expect("PRAGMA table_info");
+        let group_id_notnull: i64 = rows
+            .iter()
+            .find(|r| r.get::<String, _>("name") == "group_id")
+            .map(|r| r.get::<i64, _>("notnull"))
+            .expect("group_id column missing");
+        assert_eq!(
+            group_id_notnull, 0,
+            "post_history.group_id must be nullable for retrocompat with mono-network rows"
         );
     }
 

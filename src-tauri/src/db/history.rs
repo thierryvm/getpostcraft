@@ -259,7 +259,7 @@ fn parse_images_column(raw: Option<String>, image_path: Option<&str>) -> Vec<Str
     }
 }
 
-fn row_to_post_record(r: &SqliteRow) -> Result<PostRecord, String> {
+pub(crate) fn row_to_post_record(r: &SqliteRow) -> Result<PostRecord, String> {
     let hashtags_str: String = r.try_get("hashtags").map_err(|e| e.to_string())?;
     let hashtags: Vec<String> = serde_json::from_str(&hashtags_str).unwrap_or_default();
     let image_path: Option<String> = r.try_get("image_path").map_err(|e| e.to_string())?;
