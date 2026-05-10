@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { NetworkBadge, NETWORK_DOT_COLORS } from "@/components/shared/NetworkBadge";
 import { PostThumbnail } from "@/components/shared/PostThumbnail";
 import { PostActions } from "@/components/shared/PostActions";
+import { GroupBadge } from "@/components/shared/GroupBadge";
 import { format, parse, isValid } from "date-fns";
 import { fr } from "date-fns/locale";
 
@@ -405,6 +406,7 @@ function PostModal({
                   Échec
                 </span>
               )}
+              <GroupBadge groupId={post.group_id} variant="chip" />
             </div>
             <button
               type="button"

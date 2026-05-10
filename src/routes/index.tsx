@@ -29,6 +29,7 @@ import { NETWORK_META } from "@/types/composer.types";
 import { CaptionWithFold, FoldCounter } from "@/components/shared/CaptionWithFold";
 import { NetworkBadge } from "@/components/shared/NetworkBadge";
 import { PostThumbnail } from "@/components/shared/PostThumbnail";
+import { GroupBadge } from "@/components/shared/GroupBadge";
 import { PostActions } from "@/components/shared/PostActions";
 
 const STATUS_META = {
@@ -124,10 +125,11 @@ export function PostDetailSheet({
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-5">
-          {/* Status + Network + Date */}
+          {/* Status + Network + Group + Date */}
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={meta.variant}>{meta.label}</Badge>
             <NetworkBadge network={post.network} />
+            <GroupBadge groupId={post.group_id} variant="chip" />
             <span className="text-xs text-muted-foreground">
               {format(new Date(post.created_at), "d MMM yyyy · HH:mm", { locale: fr })}
             </span>
@@ -360,6 +362,7 @@ export function DashboardPage() {
                         <Badge variant={meta.variant} className="text-xs shrink-0">
                           {meta.label}
                         </Badge>
+                        <GroupBadge groupId={post.group_id} />
                       </div>
                     </div>
                     <PostActions

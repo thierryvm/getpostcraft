@@ -32,6 +32,13 @@ pub struct PostRecord {
     /// before migration 017 — the frontend then falls back to a URN-
     /// derived URL or the account profile feed.
     pub published_url: Option<String>,
+    /// Sibling-row group this post belongs to. Set by the multi-network
+    /// composer (one parent `post_groups` row + N children with the
+    /// same group_id). NULL on legacy mono-network rows and on drafts
+    /// generated through the single-network path. The dashboard /
+    /// calendar uses this to surface a "Groupe · N posts" badge so the
+    /// user can see at a glance which drafts were generated together.
+    pub group_id: Option<i64>,
 }
 
 pub async fn insert_draft(
@@ -72,7 +79,7 @@ pub async fn insert_draft(
 pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<PostRecord, String> {
     let row = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id, account_id, published_url
+                scheduled_at, image_path, images, ig_media_id, account_id, published_url, group_id
          FROM post_history WHERE id = ?",
     )
     .bind(id)
@@ -105,7 +112,7 @@ pub async fn update_status(
 pub async fn list_recent(pool: &SqlitePool, limit: i64) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id, account_id, published_url
+                scheduled_at, image_path, images, ig_media_id, account_id, published_url, group_id
          FROM post_history ORDER BY created_at DESC LIMIT ?",
     )
     .bind(limit)
@@ -144,7 +151,7 @@ pub async fn list_in_range(
 ) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT DISTINCT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id, account_id, published_url
+                scheduled_at, image_path, images, ig_media_id, account_id, published_url, group_id
          FROM post_history
          WHERE COALESCE(published_at, scheduled_at, created_at) BETWEEN ? AND ?
          ORDER BY COALESCE(published_at, scheduled_at, created_at) ASC",
@@ -279,6 +286,7 @@ pub(crate) fn row_to_post_record(r: &SqliteRow) -> Result<PostRecord, String> {
         ig_media_id: r.try_get("ig_media_id").map_err(|e| e.to_string())?,
         account_id: r.try_get("account_id").ok().flatten(),
         published_url: r.try_get("published_url").ok().flatten(),
+        group_id: r.try_get("group_id").ok().flatten(),
     })
 }
 

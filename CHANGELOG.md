@@ -57,6 +57,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   (`selectedNetworks`, `accountIds`, `groupResult`). 105/105 still
   green, no behavioural regression on the legacy single-network
   flow that the existing tests exercise.
+- `PostRecord` test fixtures pick up the new `group_id: null`
+  field (legacy single-network mock posts).
+
+### Added — group visibility surfaces
+- `PostRecord.group_id` is now exposed by every Rust query
+  (`get_by_id`, `list_recent`, `list_in_range`) and the matching
+  TypeScript type. The dashboard list, the dashboard detail sheet,
+  and the calendar detail modal each render a compact "Groupe #N"
+  badge when the post belongs to a multi-network group, so the
+  user can see at a glance which drafts were generated together.
+- New `GroupBadge` component (`src/components/shared/`) with two
+  visual weights (inline pill for list rows, chip for detail
+  headers). NULL group_id renders nothing — legacy mono-network
+  rows are untouched.
 
 ### Security notes
 - API key resolved once from the keychain and passed by reference
