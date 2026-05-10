@@ -8,6 +8,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added — foundation for v0.3.9 multi-network composer
+- **Migration 018 — `post_groups` parent table + nullable
+  `post_history.group_id` column.** Sibling-row model: each network
+  keeps its own `post_history` row (so every existing query keeps
+  working) and the new `group_id` is the only join key. NULL on every
+  legacy / single-network row → no backfill, no retrocompat trap.
+- **`db::groups` Rust module** — atomic `create_with_drafts(brief,
+  children)` (transaction-wrapped), `get_with_members(group_id)`,
+  `delete_keeping_children(group_id)` (soft cascade enforced in code
+  since SQLite refuses `ADD COLUMN ... REFERENCES`).
+- This PR is foundation only — no Composer UX change, no new Tauri
+  command, no sidecar work yet. The next 3 PRs in the stack consume
+  this module.
+
+### Tests
+- **+4 Rust** tests on `db::groups`: atomic insert of parent + N
+  children, fetch ordered by id, missing-id returns None, soft cascade
+  drops parent and survives children with NULL group_id.
+- **+1 Rust** migration regression test: `post_groups` table exists
+  after migration 018, `post_history.group_id` exists and is nullable.
+
 ## [0.3.8] — 2026-05-10
 
 ### Fixed
