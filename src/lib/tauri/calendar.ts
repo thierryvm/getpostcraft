@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./invoke";
 import type { PostRecord } from "@/types/composer.types";
 
 /** Fetch posts in range [from, to] (ISO-8601 datetime strings). */
