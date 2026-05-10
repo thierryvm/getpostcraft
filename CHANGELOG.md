@@ -8,6 +8,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.3.8] — 2026-05-10
+
+### Fixed
+- **Editorial calendar reflects what actually shipped** — a draft
+  scheduled for May 9 and published on May 10 used to stay glued on
+  May 9 in the calendar grid forever. The frontend `getPostDate` and
+  the backend `list_in_range` SQL query both now follow the same
+  most-concrete-event-wins precedence (`published_at > scheduled_at >
+  created_at`). Posts move to their actual publish day after the
+  publish completes.
+
+### Added
+- **Status pill on every calendar tile** — `Brouillon` / `Planifié` /
+  `Publié` / `Échec` is now visible at a glance without opening the
+  detail modal. Same colour palette as the dashboard / detail view so
+  the visual language stays consistent across surfaces.
+
+### Tests
+- **+3 Rust** integration tests on `db::history::list_in_range` (fresh
+  in-memory pool): published-day bucketing, full precedence ladder,
+  no-duplicate when all three date columns match.
+- **+2 frontend** calendar timezone tests covering `published_at`
+  precedence (with and without a prior `scheduled_at`).
+- Frontend **105 / 105** (was 103/103), Rust **187 / 187** (was 184/184).
+
 ## [0.3.7] — 2026-05-10
 
 ### Added
