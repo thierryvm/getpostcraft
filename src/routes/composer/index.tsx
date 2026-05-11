@@ -114,11 +114,16 @@ export function ComposerPage() {
         </div>
       </div>
 
-      {/* Scrollable content — natural flow, mobile-first */}
+      {/* Scrollable content — natural flow, mobile-first.
+          Breakpoint dropped from `lg:` (1024px) to `md:` (768px) so the
+          brief-sidebar + preview-pane layout kicks in earlier; @thierry
+          works in narrow Tauri windows where the legacy 1024px gate
+          forced a vertical stack and pushed the preview off-screen
+          below a long form. */}
       <div className="flex-1 overflow-y-auto">
-        <div className="flex flex-col lg:flex-row gap-6 p-4 sm:p-6">
+        <div className="flex flex-col md:flex-row gap-6 p-4 sm:p-6">
           {/* Brief panel — full width mobile, fixed sidebar desktop */}
-          <div className="w-full lg:w-80 lg:shrink-0">
+          <div className="w-full md:w-80 md:shrink-0">
             <BriefForm />
           </div>
           {/* Preview panel — grows to fill on desktop, natural height on mobile.
