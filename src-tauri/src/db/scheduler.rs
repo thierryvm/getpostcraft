@@ -55,23 +55,26 @@ pub const BACKOFF_MINUTES: [i64; 4] = [0, 5, 30, 120];
 /// firing the actual publish call — that lock-row pattern prevents two
 /// concurrent app launches from double-publishing the same post.
 ///
-/// Two timestamp parameters get bound from Rust: `now_rfc3339` is the
-/// reference instant for `scheduled_at` comparisons (string-equal to
-/// what `chrono::Utc::now().to_rfc3339()` writes during scheduling).
-/// We avoid SQLite's `datetime('now')` here because it returns the
-/// format `'YYYY-MM-DD HH:MM:SS'` (space separator, no fractional, no
-/// Z), which sorts lexicographically before our RFC 3339 writes
+/// `now_rfc3339` is bound from Rust as the reference instant for
+/// `scheduled_at` comparisons (string-equal to what
+/// `chrono::Utc::now().to_rfc3339()` writes during scheduling). We avoid
+/// SQLite's `datetime('now')` here because it returns the format
+/// `'YYYY-MM-DD HH:MM:SS'` (space separator, no fractional, no Z), which
+/// sorts lexicographically before our RFC 3339 writes
 /// (`'YYYY-MM-DDTHH:MM:SS.fffZ'`, `T` > space at the same calendar
 /// instant). Binding the Rust-formatted timestamp keeps producer and
 /// consumer on the same string convention.
 ///
 /// `failed_attempts` is bounded by `MAX_FAILED_ATTEMPTS` so giving-up
-/// rows don't keep matching. Retry window check uses a CASE on
-/// `failed_attempts` so the SQL stays one query — no per-row decision
-/// in Rust.
+/// rows don't keep matching. The backoff window check is applied in
+/// Rust against [`BACKOFF_MINUTES`] (single source of truth), so the
+/// SQL no longer duplicates the retry policy in a `CASE`. For the
+/// expected scheduler load (a handful of overdue posts at most), the
+/// extra rows fetched are negligible vs the maintainability win.
 #[allow(dead_code)]
 pub async fn list_due_for_publish(pool: &SqlitePool) -> Result<Vec<PostRecord>, String> {
-    let now_rfc3339 = Utc::now().to_rfc3339();
+    let now = Utc::now();
+    let now_rfc3339 = now.to_rfc3339();
     let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
                 scheduled_at, image_path, images, ig_media_id, account_id, published_url,
@@ -81,27 +84,44 @@ pub async fn list_due_for_publish(pool: &SqlitePool) -> Result<Vec<PostRecord>, 
            AND scheduled_at IS NOT NULL
            AND scheduled_at <= ?
            AND failed_attempts < ?
-           AND (
-               last_attempt_at IS NULL
-               OR datetime(last_attempt_at, '+' || (
-                   CASE failed_attempts
-                       WHEN 0 THEN 0
-                       WHEN 1 THEN 5
-                       WHEN 2 THEN 30
-                       ELSE 120
-                   END
-               ) || ' minutes') <= datetime(?)
-           )
          ORDER BY scheduled_at ASC",
     )
     .bind(&now_rfc3339)
     .bind(MAX_FAILED_ATTEMPTS)
-    .bind(&now_rfc3339)
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?;
 
-    rows.iter().map(row_to_post_record).collect()
+    let due = rows
+        .iter()
+        .map(row_to_post_record)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|post| backoff_window_elapsed(post, now))
+        .collect();
+    Ok(due)
+}
+
+/// Returns true when `post` has either never been attempted or its
+/// `last_attempt_at + BACKOFF_MINUTES[failed_attempts]` is now in the
+/// past. Indexing is saturated so an unexpected `failed_attempts`
+/// above the table length falls back to the longest backoff (defensive,
+/// list_due already filters `failed_attempts < MAX_FAILED_ATTEMPTS`).
+fn backoff_window_elapsed(post: &PostRecord, now: chrono::DateTime<Utc>) -> bool {
+    let Some(last_attempt) = post.last_attempt_at.as_deref() else {
+        return true;
+    };
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(last_attempt) else {
+        // Malformed timestamp — fail open so the post can be retried;
+        // the actual publish call will surface any real problem.
+        return true;
+    };
+    let attempts_idx = post.failed_attempts.max(0) as usize;
+    let window_min = BACKOFF_MINUTES
+        .get(attempts_idx)
+        .copied()
+        .unwrap_or_else(|| *BACKOFF_MINUTES.last().unwrap_or(&0));
+    parsed.with_timezone(&Utc) + chrono::Duration::minutes(window_min) <= now
 }
 
 /// Flip a draft to `status = 'publishing'` atomically. Used by the
@@ -136,18 +156,23 @@ pub async fn try_lock_for_publish(pool: &SqlitePool, post_id: i64) -> Result<boo
 /// or flip to `'failed'` when we've exhausted the budget.
 ///
 /// Should be called by the scheduler in PR F2 when the actual publish
-/// call (`publish_post` / `publish_linkedin_post`) returned `Err`.
+/// call (`publish_post` / `publish_linkedin_post`) returned `Err`. The
+/// `WHERE status = 'publishing'` guard mirrors [`try_lock_for_publish`]:
+/// only an in-flight publish can fail. If the caller is racing — e.g.
+/// a user manually rescheduled the row between lock and failure — the
+/// UPDATE affects zero rows and we return [`PublishFailureOutcome::Skipped`]
+/// so the scheduler can log the no-op without corrupting retry state.
+///
+/// Uses `UPDATE ... RETURNING` to fold the state read into the same
+/// statement (1 round-trip instead of 2) and to keep the "before vs
+/// after" of `failed_attempts` from being split across two queries.
 #[allow(dead_code)]
 pub async fn mark_publish_attempt_failed(
     pool: &SqlitePool,
     post_id: i64,
 ) -> Result<PublishFailureOutcome, String> {
     let now = Utc::now().to_rfc3339();
-    // Single UPDATE that does the accounting: the CASE flips the
-    // status to 'failed' once the increment crosses MAX_FAILED_ATTEMPTS,
-    // otherwise returns the row to draft so the next polling pass can
-    // pick it up after the backoff window.
-    sqlx::query(
+    let row: Option<(i64, String)> = sqlx::query_as(
         "UPDATE post_history
          SET failed_attempts = failed_attempts + 1,
              last_attempt_at = ?,
@@ -155,28 +180,22 @@ pub async fn mark_publish_attempt_failed(
                  WHEN failed_attempts + 1 >= ? THEN 'failed'
                  ELSE 'draft'
              END
-         WHERE id = ?",
+         WHERE id = ? AND status = 'publishing'
+         RETURNING failed_attempts, status",
     )
     .bind(&now)
     .bind(MAX_FAILED_ATTEMPTS)
     .bind(post_id)
-    .execute(pool)
+    .fetch_optional(pool)
     .await
     .map_err(|e| e.to_string())?;
 
-    // Look up the new state to tell the scheduler whether to schedule a
-    // retry or surface a final-failure notification.
-    let (failed_attempts, status): (i64, String) =
-        sqlx::query_as("SELECT failed_attempts, status FROM post_history WHERE id = ?")
-            .bind(post_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| e.to_string())?;
-
-    if status == "failed" {
-        Ok(PublishFailureOutcome::GaveUp { failed_attempts })
-    } else {
-        Ok(PublishFailureOutcome::WillRetry { failed_attempts })
+    match row {
+        None => Ok(PublishFailureOutcome::Skipped),
+        Some((failed_attempts, status)) if status == "failed" => {
+            Ok(PublishFailureOutcome::GaveUp { failed_attempts })
+        }
+        Some((failed_attempts, _)) => Ok(PublishFailureOutcome::WillRetry { failed_attempts }),
     }
 }
 
@@ -184,25 +203,34 @@ pub async fn mark_publish_attempt_failed(
 /// that previously failed N times — they've presumably fixed the
 /// underlying problem (reconnected account, etc.) and want a fresh
 /// budget. Called by the Calendar reschedule flow in PR F3.
+///
+/// The `WHERE status IN ('draft', 'failed')` guard is critical: without
+/// it a misfired reset on a `'published'` row would silently un-publish
+/// it from the user's perspective, and a reset on a `'publishing'` row
+/// would race the scheduler. Returns `true` when exactly one row was
+/// reset, `false` when the guard rejected the call (already published,
+/// currently publishing, or unknown id) so the caller can surface the
+/// no-op to the user.
 #[allow(dead_code)]
-pub async fn reset_retry_state(pool: &SqlitePool, post_id: i64) -> Result<(), String> {
-    sqlx::query(
+pub async fn reset_retry_state(pool: &SqlitePool, post_id: i64) -> Result<bool, String> {
+    let result = sqlx::query(
         "UPDATE post_history
          SET failed_attempts = 0,
              last_attempt_at = NULL,
              status = 'draft'
-         WHERE id = ?",
+         WHERE id = ? AND status IN ('draft', 'failed')",
     )
     .bind(post_id)
     .execute(pool)
     .await
-    .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    Ok(result.rows_affected() == 1)
 }
 
 /// Outcome reported by [`mark_publish_attempt_failed`]. Tells the
-/// scheduler whether the post is still in the retry budget or has
-/// been flipped to a permanent `'failed'` state.
+/// scheduler whether the post is still in the retry budget, has been
+/// flipped to a permanent `'failed'` state, or no action was taken
+/// because the row was not in `'publishing'` status.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublishFailureOutcome {
@@ -215,6 +243,10 @@ pub enum PublishFailureOutcome {
     /// account / reschedule manually). The scheduler should surface
     /// this via a desktop notification.
     GaveUp { failed_attempts: i64 },
+    /// No-op: the row was not in `'publishing'` status, so no retry
+    /// state was touched. The scheduler should log this (typically a
+    /// race with a manual reschedule) and move on without notifying.
+    Skipped,
 }
 
 #[cfg(test)]
@@ -373,20 +405,32 @@ mod tests {
         );
     }
 
+    /// Move a row from 'draft' through 'publishing' the way the real
+    /// scheduler does, so `mark_publish_attempt_failed` (which now
+    /// requires `status = 'publishing'`) sees the correct precondition.
+    async fn lock_for_test(pool: &SqlitePool, id: i64) {
+        let locked = try_lock_for_publish(pool, id).await.expect("lock");
+        assert!(locked, "test setup expected fresh draft to lock cleanly");
+    }
+
     #[tokio::test]
     async fn mark_failed_returns_will_retry_until_threshold() {
         // First two failures → WillRetry, third → GaveUp. The status
         // flip to 'failed' must happen exactly at the threshold and
-        // not one attempt early or late.
+        // not one attempt early or late. Each iteration re-locks
+        // because the row goes back to 'draft' between attempts.
         let pool = fresh_pool().await;
         let id = insert_scheduled(&pool, -5, 0, None).await;
 
+        lock_for_test(&pool, id).await;
         let r1 = mark_publish_attempt_failed(&pool, id).await.expect("1");
         assert_eq!(r1, PublishFailureOutcome::WillRetry { failed_attempts: 1 });
 
+        lock_for_test(&pool, id).await;
         let r2 = mark_publish_attempt_failed(&pool, id).await.expect("2");
         assert_eq!(r2, PublishFailureOutcome::WillRetry { failed_attempts: 2 });
 
+        lock_for_test(&pool, id).await;
         let r3 = mark_publish_attempt_failed(&pool, id).await.expect("3");
         assert_eq!(r3, PublishFailureOutcome::GaveUp { failed_attempts: 3 });
 
@@ -396,6 +440,31 @@ mod tests {
             .await
             .expect("get");
         assert_eq!(status, "failed");
+    }
+
+    #[tokio::test]
+    async fn mark_failed_skips_when_status_is_not_publishing() {
+        // Regression: caller mis-fires mark_publish_attempt_failed on
+        // a draft row (e.g. another worker already unlocked, or the
+        // user rescheduled between lock and dispatch). The guard must
+        // prevent corrupting retry state — failed_attempts stays put.
+        let pool = fresh_pool().await;
+        let id = insert_scheduled(&pool, -5, 0, None).await;
+
+        let outcome = mark_publish_attempt_failed(&pool, id).await.expect("mark");
+        assert_eq!(outcome, PublishFailureOutcome::Skipped);
+
+        let (failed_attempts, status): (i64, String) =
+            sqlx::query_as("SELECT failed_attempts, status FROM post_history WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("get");
+        assert_eq!(
+            failed_attempts, 0,
+            "guard must protect failed_attempts from misfire"
+        );
+        assert_eq!(status, "draft");
     }
 
     #[tokio::test]
@@ -414,7 +483,8 @@ mod tests {
             .await
             .expect("flip to failed");
 
-        reset_retry_state(&pool, id).await.expect("reset");
+        let reset_ok = reset_retry_state(&pool, id).await.expect("reset");
+        assert!(reset_ok, "reset on a failed row must succeed");
 
         let row: (String, i64, Option<String>) = sqlx::query_as(
             "SELECT status, failed_attempts, last_attempt_at \
@@ -430,12 +500,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reset_retry_state_rejects_published_row() {
+        // Critical regression: an accidental reset call on a published
+        // post must NOT silently un-publish it from the user's POV.
+        // The guard catches it and reports the no-op via `false`.
+        let pool = fresh_pool().await;
+        let id = insert_scheduled(&pool, -60, 0, None).await;
+        sqlx::query("UPDATE post_history SET status = 'published', published_at = ? WHERE id = ?")
+            .bind(Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("flip to published");
+
+        let reset_ok = reset_retry_state(&pool, id).await.expect("reset");
+        assert!(
+            !reset_ok,
+            "reset on a published row must report no-op, not lie about success"
+        );
+
+        let status: String = sqlx::query_scalar("SELECT status FROM post_history WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("get");
+        assert_eq!(status, "published", "published row must stay published");
+    }
+
+    #[tokio::test]
+    async fn reset_retry_state_rejects_publishing_row() {
+        // Race protection: a reset issued while the scheduler holds
+        // the row in 'publishing' must not blow away its lock.
+        let pool = fresh_pool().await;
+        let id = insert_scheduled(&pool, -5, 0, None).await;
+        lock_for_test(&pool, id).await;
+
+        let reset_ok = reset_retry_state(&pool, id).await.expect("reset");
+        assert!(!reset_ok, "reset must not race the scheduler's lock");
+
+        let status: String = sqlx::query_scalar("SELECT status FROM post_history WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("get");
+        assert_eq!(status, "publishing");
+    }
+
+    #[tokio::test]
     async fn backoff_minutes_table_matches_documented_policy() {
         // Lock the documented policy in code. Changing the constants
         // is fine, but it must be a conscious change visible in this
         // test's diff — not a silent drift between docs and implementation.
         assert_eq!(BACKOFF_MINUTES, [0, 5, 30, 120]);
         assert_eq!(MAX_FAILED_ATTEMPTS, 3);
-        assert_eq!(BACKOFF_MINUTES.len() as i64, MAX_FAILED_ATTEMPTS + 1);
+        // Backoff table must cover index 0..=MAX_FAILED_ATTEMPTS inclusive
+        // so backoff_window_elapsed never reads out of bounds.
+        assert!(BACKOFF_MINUTES.len() as i64 > MAX_FAILED_ATTEMPTS);
     }
 }
