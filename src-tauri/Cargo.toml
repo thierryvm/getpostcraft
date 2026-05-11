@@ -23,6 +23,11 @@ tauri-plugin-opener = "2"
 tauri-plugin-log = { version = "2", features = ["colored"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Desktop notifications fired by the background scheduler (PR F2) when an
+# auto-publish exhausts its retry budget. Already a transitive dep via
+# the Tauri plugin tree, declared explicitly so the scheduler module can
+# import `NotificationExt` directly.
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "5"
@@ -50,6 +55,11 @@ regex = "1"
 # macOS Keychain, Linux Secret Service (gnome-keyring / KWallet).
 # Replaces the previous plain-text api_keys.json. ADR-009 documents the choice.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# Async trait dispatch for the scheduler's PublishDispatcher seam — lets
+# tick() be tested with a mock without standing up a real AppHandle.
+# Already a transitive dep via sqlx; declared explicitly to make the
+# scheduler's intent visible.
+async-trait = "0.1"
 
 [dev-dependencies]
 # HTTP mock server for testing publish_post / publish_linkedin_post without
