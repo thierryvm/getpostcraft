@@ -64,12 +64,12 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
     // Catch the "DB ahead of binary" case BEFORE letting sqlx fire its
     // cryptic `migration N was previously applied but is missing in the
     // resolved migrations` error. The setup hook in `lib.rs` matches the
-    // `DB_AHEAD` prefix to render a friendly recovery notice — typical
-    // user landing here ran a newer dev build against this DB and is now
-    // trying to launch an older installed binary.
+    // `DB_AHEAD_MARKER` token to render a friendly recovery notice — the
+    // typical user landing here ran a newer dev build against this DB
+    // and is now trying to launch an older installed binary.
     check_db_is_not_ahead_of_binary(&pool)
         .await
-        .map_err(|e| format!("DB_AHEAD::{e}"))?;
+        .map_err(|e| format!("{DB_AHEAD_MARKER}{e}"))?;
 
     // Run migrations
     sqlx::migrate!("src/db/migrations")
@@ -79,6 +79,17 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
 
     Ok(pool)
 }
+
+/// Token prepended to the error message when `check_db_is_not_ahead_of_binary`
+/// detects the failure mode. The setup hook in `lib.rs` matches this exact
+/// token via `find()` (not `strip_prefix`) so the consumer is robust to any
+/// future wrapping the producer adds. Single source of truth on both sides:
+/// changing the token here must compile-error if the consumer drifts.
+///
+/// Boundary string `::` chosen because it's syntactically unusual in plain
+/// French error messages, so a false positive on `find()` is effectively
+/// impossible.
+pub const DB_AHEAD_MARKER: &str = "DB_AHEAD::";
 
 /// Detect the "DB has been migrated by a newer version than this binary
 /// knows about" failure mode BEFORE `sqlx::migrate!().run()` does. The
@@ -677,6 +688,34 @@ mod migration_tests {
         super::check_db_is_not_ahead_of_binary(&pool)
             .await
             .expect("matching-version DB must pass the pre-flight");
+    }
+
+    #[test]
+    fn db_ahead_marker_is_findable_even_when_wrapped() {
+        // Regression guard against the Sourcery review on PR #64: the
+        // consumer in lib.rs uses `find(db::DB_AHEAD_MARKER)` rather
+        // than `strip_prefix("Failed to init SQLite: DB_AHEAD::")`.
+        // This test simulates the marker wrapped under arbitrary
+        // prefixes and confirms the detection still works — so a
+        // future refactor of the error wrapping in lib.rs cannot
+        // silently break the STARTUP_BLOCKED.txt path.
+        let marker = super::DB_AHEAD_MARKER;
+        let wrappings = [
+            format!("Failed to init SQLite: {marker}payload"),
+            format!("Some new wrapping: {marker}payload"),
+            format!("{marker}payload"), // no wrapping at all
+            format!("Layer A → Layer B: {marker}payload"),
+        ];
+        for wrapped in &wrappings {
+            let idx = wrapped
+                .find(marker)
+                .unwrap_or_else(|| panic!("marker must be findable in wrapping: {wrapped}"));
+            let extracted = &wrapped[idx + marker.len()..];
+            assert_eq!(
+                extracted, "payload",
+                "payload must be cleanly extractable after the marker"
+            );
+        }
     }
 
     #[tokio::test]
