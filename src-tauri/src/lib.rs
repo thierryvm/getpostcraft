@@ -12,6 +12,40 @@ mod token_store;
 pub use state::AppState;
 use tauri::Manager;
 
+/// Write a self-explanatory `STARTUP_BLOCKED.txt` next to `app.db` when
+/// the DB-ahead-of-binary pre-flight check fails. The user can't read
+/// the log file from a crashed app; a plain-text file in the data dir
+/// that double-clicks open in Notepad is the lowest-friction notice we
+/// can deliver without bringing up a WebView.
+///
+/// Best-effort: I/O failures are silently swallowed (the log already
+/// has the same content; the file is the cherry on top, not the only
+/// signal).
+fn write_startup_blocked_notice(payload: &str) {
+    let Some(data_dir) = dirs::data_dir() else {
+        return;
+    };
+    let dir = data_dir.join("getpostcraft");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("STARTUP_BLOCKED.txt");
+    let now = chrono::Utc::now().to_rfc3339();
+    let body = format!(
+        "Getpostcraft n'a pas pu démarrer\n\
+         ===============================\n\n\
+         Date du blocage : {now}\n\n\
+         {payload}\n\n\
+         Détails techniques dans le log :\n\
+         %LOCALAPPDATA%\\app.getpostcraft\\logs\\app.log (Windows)\n\
+         ~/Library/Logs/app.getpostcraft/app.log (macOS)\n\
+         ~/.local/share/app.getpostcraft/logs/app.log (Linux)\n\n\
+         Tu peux supprimer ce fichier après avoir résolu le problème — \n\
+         il sera recréé seulement si l'app re-bloque.\n"
+    );
+    let _ = std::fs::write(&path, body);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Install rustls CryptoProvider once at process level — required before any
@@ -78,6 +112,16 @@ pub fn run() {
 
             if let Err(e) = setup_result {
                 log::error!("Tauri setup failed: {e}");
+                // Special handler for the "DB ahead of binary" pre-flight
+                // failure surfaced by db::check_db_is_not_ahead_of_binary.
+                // The user can't read the log file from a crashed app; we
+                // write a self-explanatory text file to the data dir so
+                // double-clicking app.db's folder reveals the recovery
+                // path. Pure best-effort — if the write fails too we just
+                // fall through to the normal log-and-exit.
+                if let Some(payload) = e.strip_prefix("Failed to init SQLite: DB_AHEAD::") {
+                    write_startup_blocked_notice(payload);
+                }
                 return Err(e.into());
             }
 

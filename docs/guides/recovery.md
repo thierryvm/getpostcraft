@@ -52,6 +52,28 @@ If you're stuck on an older version that crashes with this:
    (`CREATE TABLE IF NOT EXISTS`, `INSERT OR IGNORE`, …).
 4. Upgrade to v0.3.6+ as soon as practical so the fix lands.
 
+### "migration N was previously applied but is missing in the resolved migrations" — or a `STARTUP_BLOCKED.txt` file appeared
+
+Means your installed binary is **older** than the binary that last
+wrote to this DB. Typical scenario : you ran `npm run tauri dev` (a
+newer dev build) which applied a fresh migration, then tried to
+relaunch the installed app, which doesn't know about that migration.
+
+**Since v0.3.9.1**, the app writes
+`%APPDATA%\getpostcraft\STARTUP_BLOCKED.txt` (Windows) /
+`~/Library/Application Support/getpostcraft/STARTUP_BLOCKED.txt`
+(macOS) / `~/.local/share/getpostcraft/STARTUP_BLOCKED.txt` (Linux)
+when this fires. Double-click that file — the message tells you which
+migration version is ahead and links to the recovery URL.
+
+**One-step fix** : download the latest binary from
+[github.com/thierryvm/getpostcraft/releases/latest](https://github.com/thierryvm/getpostcraft/releases/latest)
+and install it over the current one. The installer never touches
+`app.db`, so your data stays intact.
+
+Pre-v0.3.9.1 binaries only log the cryptic message in `app.log` (no
+`STARTUP_BLOCKED.txt`). Same fix applies.
+
 ### "Failed to init SQLite: …" (other errors)
 
 The schema may be corrupt. Roll back:

@@ -61,6 +61,16 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         .await
         .map_err(|e| format!("Failed to heal migration checksums: {e}"))?;
 
+    // Catch the "DB ahead of binary" case BEFORE letting sqlx fire its
+    // cryptic `migration N was previously applied but is missing in the
+    // resolved migrations` error. The setup hook in `lib.rs` matches the
+    // `DB_AHEAD` prefix to render a friendly recovery notice — typical
+    // user landing here ran a newer dev build against this DB and is now
+    // trying to launch an older installed binary.
+    check_db_is_not_ahead_of_binary(&pool)
+        .await
+        .map_err(|e| format!("DB_AHEAD::{e}"))?;
+
     // Run migrations
     sqlx::migrate!("src/db/migrations")
         .run(&pool)
@@ -68,6 +78,64 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
         .map_err(|e| e.to_string())?;
 
     Ok(pool)
+}
+
+/// Detect the "DB has been migrated by a newer version than this binary
+/// knows about" failure mode BEFORE `sqlx::migrate!().run()` does. The
+/// stock sqlx error message — `migration 18 was previously applied but
+/// is missing in the resolved migrations` — assumes the reader knows
+/// what "resolved migrations" means; in our user base that's nobody.
+///
+/// Compares the highest version recorded in `_sqlx_migrations` against
+/// the highest version embedded in this binary via the `sqlx::migrate!()`
+/// macro. If the DB exceeds the binary, returns a French error string
+/// the setup hook surfaces verbatim in `STARTUP_BLOCKED.txt` so the user
+/// can read it without opening the log file.
+///
+/// Returns Ok in three normal cases:
+///   - Brand-new install (no `_sqlx_migrations` table yet).
+///   - DB at or behind the embedded set (the regular upgrade path).
+///   - Empty `_sqlx_migrations` table (unusual but not a fault here).
+async fn check_db_is_not_ahead_of_binary(pool: &SqlitePool) -> Result<(), String> {
+    // Bail on fresh installs where `_sqlx_migrations` doesn't exist —
+    // `migrate!().run()` will create it.
+    let table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    if table_exists == 0 {
+        return Ok(());
+    }
+
+    let db_max_version: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    let Some(db_max) = db_max_version else {
+        return Ok(()); // Empty migrations table — nothing to compare.
+    };
+
+    let binary_max = sqlx::migrate!("src/db/migrations")
+        .iter()
+        .map(|m| m.version)
+        .max()
+        .unwrap_or(0);
+
+    if db_max > binary_max {
+        return Err(format!(
+            "La base de données a été migrée par une version plus récente de \
+             Getpostcraft (migration {db_max} appliquée), mais ce binaire ne \
+             connaît que jusqu'à la migration {binary_max}. \n\n\
+             Pour réparer, télécharge la dernière version sur \
+             https://github.com/thierryvm/getpostcraft/releases/latest et \
+             installe-la par-dessus. Tes données sont intactes — l'installer \
+             ne touche jamais à app.db."
+        ));
+    }
+    Ok(())
 }
 
 /// Number of pre-migration snapshots kept on disk. Three balances disk cost
@@ -583,6 +651,73 @@ mod migration_tests {
         assert!(
             cols.contains(&"token_expires_at".to_string()),
             "migration 014 must add token_expires_at column, got: {cols:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn db_ahead_check_passes_on_fresh_install() {
+        // No `_sqlx_migrations` table yet → check_db_is_not_ahead_of_binary
+        // must short-circuit Ok so the regular migrate.run() path can
+        // create the table and apply migrations cleanly.
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        super::check_db_is_not_ahead_of_binary(&pool)
+            .await
+            .expect("fresh install must pass the DB-ahead pre-flight");
+    }
+
+    #[tokio::test]
+    async fn db_ahead_check_passes_when_db_matches_binary() {
+        // Regular healthy case: DB and binary both at the latest embedded
+        // migration version. No-op pass-through.
+        let pool = fresh_migrated_pool().await;
+        super::check_db_is_not_ahead_of_binary(&pool)
+            .await
+            .expect("matching-version DB must pass the pre-flight");
+    }
+
+    #[tokio::test]
+    async fn db_ahead_check_blocks_when_db_has_future_migration() {
+        // Reproduces the v0.3.8 ← v0.3.9 dev workflow crash: the user
+        // ran a newer dev build that recorded a migration this older
+        // binary doesn't know about. The bare sqlx error
+        // ("migration N was previously applied but is missing in the
+        // resolved migrations") is cryptic; this guard catches the
+        // case earlier and returns a French user-facing message.
+        let pool = fresh_migrated_pool().await;
+
+        // Inject a future migration row to simulate the dev-binary
+        // having applied something newer than what this test binary
+        // embeds. Use a version far above any plausible real migration.
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations \
+                (version, description, installed_on, success, checksum, execution_time) \
+             VALUES (9999, 'future_test_migration', '2099-01-01T00:00:00Z', 1, X'00', 0)",
+        )
+        .execute(&pool)
+        .await
+        .expect("inject future migration row");
+
+        let err = super::check_db_is_not_ahead_of_binary(&pool)
+            .await
+            .expect_err("DB at v9999 must fail the pre-flight");
+
+        // The message must mention the version mismatch and the recovery
+        // URL — these are what the user sees in STARTUP_BLOCKED.txt.
+        assert!(
+            err.contains("9999"),
+            "error must surface the DB's migration version, got: {err}"
+        );
+        assert!(
+            err.contains("github.com/thierryvm/getpostcraft/releases/latest"),
+            "error must point the user to the recovery URL, got: {err}"
+        );
+        assert!(
+            err.contains("app.db"),
+            "error must reassure the user data is intact, got: {err}"
         );
     }
 
