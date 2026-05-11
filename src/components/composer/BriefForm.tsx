@@ -74,7 +74,18 @@ export function BriefForm() {
   // submit-time fallback below (`resolveAccountIds`) closes the race
   // window where a user clicks Generate before this effect has caught
   // up with their latest checkbox toggle.
+  //
+  // The account key is derived from the (provider, id) pairs, not just
+  // `length`. If the user disconnects an Instagram account in Settings
+  // and reconnects a different one with the same provider, the length
+  // stays the same but the auto-select must re-evaluate — the stable
+  // composite key catches that case where a bare `length` dep would
+  // miss it (Sourcery review on PR #61).
   const selectedKey = Array.from(selectedNetworks).sort().join(",");
+  const accountsKey = allAccounts
+    .map((a) => `${a.provider}:${a.id}`)
+    .sort()
+    .join(",");
   useEffect(() => {
     for (const net of selectedNetworks) {
       const matches = allAccounts.filter((a) => a.provider === net);
@@ -93,7 +104,7 @@ export function BriefForm() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedKey, allAccounts.length]);
+  }, [selectedKey, accountsKey]);
 
   /**
    * Defensive resolver used at submit time. The useEffect above auto-selects

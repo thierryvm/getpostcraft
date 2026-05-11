@@ -8,6 +8,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.3.9] — 2026-05-11
+
 ### Added — multi-network composer (v0.3.9 stack)
 - **Migration 018 + `db::groups`** (PR #56) — sibling-row model that
   lets one Composer pass produce N drafts (one per network) bound by
@@ -71,6 +73,32 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   visual weights (inline pill for list rows, chip for detail
   headers). NULL group_id renders nothing — legacy mono-network
   rows are untouched.
+
+### Fixed — post-smoke hotfixes
+- **Cryptic JSON parse errors** (PR #60) — `_parse_json_response` in
+  the sidecar now surfaces the raw model response (first 200 chars)
+  when the model returns empty or malformed JSON, plus a French
+  user-facing explanation listing likely causes (URL-fetch demand,
+  content-policy refusal, rate limit). Replaces the bare
+  `Expecting value: line 1 column 1 (char 0)` traceback that gave
+  no actionable info.
+- **Select trigger displayed "✓ Product Truth" inside the dropdown
+  label** (PR #60) — Radix's `<SelectValue />` was rendering the
+  full `<SelectItem />` children inside the trigger. Split:
+  `SelectItem` = `@handle` only, Product Truth status is a separate
+  line below the Select (orange warning for missing-truth, primary
+  green for loaded).
+- **Race on account auto-select** (PR #61) — a user clicking
+  Générer in the same frame as their last network toggle could
+  outrun the useEffect that auto-picks the single-match account.
+  Defensive submit-time resolver re-reads the canonical answer
+  (one matching account = pre-select it) synchronously, forwards
+  to the Tauri command + back to the store. Networks with 0 or
+  2+ matches keep their existing pick untouched.
+- **Composer responsive breakpoint dropped from `lg:` (1024px) to
+  `md:` (768px)** (PR #61) — narrow Tauri windows now show the
+  brief sidebar + preview pane side-by-side instead of stacking
+  vertically and pushing the preview off-screen.
 
 ### Security notes
 - API key resolved once from the keychain and passed by reference
