@@ -385,3 +385,130 @@ pub async fn call_render_sidecar(
             .unwrap_or_else(|| "Unknown render sidecar error".to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── IPC contract tests ───────────────────────────────────────────────────
+    //
+    // The sidecar protocol is text JSON over stdin/stdout. Tests in this
+    // module lock the SERDE shape of every public type so accidental
+    // additions / renames / type changes are caught before they break
+    // the Python sidecar at runtime. We do NOT spawn a real Python
+    // process here — those would be integration tests and require a
+    // working Python install in CI. The serialisation contract is
+    // exactly the surface that matters for cross-language stability.
+
+    #[test]
+    fn sidecar_request_serialises_with_all_fields() {
+        // Lock the wire format: every Python-side field must be present
+        // in the JSON we send. Renaming a field on the Rust side without
+        // updating the sidecar would silently break generation calls.
+        let req = SidecarRequest {
+            action: "generate_content".to_string(),
+            provider: "openrouter".to_string(),
+            api_key: Some("sk-or-test".to_string()),
+            model: "anthropic/claude-sonnet-4.6".to_string(),
+            base_url: None,
+            brief: "Test brief".to_string(),
+            network: "instagram".to_string(),
+            system_prompt: "You are an IG expert.".to_string(),
+        };
+        let json = serde_json::to_string(&req).expect("serialise");
+        // Single contract assertion per field — duplicating the JSON
+        // string verbatim makes the test verbose and brittle against
+        // formatting changes.
+        for needle in [
+            r#""action":"generate_content""#,
+            r#""provider":"openrouter""#,
+            r#""api_key":"sk-or-test""#,
+            r#""model":"anthropic/claude-sonnet-4.6""#,
+            r#""base_url":null"#,
+            r#""brief":"Test brief""#,
+            r#""network":"instagram""#,
+            r#""system_prompt":"You are an IG expert.""#,
+        ] {
+            assert!(
+                json.contains(needle),
+                "wire JSON missing {needle}, got: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn sidecar_request_serialises_api_key_none_as_null() {
+        // SECURITY: Ollama / local-only flows pass `None` for api_key.
+        // serde must emit `null`, not omit the field — the sidecar
+        // distinguishes "key not provided" from "key absent" via the
+        // explicit null. Skipping the field could silently look up an
+        // env-var fallback on the Python side, which is not what we
+        // want.
+        let req = SidecarRequest {
+            action: "generate_content".to_string(),
+            provider: "ollama".to_string(),
+            api_key: None,
+            model: "llama3".to_string(),
+            base_url: Some("http://localhost:11434/v1".to_string()),
+            brief: "x".repeat(10),
+            network: "instagram".to_string(),
+            system_prompt: "p".to_string(),
+        };
+        let json = serde_json::to_string(&req).expect("serialise");
+        assert!(
+            json.contains(r#""api_key":null"#),
+            "api_key=None must serialise as `null`, got: {json}"
+        );
+    }
+
+    #[test]
+    fn sidecar_data_deserialises_with_usage_field() {
+        // Cost tracker contract: the sidecar's generate_content
+        // response carries token counts under `usage`. The Rust side
+        // persists those into ai_usage. Schema drift here breaks the
+        // cost panel silently (no error, just zero usage logged).
+        let payload = r#"{
+            "caption": "Hello world",
+            "hashtags": ["tag1","tag2"],
+            "usage": {"input_tokens": 123, "output_tokens": 456}
+        }"#;
+        let data: SidecarData = serde_json::from_str(payload).expect("deserialise");
+        assert_eq!(data.caption, "Hello world");
+        assert_eq!(data.hashtags, vec!["tag1".to_string(), "tag2".to_string()]);
+        let usage = data.usage.expect("usage present");
+        assert_eq!(usage.input_tokens, 123);
+        assert_eq!(usage.output_tokens, 456);
+    }
+
+    #[test]
+    fn sidecar_data_deserialises_without_usage_for_legacy_sidecars() {
+        // Older sidecar builds don't emit `usage`. The Rust side has
+        // `#[serde(default)] Option<TokenUsage>` — those calls must
+        // still parse cleanly. If serde started rejecting missing
+        // usage, every BYOK user on a stale sidecar would see all AI
+        // calls fail until they update — silent breakage class.
+        let payload = r#"{"caption":"hi","hashtags":[]}"#;
+        let data: SidecarData = serde_json::from_str(payload).expect("deserialise legacy");
+        assert_eq!(data.caption, "hi");
+        assert!(data.hashtags.is_empty());
+        assert!(data.usage.is_none());
+    }
+
+    #[test]
+    fn token_usage_defaults_to_zero_when_field_missing() {
+        // serde `#[serde(default)]` on TokenUsage fields means a
+        // half-populated `usage` (e.g. provider returns only input
+        // tokens) parses with the missing field at 0 rather than
+        // erroring out. Verify the default explicitly so a future
+        // refactor that drops the attribute is caught.
+        let only_input = r#"{"input_tokens": 100}"#;
+        let usage: TokenUsage = serde_json::from_str(only_input).expect("partial usage");
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 0);
+
+        let empty = r#"{}"#;
+        let usage: TokenUsage = serde_json::from_str(empty).expect("empty usage");
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+    }
+}
