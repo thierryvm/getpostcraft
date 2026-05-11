@@ -39,6 +39,19 @@ pub struct PostRecord {
     /// calendar uses this to surface a "Groupe · N posts" badge so the
     /// user can see at a glance which drafts were generated together.
     pub group_id: Option<i64>,
+    /// Count of consecutive failed publish attempts (v0.4.0 scheduler).
+    /// The retry policy backs off 5 min / 30 min / 2 h and after
+    /// `db::scheduler::MAX_FAILED_ATTEMPTS` flips the row to
+    /// `status = 'failed'`. Default 0 on legacy rows and drafts that
+    /// have never been auto-published.
+    #[serde(default)]
+    pub failed_attempts: i64,
+    /// RFC 3339 UTC timestamp of the most recent publish attempt
+    /// (success or failure). Drives the backoff window check in
+    /// `db::scheduler::list_due_for_publish`. NULL on legacy rows and
+    /// drafts that have never been picked up by the scheduler.
+    #[serde(default)]
+    pub last_attempt_at: Option<String>,
 }
 
 pub async fn insert_draft(
@@ -79,7 +92,7 @@ pub async fn insert_draft(
 pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<PostRecord, String> {
     let row = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id, account_id, published_url, group_id
+                scheduled_at, image_path, images, ig_media_id, account_id, published_url, group_id, failed_attempts, last_attempt_at
          FROM post_history WHERE id = ?",
     )
     .bind(id)
@@ -112,7 +125,7 @@ pub async fn update_status(
 pub async fn list_recent(pool: &SqlitePool, limit: i64) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id, account_id, published_url, group_id
+                scheduled_at, image_path, images, ig_media_id, account_id, published_url, group_id, failed_attempts, last_attempt_at
          FROM post_history ORDER BY created_at DESC LIMIT ?",
     )
     .bind(limit)
@@ -151,7 +164,7 @@ pub async fn list_in_range(
 ) -> Result<Vec<PostRecord>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT DISTINCT id, network, caption, hashtags, status, created_at, published_at,
-                scheduled_at, image_path, images, ig_media_id, account_id, published_url, group_id
+                scheduled_at, image_path, images, ig_media_id, account_id, published_url, group_id, failed_attempts, last_attempt_at
          FROM post_history
          WHERE COALESCE(published_at, scheduled_at, created_at) BETWEEN ? AND ?
          ORDER BY COALESCE(published_at, scheduled_at, created_at) ASC",
@@ -287,6 +300,12 @@ pub(crate) fn row_to_post_record(r: &SqliteRow) -> Result<PostRecord, String> {
         account_id: r.try_get("account_id").ok().flatten(),
         published_url: r.try_get("published_url").ok().flatten(),
         group_id: r.try_get("group_id").ok().flatten(),
+        // New v0.4.0 columns — `unwrap_or` keeps legacy in-flight
+        // queries safe if a future refactor accidentally drops them
+        // from a SELECT list. SQLite NOT NULL DEFAULT 0 guarantees
+        // the column itself always has a real value on disk.
+        failed_attempts: r.try_get("failed_attempts").unwrap_or(0),
+        last_attempt_at: r.try_get("last_attempt_at").ok().flatten(),
     })
 }
 
