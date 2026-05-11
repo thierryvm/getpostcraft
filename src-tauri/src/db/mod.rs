@@ -81,15 +81,29 @@ pub async fn init_pool() -> Result<SqlitePool, String> {
 }
 
 /// Token prepended to the error message when `check_db_is_not_ahead_of_binary`
-/// detects the failure mode. The setup hook in `lib.rs` matches this exact
-/// token via `find()` (not `strip_prefix`) so the consumer is robust to any
-/// future wrapping the producer adds. Single source of truth on both sides:
-/// changing the token here must compile-error if the consumer drifts.
+/// detects the failure mode. The setup hook in `lib.rs` extracts the payload
+/// via `extract_db_ahead_payload` (which uses `find()` not `strip_prefix`),
+/// so the consumer stays robust to any future wrapping the producer adds.
+/// Single source of truth on both sides: changing the token here must
+/// compile-error if the consumer drifts.
 ///
 /// Boundary string `::` chosen because it's syntactically unusual in plain
 /// French error messages, so a false positive on `find()` is effectively
 /// impossible.
 pub const DB_AHEAD_MARKER: &str = "DB_AHEAD::";
+
+/// Locate the `DB_AHEAD_MARKER` inside an arbitrary error string and return
+/// the payload following it, or `None` when the marker is absent.
+///
+/// Centralising the find-and-slice in one helper means `lib.rs` (the runtime
+/// consumer that writes `STARTUP_BLOCKED.txt`) and the regression test share
+/// the same extraction implementation. A future tweak — say trimming a
+/// trailing newline or stripping a leading colon — only has to land here
+/// (Sourcery review on PR #65).
+pub fn extract_db_ahead_payload(err: &str) -> Option<&str> {
+    err.find(DB_AHEAD_MARKER)
+        .map(|idx| &err[idx + DB_AHEAD_MARKER.len()..])
+}
 
 /// Detect the "DB has been migrated by a newer version than this binary
 /// knows about" failure mode BEFORE `sqlx::migrate!().run()` does. The
@@ -691,14 +705,14 @@ mod migration_tests {
     }
 
     #[test]
-    fn db_ahead_marker_is_findable_even_when_wrapped() {
-        // Regression guard against the Sourcery review on PR #64: the
-        // consumer in lib.rs uses `find(db::DB_AHEAD_MARKER)` rather
-        // than `strip_prefix("Failed to init SQLite: DB_AHEAD::")`.
-        // This test simulates the marker wrapped under arbitrary
-        // prefixes and confirms the detection still works — so a
-        // future refactor of the error wrapping in lib.rs cannot
-        // silently break the STARTUP_BLOCKED.txt path.
+    fn db_ahead_payload_extracts_even_when_wrapped() {
+        // Regression guard against the Sourcery review on PR #64 / #65: the
+        // consumer in lib.rs uses `extract_db_ahead_payload(&err)` (shared
+        // helper) rather than `strip_prefix("Failed to init SQLite: DB_AHEAD::")`
+        // hardcoded inline. This test simulates the marker wrapped under
+        // arbitrary prefixes and confirms the helper still extracts the
+        // payload — so a future refactor of the error wrapping in lib.rs
+        // cannot silently break the STARTUP_BLOCKED.txt path.
         let marker = super::DB_AHEAD_MARKER;
         let wrappings = [
             format!("Failed to init SQLite: {marker}payload"),
@@ -707,13 +721,31 @@ mod migration_tests {
             format!("Layer A → Layer B: {marker}payload"),
         ];
         for wrapped in &wrappings {
-            let idx = wrapped
-                .find(marker)
-                .unwrap_or_else(|| panic!("marker must be findable in wrapping: {wrapped}"));
-            let extracted = &wrapped[idx + marker.len()..];
+            let extracted = super::extract_db_ahead_payload(wrapped)
+                .unwrap_or_else(|| panic!("marker must be extractable from: {wrapped}"));
             assert_eq!(
                 extracted, "payload",
                 "payload must be cleanly extractable after the marker"
+            );
+        }
+    }
+
+    #[test]
+    fn db_ahead_payload_returns_none_when_marker_absent() {
+        // Negative case: a plain Tauri setup failure that doesn't carry
+        // the DB_AHEAD marker must not match. Otherwise lib.rs would
+        // write STARTUP_BLOCKED.txt for unrelated errors and dilute the
+        // signal — the file is meant to mean exactly one thing.
+        let unrelated_errors = [
+            "Failed to init SQLite: out of disk space",
+            "Sidecar timeout",
+            "Tauri setup failed: window builder error",
+            "", // empty input edge case
+        ];
+        for err in unrelated_errors {
+            assert!(
+                super::extract_db_ahead_payload(err).is_none(),
+                "must not match an unrelated error: {err:?}"
             );
         }
     }
