@@ -122,14 +122,14 @@ pub fn run() {
                 // Pure best-effort — if the write fails too we just
                 // fall through to the normal log-and-exit.
                 //
-                // We `find()` the marker rather than `strip_prefix()`
-                // so the detection survives any future change to the
-                // upstream wrapping in `setup_result` (e.g. a different
-                // prefix than "Failed to init SQLite: "). The marker
-                // itself is the single source of truth, defined in
-                // `db::DB_AHEAD_MARKER` and prepended in `init_pool`.
-                if let Some(idx) = e.find(db::DB_AHEAD_MARKER) {
-                    let payload = &e[idx + db::DB_AHEAD_MARKER.len()..];
+                // `extract_db_ahead_payload` does the find-and-slice in
+                // a single helper shared with the regression test, so
+                // the detection survives any future change to the
+                // upstream wrapping in `setup_result` and any tweak to
+                // the extraction (trim, strip, normalise) lands in one
+                // place. Marker itself is the single source of truth
+                // (`db::DB_AHEAD_MARKER`) prepended in `init_pool`.
+                if let Some(payload) = db::extract_db_ahead_payload(&e) {
                     write_startup_blocked_notice(payload);
                 }
                 return Err(e.into());
