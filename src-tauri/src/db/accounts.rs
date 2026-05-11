@@ -205,3 +205,273 @@ pub async fn delete(pool: &SqlitePool, provider: &str, user_id: &str) -> Result<
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    /// Fresh in-memory pool with all migrations applied — same pattern as
+    /// `db::history::tests` and `db::groups::tests`. Each test gets its
+    /// own isolated DB because `:memory:` is connection-private and we
+    /// cap at `max_connections = 1`.
+    async fn fresh_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        sqlx::migrate!("src/db/migrations")
+            .run(&pool)
+            .await
+            .expect("migrations apply cleanly");
+        pool
+    }
+
+    async fn seed_account(pool: &SqlitePool, provider: &str, user_id: &str) -> Account {
+        upsert_and_get(
+            pool,
+            provider,
+            user_id,
+            &format!("user_{user_id}"),
+            Some(&format!("Display {user_id}")),
+            &format!("{provider}:{user_id}"),
+            Some("2099-12-31T23:59:59Z"),
+        )
+        .await
+        .expect("seed upsert")
+    }
+
+    #[tokio::test]
+    async fn upsert_inserts_new_account_and_returns_it() {
+        // First call with a brand-new (provider, user_id) tuple must
+        // INSERT and return the freshly-created row including the
+        // server-side id allocation.
+        let pool = fresh_pool().await;
+        let acc = seed_account(&pool, "instagram", "12345").await;
+
+        assert_eq!(acc.provider, "instagram");
+        assert_eq!(acc.user_id, "12345");
+        assert_eq!(acc.username, "user_12345");
+        assert_eq!(acc.display_name.as_deref(), Some("Display 12345"));
+        assert_eq!(acc.token_key, "instagram:12345");
+        assert_eq!(
+            acc.token_expires_at.as_deref(),
+            Some("2099-12-31T23:59:59Z")
+        );
+        // Nullable columns left blank on first insert.
+        assert!(acc.product_truth.is_none());
+        assert!(acc.brand_color.is_none());
+        assert!(acc.visual_profile.is_none());
+        assert!(acc.display_handle.is_none());
+    }
+
+    #[tokio::test]
+    async fn upsert_on_existing_account_updates_in_place() {
+        // The ON CONFLICT(provider, user_id) DO UPDATE branch must
+        // refresh mutable fields without changing the id. This is the
+        // OAuth re-connection flow — same Instagram account, new token,
+        // possibly new display name.
+        let pool = fresh_pool().await;
+        let first = seed_account(&pool, "instagram", "12345").await;
+
+        let updated = upsert_and_get(
+            &pool,
+            "instagram",
+            "12345",
+            "new_username",
+            Some("New Display"),
+            "instagram:12345_new_token_key",
+            Some("2100-01-01T00:00:00Z"),
+        )
+        .await
+        .expect("second upsert");
+
+        // Same row (no id rotation), refreshed fields.
+        assert_eq!(updated.id, first.id);
+        assert_eq!(updated.username, "new_username");
+        assert_eq!(updated.display_name.as_deref(), Some("New Display"));
+        assert_eq!(updated.token_key, "instagram:12345_new_token_key");
+        assert_eq!(
+            updated.token_expires_at.as_deref(),
+            Some("2100-01-01T00:00:00Z")
+        );
+    }
+
+    #[tokio::test]
+    async fn list_returns_all_accounts_ordered_by_created_at() {
+        let pool = fresh_pool().await;
+        let a = seed_account(&pool, "instagram", "111").await;
+        let b = seed_account(&pool, "linkedin", "222").await;
+        let c = seed_account(&pool, "instagram", "333").await;
+
+        let all = list(&pool).await.expect("list");
+        assert_eq!(all.len(), 3);
+        // Insertion order = creation order = list order.
+        assert_eq!(all[0].id, a.id);
+        assert_eq!(all[1].id, b.id);
+        assert_eq!(all[2].id, c.id);
+    }
+
+    #[tokio::test]
+    async fn get_by_id_returns_account_and_404s_on_missing() {
+        let pool = fresh_pool().await;
+        let acc = seed_account(&pool, "instagram", "12345").await;
+
+        let fetched = get_by_id(&pool, acc.id).await.expect("get_by_id hit");
+        assert_eq!(fetched.id, acc.id);
+        assert_eq!(fetched.user_id, "12345");
+
+        let err = get_by_id(&pool, 99999)
+            .await
+            .expect_err("missing id must return Err");
+        assert!(
+            err.contains("99999"),
+            "error should surface the id queried, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_product_truth_round_trips_and_clears() {
+        // SECURITY-ADJACENT: product_truth is content the AI prompts
+        // get conditioned on. A failed set or a silent revert would
+        // affect every future generation for that account. Round-trip
+        // verify both set + clear.
+        let pool = fresh_pool().await;
+        let acc = seed_account(&pool, "instagram", "12345").await;
+
+        update_product_truth(&pool, acc.id, Some("Brand X: minimalist DevOps"))
+            .await
+            .expect("set");
+        let after_set = get_by_id(&pool, acc.id).await.expect("get");
+        assert_eq!(
+            after_set.product_truth.as_deref(),
+            Some("Brand X: minimalist DevOps")
+        );
+
+        update_product_truth(&pool, acc.id, None)
+            .await
+            .expect("clear");
+        let after_clear = get_by_id(&pool, acc.id).await.expect("get");
+        assert!(after_clear.product_truth.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_branding_sets_both_colors_atomically() {
+        let pool = fresh_pool().await;
+        let acc = seed_account(&pool, "instagram", "12345").await;
+
+        update_branding(&pool, acc.id, Some("#0d1117"), Some("#3ddc84"))
+            .await
+            .expect("set both");
+        let after = get_by_id(&pool, acc.id).await.expect("get");
+        assert_eq!(after.brand_color.as_deref(), Some("#0d1117"));
+        assert_eq!(after.accent_color.as_deref(), Some("#3ddc84"));
+
+        // Clearing one but keeping the other — both Option<&str> are
+        // bound independently, so a single-clear is valid.
+        update_branding(&pool, acc.id, None, Some("#ff6b6b"))
+            .await
+            .expect("partial clear");
+        let after_partial = get_by_id(&pool, acc.id).await.expect("get");
+        assert!(after_partial.brand_color.is_none());
+        assert_eq!(after_partial.accent_color.as_deref(), Some("#ff6b6b"));
+    }
+
+    #[tokio::test]
+    async fn update_display_handle_overrides_and_clears() {
+        // Regression guard for migration 016: LinkedIn accounts get
+        // `username` populated with the owner's full personal name. The
+        // brand stamp on rendered visuals needs a separate handle.
+        // None clears, falling back to `username` at render time.
+        let pool = fresh_pool().await;
+        let acc = seed_account(&pool, "linkedin", "abc-xyz").await;
+
+        update_display_handle(&pool, acc.id, Some("terminallearning"))
+            .await
+            .expect("set");
+        let after_set = get_by_id(&pool, acc.id).await.expect("get");
+        assert_eq!(
+            after_set.display_handle.as_deref(),
+            Some("terminallearning")
+        );
+
+        update_display_handle(&pool, acc.id, None)
+            .await
+            .expect("clear");
+        let after_clear = get_by_id(&pool, acc.id).await.expect("get");
+        assert!(after_clear.display_handle.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_visual_profile_round_trips_and_clears() {
+        let pool = fresh_pool().await;
+        let acc = seed_account(&pool, "instagram", "12345").await;
+
+        let profile_json = r##"{"colors":["#0d1117","#3ddc84"],"mood":["tech"]}"##;
+        update_visual_profile(&pool, acc.id, Some(profile_json))
+            .await
+            .expect("set");
+        let after = get_by_id(&pool, acc.id).await.expect("get");
+        assert_eq!(after.visual_profile.as_deref(), Some(profile_json));
+
+        update_visual_profile(&pool, acc.id, None)
+            .await
+            .expect("clear");
+        let after_clear = get_by_id(&pool, acc.id).await.expect("get");
+        assert!(after_clear.visual_profile.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_removes_account_and_nulls_post_references() {
+        // SECURITY-ADJACENT: deleting an account must not leave
+        // dangling foreign keys in post_history. SQLite can't enforce
+        // ON DELETE SET NULL via ALTER TABLE ADD COLUMN (migration 013
+        // hotfix), so the cascade lives in this function. Verify it
+        // actually fires.
+        let pool = fresh_pool().await;
+        let acc = seed_account(&pool, "instagram", "12345").await;
+
+        // Insert a post pinned to this account.
+        sqlx::query(
+            "INSERT INTO post_history (network, caption, hashtags, status, created_at, \
+             images, account_id) VALUES ('instagram', 'test', '[]', 'draft', \
+             '2026-01-01T00:00:00Z', '[]', ?)",
+        )
+        .bind(acc.id)
+        .execute(&pool)
+        .await
+        .expect("insert post");
+
+        delete(&pool, "instagram", "12345").await.expect("delete");
+
+        // Account gone.
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(count, 0);
+
+        // Post still there but unpinned.
+        let post_account_id: Option<i64> =
+            sqlx::query_scalar("SELECT account_id FROM post_history WHERE caption = 'test'")
+                .fetch_one(&pool)
+                .await
+                .expect("get post");
+        assert!(
+            post_account_id.is_none(),
+            "post_history.account_id must be NULL after the source account is deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_is_idempotent_on_missing_account() {
+        // Calling delete for an account that doesn't exist must not
+        // error — the publish flow may race with a user clicking
+        // disconnect, and we'd rather no-op than panic.
+        let pool = fresh_pool().await;
+        delete(&pool, "instagram", "ghost-id")
+            .await
+            .expect("delete on missing must be Ok");
+    }
+}
