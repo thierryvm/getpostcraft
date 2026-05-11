@@ -179,7 +179,46 @@ réseau cible.
 
 **Estimation :** 1 PR.
 
-### #5 — UX polish backlog issue #62 (saupoudrage)
+### #5 — Responsive design 2026 (concern horizontal v0.4.x)
+
+Pas une feature isolée mais un **standard de qualité** à appliquer à
+toutes les UIs livrées en v0.4.x. Sur une app desktop Tauri, "responsive"
+veut dire **adapter au redimensionnement de fenêtre** (de 600 px à
+1920+ px), pas mobile au sens web.
+
+Standards 2026 à appliquer systématiquement aux nouvelles surfaces UI
+(dashboard scheduler, analytics views, repurpose modal, etc.) :
+
+- **Container queries** au lieu de media queries pour les composants
+  (`@container (min-width: 480px)` plutôt que `@media`). Le composant
+  s'adapte à sa propre largeur, pas à la viewport — crucial quand le
+  composer brief-pane et preview-pane changent de ratio selon l'état du
+  groupe.
+- **Fluid typography** avec `clamp(min, ideal-vw, max)` pour les
+  captions affichées et les chiffres analytics. Plus de breakpoint
+  cliff sur les chiffres "$0.0028" qui doivent rester lisibles entre
+  16 px et 24 px selon la place dispo.
+- **Intrinsic layouts** : `grid-template-columns: repeat(auto-fit,
+  minmax(280px, 1fr))` pour la grille calendar, les tiles
+  GroupResultPanel, les cards analytics top-posts. Pas de calcul
+  manuel de breakpoint.
+- **Dark mode contrast** : tester chaque nouveau composant en dark
+  (default Getpostcraft) avec un audit de contraste rapide. Objectif
+  WCAG AA pour le texte (4.5:1).
+- **Image formats** : les data URLs base64 PNG actuelles sont OK pour
+  la transmission IPC mais l'AVIF pour les thumbnails dashboard
+  réduirait la taille de ~50 %. Backlog v0.5 si vraiment besoin.
+
+**Checklist pré-merge** à appliquer à chaque PR UI v0.4.x :
+1. Window à 600 × 800 (étroite, comme l'usage @thierry souvent en
+   parallèle d'autres apps) — layout reste utilisable.
+2. Window à 1920 × 1080 — pas d'éléments qui s'étirent grotesquement
+   ni de typo qui flotte ridicule.
+3. Container queries utilisées plutôt que media queries pour les
+   composants nouveaux.
+4. `clamp()` sur les valeurs typographiques clés.
+
+### #6 — UX polish backlog issue #62 (saupoudrage)
 
 10 items collectés au smoke test v0.3.9. Reproduits ici avec triage
 impact/difficulté :
@@ -299,6 +338,9 @@ intercalée.
 - [Best AI social media tools 2026](https://zapier.com/blog/best-ai-social-media-management/)
 - [Tauri scheduling Tokio cron patterns](https://github.com/mvniekerk/tokio-cron-scheduler)
 - [Tokio cron scheduler](https://lib.rs/crates/tokio-cron-scheduler)
+- [Container queries 2026 guide (DEV)](https://dev.to/nickbenksim/the-ultimate-guide-to-css-container-queries-in-2026-1ndi)
+- [Responsive Web Design 2026 (UXPin)](https://www.uxpin.com/studio/blog/best-practices-examples-of-excellent-responsive-design/)
+- [Responsive Web Design 2026 — Beyond Media Queries (Open Door)](https://opendoordigital.dev/blog/responsive-web-design-2026)
 
 ## Sources internes (memory + repo)
 
