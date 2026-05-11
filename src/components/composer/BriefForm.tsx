@@ -65,6 +65,16 @@ export function BriefForm() {
   // just ticked — same convenience the previous mono-network form had,
   // now applied independently per network so checking LinkedIn doesn't
   // wipe the Instagram pick.
+  //
+  // The dep list joins `selectedNetworks` into a sorted string instead
+  // of relying on Set identity: any membership change triggers a re-run,
+  // immune to a future Zustand optimisation that might reuse refs.
+  // `accountIds` is intentionally NOT in the deps — including it would
+  // re-fire the effect after every setAccountIdFor and loop. The
+  // submit-time fallback below (`resolveAccountIds`) closes the race
+  // window where a user clicks Generate before this effect has caught
+  // up with their latest checkbox toggle.
+  const selectedKey = Array.from(selectedNetworks).sort().join(",");
   useEffect(() => {
     for (const net of selectedNetworks) {
       const matches = allAccounts.filter((a) => a.provider === net);
@@ -83,7 +93,31 @@ export function BriefForm() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedNetworks, allAccounts.length]);
+  }, [selectedKey, allAccounts.length]);
+
+  /**
+   * Defensive resolver used at submit time. The useEffect above auto-selects
+   * the single-match account for each ticked network, but a user clicking
+   * Générer FAST (sub-frame after toggling the checkbox) can outrace it —
+   * `accountIds` in the closure is still `null` for that network. Re-reading
+   * the canonical answer (one account per network = pick it) at the moment
+   * of submission removes that race entirely. Networks with 0 or 2+ matches
+   * keep their existing `accountIds` value, so users with multiple LinkedIn
+   * accounts on the same network never get their pick overridden.
+   */
+  const resolveAccountIds = (
+    nets: Network[],
+  ): Partial<Record<Network, number | null>> => {
+    const resolved: Partial<Record<Network, number | null>> = { ...accountIds };
+    for (const net of nets) {
+      if (resolved[net] !== undefined && resolved[net] !== null) continue;
+      const matches = allAccounts.filter((a) => a.provider === net);
+      if (matches.length === 1) {
+        resolved[net] = matches[0].id;
+      }
+    }
+    return resolved;
+  };
 
   const [inputMode, setInputMode] = useState<"text" | "url">("text");
   const [urlValue, setUrlValue] = useState("");
@@ -110,6 +144,16 @@ export function BriefForm() {
     setIsLoading(true);
     setError(null);
     setBrief(data.brief);
+    // Defensive: re-resolve any single-match account that the useEffect
+    // hasn't picked up yet (race when the user toggles + clicks Generate
+    // in the same frame). Mirror the resolved values back into the store
+    // so the dropdowns also catch up visually.
+    const resolved = resolveAccountIds(selectedArray);
+    for (const net of selectedArray) {
+      if (resolved[net] !== accountIds[net]) {
+        setAccountIdFor(net, resolved[net] ?? null);
+      }
+    }
     try {
       if (isMultiNetwork) {
         // Multi-network path: one parallel call to the new Tauri command,
@@ -118,7 +162,7 @@ export function BriefForm() {
           data.brief,
           selectedArray.map((net) => ({
             network: net,
-            account_id: accountIds[net] ?? null,
+            account_id: resolved[net] ?? null,
           })),
         );
         setGroupResult(result);
@@ -134,7 +178,7 @@ export function BriefForm() {
         // historical UX (no transactional group wrapper for users who
         // never wanted multi-network in the first place).
         const primary = selectedArray[0];
-        const acc = accountIds[primary] ?? null;
+        const acc = resolved[primary] ?? null;
         const result = await generateContent(data.brief, primary, acc);
         setResult(result);
         saveDraft(primary, result.caption, result.hashtags, acc)
