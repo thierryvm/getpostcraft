@@ -1,0 +1,49 @@
+-- Migration 019 — scheduler retry bookkeeping on post_history.
+--
+-- Lays the data foundation for the v0.4.0 auto-publish scheduler. The
+-- background task introduced in PR F2 will pick up posts whose
+-- `scheduled_at` is past, attempt publish via the existing
+-- `publish_post` / `publish_linkedin_post` commands, and increment
+-- bookkeeping fields here on failure.
+--
+-- ## Columns
+--
+-- `failed_attempts` — count of consecutive failed publish attempts. The
+-- scheduler retries with exponential backoff (5 min / 30 min / 2 h),
+-- and after 3 failures the post is marked `status = 'failed'` until
+-- the user reviews it (token expired, account disconnected, network
+-- issue). Default 0 so existing rows behave as never-tried.
+--
+-- `last_attempt_at` — RFC 3339 UTC timestamp of the most recent
+-- publish attempt (success or failure). Lets the scheduler compute
+-- the next retry window without a separate attempts table. NULL on
+-- legacy rows and on rows that have never been picked up by the
+-- scheduler (i.e. user-published manually).
+--
+-- ## Why not a separate `publish_attempts` table
+--
+-- Single-row append works as long as we only care about the LAST
+-- attempt (retry timing) and the COUNT (give-up threshold). A history
+-- table would let us show "attempt 1 failed at T+5min, attempt 2
+-- failed at T+30min, …" in the UI — but that's a UX polish item we
+-- can ship later by promoting `last_attempt_at` + `failed_attempts`
+-- into a JSON log column or a child table without breaking the
+-- current schema. Keep migration 019 minimal so the foundation lands
+-- without speculative columns.
+--
+-- ## Status transitions the scheduler will use
+--
+-- Status values already accepted by the existing publish flow:
+--   - 'draft'      — initial state after generation
+--   - 'published'  — successful publish (status set by publish_post)
+--   - 'failed'     — final-failure state after N retries
+--
+-- New intermediate state to land in PR F2 (not enforced in this
+-- migration — SQLite is loose-typed and the `status` column accepts
+-- any string):
+--   - 'publishing' — scheduler picked the post up and is attempting
+--                    a publish call. Lets concurrent launches of the
+--                    app avoid double-publishing the same row.
+
+ALTER TABLE post_history ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE post_history ADD COLUMN last_attempt_at TEXT;

@@ -8,6 +8,7 @@ pub mod accounts;
 pub mod ai_usage;
 pub mod groups;
 pub mod history;
+pub mod scheduler;
 pub mod settings_db;
 
 pub async fn init_pool() -> Result<SqlitePool, String> {
@@ -649,6 +650,53 @@ mod migration_tests {
             group_id_notnull, 0,
             "post_history.group_id must be nullable for retrocompat with mono-network rows"
         );
+    }
+
+    #[tokio::test]
+    async fn scheduler_retry_columns_exist_after_migration_019() {
+        // Migration 019 lays the data foundation for v0.4.0 auto-publish.
+        // Lock the contract that the scheduler depends on:
+        //   1. `failed_attempts INTEGER NOT NULL DEFAULT 0` — the
+        //      retry counter must default to 0 so legacy rows behave
+        //      as never-tried without a backfill.
+        //   2. `last_attempt_at TEXT` (nullable) — NULL on legacy rows,
+        //      populated only when the scheduler picks the row up.
+        let pool = fresh_migrated_pool().await;
+        let cols = table_columns(&pool, "post_history").await;
+        for c in ["failed_attempts", "last_attempt_at"] {
+            assert!(
+                cols.contains(&c.to_string()),
+                "migration 019 must add `{c}` column, got: {cols:?}"
+            );
+        }
+
+        // failed_attempts must be NOT NULL DEFAULT 0 so a legacy row
+        // with no value plays correctly with the scheduler's
+        // `failed_attempts < N` filter.
+        let rows = sqlx::query("PRAGMA table_info(post_history)")
+            .fetch_all(&pool)
+            .await
+            .expect("PRAGMA table_info");
+        let fa_row = rows
+            .iter()
+            .find(|r| r.get::<String, _>("name") == "failed_attempts")
+            .expect("failed_attempts column missing");
+        let fa_notnull: i64 = fa_row.get("notnull");
+        let fa_default: Option<String> = fa_row.try_get("dflt_value").ok();
+        assert_eq!(fa_notnull, 1, "failed_attempts must be NOT NULL");
+        assert_eq!(
+            fa_default.as_deref(),
+            Some("0"),
+            "failed_attempts default must be 0, got: {fa_default:?}"
+        );
+
+        // last_attempt_at must be nullable.
+        let la_row = rows
+            .iter()
+            .find(|r| r.get::<String, _>("name") == "last_attempt_at")
+            .expect("last_attempt_at column missing");
+        let la_notnull: i64 = la_row.get("notnull");
+        assert_eq!(la_notnull, 0, "last_attempt_at must be nullable");
     }
 
     #[tokio::test]
