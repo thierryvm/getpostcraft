@@ -247,7 +247,14 @@ export function BriefForm() {
                 {/* Per-network account cascade — only visible when the
                     network is checked, indented under its own checkbox so
                     the visual association is unambiguous even with all
-                    three networks expanded. */}
+                    three networks expanded.
+                    The "✓ Product Truth" indicator lives OUTSIDE the
+                    Select trigger: putting it inside the SelectItem made
+                    Radix re-render the children inside the trigger when
+                    a value was selected, so the trigger label showed
+                    "@handle ✓ Product Truth" instead of just the handle.
+                    Splitting the display keeps the trigger clean and
+                    surfaces Product Truth status on its own line. */}
                 {checked && (
                   <div className="ml-8 flex flex-col gap-1">
                     {matches.length === 0 ? (
@@ -273,15 +280,15 @@ export function BriefForm() {
                           {matches.map((a) => (
                             <SelectItem key={a.id} value={String(a.id)}>
                               @{a.username}
-                              {a.product_truth && (
-                                <span className="ml-1.5 text-xs text-primary">
-                                  ✓ Product Truth
-                                </span>
-                              )}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+                    )}
+                    {selectedAccount?.product_truth && (
+                      <p className="text-[10px] text-primary leading-snug">
+                        ✓ Product Truth chargé pour @{selectedAccount.username}
+                      </p>
                     )}
                     {selectedAccount && !selectedAccount.product_truth && (
                       <p className="text-[10px] text-orange-400/90 leading-snug">

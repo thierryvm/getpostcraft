@@ -334,16 +334,44 @@ def _parse_json_response(text: str) -> dict[str, Any]:
     Models sometimes embed literal control characters (real newlines, tabs)
     inside JSON string values, which is invalid. We sanitize those in-string
     control chars before parsing.
+
+    Empty / non-JSON output gets a dedicated error path: the bare
+    `json.JSONDecodeError("Expecting value: line 1 column 1 (char 0)")`
+    is too cryptic to debug. Common causes when this fires:
+      - Model refused (URL fetch demand, content policy, instruction it
+        couldn't satisfy) and returned an apology in plain text — fences
+        stripped → empty cleaned string.
+      - Empty body on the OpenRouter side (rate limit, transient outage).
+      - Provider returned a non-JSON markdown wrapper without code fences.
+    Surfacing a preview of the actual raw text lets the user see WHY in
+    the UI instead of guessing.
     """
     # Sanitize surrogates in the raw input BEFORE any string operation
     # (re.sub and json.loads in CPython can raise UnicodeEncodeError on surrogates).
     text = _sanitize_surrogates(text)
     cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
 
+    if not cleaned:
+        preview = text.strip()[:200] if text.strip() else "(réponse vide du modèle)"
+        raise ValueError(
+            f"Le modèle n'a pas retourné de JSON. "
+            f"Réponse brute (premiers 200 char) : {preview!r}. "
+            f"Causes fréquentes : brief demandant une action impossible "
+            f"(lire une URL, faire un calcul live), refus content-policy, "
+            f"rate limit OpenRouter."
+        )
+
     try:
         data = json.loads(cleaned)
-    except json.JSONDecodeError:
-        data = json.loads(_escape_control_chars(cleaned))
+    except json.JSONDecodeError as exc:
+        try:
+            data = json.loads(_escape_control_chars(cleaned))
+        except json.JSONDecodeError:
+            preview = cleaned[:200]
+            raise ValueError(
+                f"Le modèle a retourné un JSON malformé ({exc.msg}). "
+                f"Premiers 200 caractères : {preview!r}"
+            ) from None
 
     if "caption" not in data or "hashtags" not in data:
         raise ValueError(f"Unexpected response shape: {list(data.keys())}")
