@@ -115,11 +115,21 @@ pub fn run() {
                 // Special handler for the "DB ahead of binary" pre-flight
                 // failure surfaced by db::check_db_is_not_ahead_of_binary.
                 // The user can't read the log file from a crashed app; we
-                // write a self-explanatory text file to the data dir so
-                // double-clicking app.db's folder reveals the recovery
-                // path. Pure best-effort — if the write fails too we just
+                // write a self-explanatory text file to the data dir
+                // (same dir as `app.db`, NOT the log dir which lives
+                // under the bundle identifier on Windows) so double-
+                // clicking that folder reveals the recovery path.
+                // Pure best-effort — if the write fails too we just
                 // fall through to the normal log-and-exit.
-                if let Some(payload) = e.strip_prefix("Failed to init SQLite: DB_AHEAD::") {
+                //
+                // We `find()` the marker rather than `strip_prefix()`
+                // so the detection survives any future change to the
+                // upstream wrapping in `setup_result` (e.g. a different
+                // prefix than "Failed to init SQLite: "). The marker
+                // itself is the single source of truth, defined in
+                // `db::DB_AHEAD_MARKER` and prepended in `init_pool`.
+                if let Some(idx) = e.find(db::DB_AHEAD_MARKER) {
+                    let payload = &e[idx + db::DB_AHEAD_MARKER.len()..];
                     write_startup_blocked_notice(payload);
                 }
                 return Err(e.into());
