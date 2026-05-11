@@ -8,6 +8,39 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.3.10] — 2026-05-11
+
+### Hardened — DB ahead of binary detection
+- **`STARTUP_BLOCKED.txt` for the "DB has been migrated by a newer
+  binary" failure mode.** Previously the app exited silently with
+  only a cryptic `migration N was previously applied but is missing
+  in the resolved migrations` line in the log file — a UX cliff
+  for users running `npm run tauri dev` then trying to relaunch an
+  older installed binary (the typical dev workflow that bit
+  @thierry on 2026-05-11).
+  - Pre-flight check in `init_pool` after `heal_migration_checksums`
+    compares `MAX(version) FROM _sqlx_migrations` vs the highest
+    embedded migration. If DB > binary, returns a French
+    user-facing error with the version mismatch + the recovery URL.
+  - The setup hook in `lib.rs` catches the `DB_AHEAD::` marker and
+    writes `STARTUP_BLOCKED.txt` next to `app.db`. Double-clicking
+    opens it in Notepad with a self-explanatory recovery procedure
+    — no need to dig through `%LOCALAPPDATA%\app.getpostcraft\logs\`.
+  - Best-effort: I/O failures writing the file fall through to the
+    log-only path, so a misconfigured data dir doesn't compound the
+    original failure.
+
+### Tests
+- **+3 Rust** integration tests on `check_db_is_not_ahead_of_binary`:
+  fresh-install passes, matching-version DB passes, future-migration
+  DB (simulated via row injection in `_sqlx_migrations`) is blocked
+  with a message that surfaces both the version and the recovery URL.
+
+### Docs
+- `docs/guides/recovery.md` gained a section on the
+  "migration N missing in resolved" pattern + the recovery
+  procedure (one-step manual install from the latest release).
+
 ## [0.3.9] — 2026-05-11
 
 ### Added — multi-network composer (v0.3.9 stack)
