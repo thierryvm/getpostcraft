@@ -60,6 +60,15 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 # Already a transitive dep via sqlx; declared explicitly to make the
 # scheduler's intent visible.
 async-trait = "0.1"
+# Password hashing for the Security Admin gate (Settings → Security).
+# Argon2id with OWASP 2026 params (m=19MB, t=2, p=1). PHC string output
+# stored in the OS keychain under `security_password_hash` — never in
+# SQLite, so even a DB exfil yields no hash to crack.
+argon2 = "0.5"
+# Timing-safe equality for the in-RAM session token — guards against the
+# theoretical side-channel where a non-constant comparison time leaks
+# matched-prefix length. Cheap defense, no downside.
+subtle = "2"
 
 [dev-dependencies]
 # HTTP mock server for testing publish_post / publish_linkedin_post without
