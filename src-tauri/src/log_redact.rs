@@ -38,6 +38,7 @@ const MAX_LEN: usize = 500;
 
 static JSON_FIELD_RE: OnceLock<Regex> = OnceLock::new();
 static URL_FIELD_RE: OnceLock<Regex> = OnceLock::new();
+static AI_KEY_RE: OnceLock<Regex> = OnceLock::new();
 
 fn json_field_re() -> &'static Regex {
     JSON_FIELD_RE.get_or_init(|| {
@@ -58,6 +59,27 @@ fn url_field_re() -> &'static Regex {
         // field name (capture 1) so the surrounding context stays readable.
         Regex::new(r"(?i)\b(access_token|refresh_token|client_secret|password|api_key)=[^&\s]+")
             .expect("URL redaction regex must be valid")
+    })
+}
+
+fn ai_key_re() -> &'static Regex {
+    AI_KEY_RE.get_or_init(|| {
+        // Catches AI provider API keys regardless of context (named JSON
+        // field, raw error body, stack trace). Defense-in-depth beyond the
+        // field-matching scrubbers above — covers cases like OpenAI SDK
+        // errors ("Incorrect API key provided: sk-or-v1-...") that
+        // propagate via `log::error!` without the key sitting in a
+        // recognised field name.
+        //
+        // Covered prefixes (>= 20 chars after the prefix to avoid matching
+        // short test fixtures or unrelated `sk-` substrings):
+        //   sk-or-v1-*  OpenRouter
+        //   sk-ant-*    Anthropic native
+        //   sk-proj-*   OpenAI project keys
+        //   sk-*        OpenAI legacy + generic fallback (Mistral, DeepSeek, Groq)
+        //   AIza*       Google Gemini
+        Regex::new(r"\b(?:sk-(?:or-v1-|ant-|proj-)?[A-Za-z0-9_\-]{20,}|AIza[A-Za-z0-9_\-]{20,})\b")
+            .expect("AI key redaction regex must be valid")
     })
 }
 
@@ -85,7 +107,14 @@ pub fn redact_secrets(input: &str) -> String {
         format!("{}=[REDACTED]", &caps[1])
     });
 
-    let mut out = after_url.into_owned();
+    // Final pass: catch AI provider keys that survived the field-based
+    // redactors (e.g. an SDK error string echoing the key without naming
+    // a field). Marked with a distinct token so the log reader knows the
+    // upstream message included a raw key — useful for triage when a
+    // misbehaving provider mirrors auth headers into errors.
+    let after_ai = ai_key_re().replace_all(&after_url, "[REDACTED_AI_KEY]");
+
+    let mut out = after_ai.into_owned();
     if input.len() > MAX_LEN {
         out.push_str("…[truncated]");
     }
@@ -188,5 +217,83 @@ mod tests {
         let out = redact_secrets(body);
         assert!(out.contains("12345"));
         assert!(out.contains("invalid_grant"));
+    }
+
+    // ── AI provider key redaction (security audit 2026-05-12) ──────────
+
+    // Test fixtures use OBVIOUSLY_FAKE_TEST tokens so GitHub Push
+    // Protection / TruffleHog don't flag them as real secrets. The
+    // regex matches them just the same — they pass the length and
+    // prefix shape requirements.
+
+    #[test]
+    fn redacts_openrouter_key_in_sdk_error_string() {
+        // OpenAI SDK errors propagate as `openai.AuthenticationError:
+        // Incorrect API key provided: sk-or-v1-...` which previously went
+        // through `log::error!` un-scrubbed because the key wasn't in a
+        // recognised field name.
+        let body = "openai.AuthenticationError: Incorrect API key provided: sk-or-v1-OBVIOUSLY_FAKE_TEST_FIXTURE_NOT_A_REAL_KEY_AAAAAAAAAAAAAAAA";
+        let out = redact_secrets(body);
+        assert!(!out.contains("sk-or-v1-OBVIOUSLY"));
+        assert!(out.contains("[REDACTED_AI_KEY]"));
+    }
+
+    #[test]
+    fn redacts_anthropic_key_in_log_line() {
+        let body = "Auth error sk-ant-OBVIOUSLY_FAKE_TEST_FIXTURE_NOT_REAL_AAAAAA";
+        let out = redact_secrets(body);
+        assert!(!out.contains("sk-ant-OBVIOUSLY"));
+        assert!(out.contains("[REDACTED_AI_KEY]"));
+    }
+
+    #[test]
+    fn redacts_openai_project_key() {
+        let body = "Error: bad token sk-proj-OBVIOUSLY_FAKE_TEST_FIXTURE_NOT_REAL";
+        let out = redact_secrets(body);
+        assert!(!out.contains("sk-proj-OBVIOUSLY"));
+        assert!(out.contains("[REDACTED_AI_KEY]"));
+    }
+
+    #[test]
+    fn redacts_gemini_aiza_key() {
+        let body = "Error: invalid key AIzaOBVIOUSLY_FAKE_TEST_FIXTURE_NOT_REAL_AAA";
+        let out = redact_secrets(body);
+        assert!(!out.contains("AIzaOBVIOUSLY"));
+        assert!(out.contains("[REDACTED_AI_KEY]"));
+    }
+
+    #[test]
+    fn ai_key_min_length_avoids_false_positives_on_short_tokens() {
+        // Short tokens like `sk-test` (test fixture) shouldn't trigger
+        // the AI key redaction — they're below the 20-char threshold
+        // after the prefix.
+        let body = "Test fixture used sk-test for unit testing";
+        let out = redact_secrets(body);
+        assert!(out.contains("sk-test"), "short token must NOT be redacted");
+    }
+
+    #[test]
+    fn ai_key_redaction_chains_with_json_field_redaction() {
+        // A real provider error body has the key in a recognised field
+        // AND echoes it again in the message — both must be scrubbed.
+        // Fixtures kept obviously fake to avoid GitHub Push Protection.
+        let body = r#"{"error":{"message":"Invalid API key: sk-or-v1-OBVIOUSLY_FAKE_TOKEN_ONE_NOT_REAL_AAAAAAAAAAAAAAAAAAAAAA","code":"invalid_api_key"},"access_token":"sk-or-v1-OBVIOUSLY_FAKE_TOKEN_TWO_NOT_REAL_BBBBBBBBBBBBBBBBBBBBBB"}"#;
+        let out = redact_secrets(body);
+        // Both occurrences gone — exact tokens may differ in redact label.
+        assert!(!out.contains("OBVIOUSLY_FAKE_TOKEN_ONE"));
+        assert!(!out.contains("OBVIOUSLY_FAKE_TOKEN_TWO"));
+        assert!(
+            out.contains("[REDACTED]") || out.contains("[REDACTED_AI_KEY]"),
+            "must contain at least one redaction marker"
+        );
+    }
+
+    #[test]
+    fn ai_key_redaction_preserves_safe_context() {
+        let body = "Rate limit hit at 18:42 UTC, retry in 60s — no key in this message";
+        let out = redact_secrets(body);
+        // Nothing matches the AI key pattern.
+        assert!(out.contains("Rate limit hit"));
+        assert!(out.contains("60s"));
     }
 }
