@@ -1,8 +1,9 @@
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::openrouter_pricing::{new_cache, PricingCache};
+use crate::security_admin::SecurityAdminState;
 
 pub struct ActiveProvider {
     /// "openrouter" | "anthropic" | "ollama"
@@ -22,6 +23,10 @@ pub struct AppState {
     /// static table when a model isn't here. Refreshed on startup and on
     /// manual user request from the AI usage panel.
     pub pricing_cache: PricingCache,
+    /// Settings → Security gate state: in-RAM session + lockout tracker.
+    /// Arc'd so async tasks holding a state guard don't block the lock
+    /// across awaits — only the inner Mutexes are taken briefly.
+    pub security_admin: Arc<SecurityAdminState>,
 }
 
 impl AppState {
@@ -34,6 +39,7 @@ impl AppState {
             key_cache: Mutex::new(HashMap::new()),
             db,
             pricing_cache: new_cache(),
+            security_admin: Arc::new(SecurityAdminState::default()),
         }
     }
 }

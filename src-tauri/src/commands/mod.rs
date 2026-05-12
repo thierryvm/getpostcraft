@@ -7,4 +7,5 @@ pub mod media;
 pub mod oauth;
 pub mod publisher;
 pub mod python_deps;
+pub mod security_admin;
 pub mod settings;

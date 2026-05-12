@@ -6,6 +6,7 @@ mod log_redact;
 mod network_rules;
 mod openrouter_pricing;
 mod scheduler;
+mod security_admin;
 mod sidecar;
 mod state;
 mod token_store;
@@ -278,6 +279,13 @@ pub fn run() {
             // Python deps — in-app pip install for the sidecar packages
             commands::python_deps::check_python_deps,
             commands::python_deps::install_python_deps,
+            // Security Admin gate (Settings → Security tab)
+            commands::security_admin::is_security_password_set,
+            commands::security_admin::setup_security_password,
+            commands::security_admin::verify_security_password,
+            commands::security_admin::check_security_session,
+            commands::security_admin::end_security_session,
+            commands::security_admin::list_recent_security_attempts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

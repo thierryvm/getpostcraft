@@ -45,6 +45,10 @@ const KNOWN_PROVIDERS: &[&str] = &[
     "instagram_client_secret",
     "linkedin_client_secret",
     "imgbb_api_key",
+    // Argon2id PHC string for the Settings → Security gate. Not a "key"
+    // in the API-credential sense but the keychain treats them the same
+    // and we want load_all() to warm this entry alongside the others.
+    "security_password_hash",
 ];
 
 /// Path to the legacy plain-text JSON file. Existence triggers one-time migration.
@@ -286,6 +290,7 @@ mod tests {
             "instagram_client_secret",
             "linkedin_client_secret",
             "imgbb_api_key",
+            "security_password_hash",
         ] {
             assert!(
                 KNOWN_PROVIDERS.contains(&required),
