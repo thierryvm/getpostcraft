@@ -333,14 +333,43 @@ def _anthropic_usage(message: Any) -> dict[str, int]:
     }
 
 
-def _sanitize_surrogates(s: str) -> str:
-    """Remove lone surrogates that some AI models produce (e.g. \\udc90).
+# Invisible / non-rendered Unicode codepoints. Stripped from both upstream
+# model output AND any user-controlled text routed through this helper as
+# defense-in-depth against the 2026 LLM threat vectors V1 (Unicode Tag
+# Injection / ASCII Smuggling) and Unicode-bypass jailbreaks.
+_INVISIBLE_RANGES = (
+    (0xD800, 0xDFFF),    # lone surrogates — valid Python str but UTF-8 invalid
+    (0x200B, 0x200D),    # ZWSP, ZWNJ, ZWJ — invisible spacing chars
+    (0x202A, 0x202E),    # BIDI overrides (RTL flips hiding injection)
+    (0x2066, 0x2069),    # BIDI isolate controls
+    (0xE0020, 0xE007E),  # Unicode TAG block — invisible carriers of ASCII payload
+)
+_INVISIBLE_SINGLES = frozenset({
+    0xFEFF,   # ZWNBSP / BOM
+    0xE0001,  # LANGUAGE TAG sentinel
+    0xE007F,  # CANCEL TAG sentinel
+})
 
-    Lone surrogates (U+D800–U+DFFF) are valid in Python str but are rejected
-    by CPython's C JSON extension and cannot be encoded as UTF-8.
-    Pure char-filter avoids codec round-trip edge cases on Windows.
+
+def _sanitize_surrogates(s: str) -> str:
+    """Strip lone surrogates and other invisible/control codepoints.
+
+    Originally only filtered lone surrogates (U+D800-U+DFFF) which CPython
+    refuses to UTF-8 encode. Extended in 2026-05 hardening to also strip
+    zero-width chars, BIDI controls, and Unicode TAG block — the
+    ASCII Smuggling carriers flagged by the 2026 LLM auditor.
+
+    Name kept for backward-compat with all callers; semantic now broader.
     """
-    return "".join(ch for ch in s if not (0xD800 <= ord(ch) <= 0xDFFF))
+    out: list[str] = []
+    for ch in s:
+        cp = ord(ch)
+        if cp in _INVISIBLE_SINGLES:
+            continue
+        if any(lo <= cp <= hi for lo, hi in _INVISIBLE_RANGES):
+            continue
+        out.append(ch)
+    return "".join(out)
 
 
 def _parse_json_response(text: str) -> dict[str, Any]:

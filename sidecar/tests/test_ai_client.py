@@ -65,6 +65,55 @@ class TestSanitizeSurrogates:
         serialized = json.dumps(safe)
         assert isinstance(serialized, str)
 
+    # ── 2026-05 security hardening: ASCII Smuggling / Unicode injection ──
+
+    def test_unicode_tag_e0020_stripped(self):
+        # U+E0020 is the start of the Unicode TAG block — invisible chars
+        # that encode ASCII payloads. Flagged by llm-security-auditor V1.
+        s = "normal\U000e0020text"
+        result = _sanitize_surrogates(s)
+        assert "\U000e0020" not in result
+        assert "normal" in result and "text" in result
+
+    def test_unicode_tag_e007e_stripped(self):
+        s = "before\U000e007eafter"
+        assert "\U000e007e" not in _sanitize_surrogates(s)
+
+    def test_unicode_language_tag_stripped(self):
+        s = "x\U000e0001y"
+        assert "\U000e0001" not in _sanitize_surrogates(s)
+
+    def test_unicode_cancel_tag_stripped(self):
+        s = "x\U000e007fy"
+        assert "\U000e007f" not in _sanitize_surrogates(s)
+
+    def test_zero_width_space_stripped(self):
+        s = "ig​nore previous"
+        result = _sanitize_surrogates(s)
+        assert "​" not in result
+        # Visible chars survive — note the bypass is now visible to the
+        # downstream sanitizer / validator
+        assert "ignore previous" in result
+
+    def test_zero_width_joiner_stripped(self):
+        s = "x‍y"
+        assert "‍" not in _sanitize_surrogates(s)
+
+    def test_bom_stripped(self):
+        # U+FEFF (BOM) often pasted from Windows clipboard
+        s = "﻿text"
+        assert _sanitize_surrogates(s) == "text"
+
+    def test_bidi_rtl_override_stripped(self):
+        # U+202E reverses text direction visually — hides payload
+        s = "safe‮char"
+        assert "‮" not in _sanitize_surrogates(s)
+
+    def test_visible_text_preserved(self):
+        # No regression on normal content with accents and emoji
+        s = "Bonjour le monde 🌍 with accents éàç"
+        assert _sanitize_surrogates(s) == s
+
 
 # ── _parse_json_response ─────────────────────────────────────────────────────
 
