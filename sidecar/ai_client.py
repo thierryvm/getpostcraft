@@ -35,6 +35,18 @@ class AIClient:
         self.model = model
         self.base_url = base_url
 
+    def _openrouter_json_kwargs(self) -> dict[str, Any]:
+        """Force JSON mode on OpenRouter so models can't refuse in plain text.
+
+        Without this, briefs that mention inaccessible resources (e.g. local
+        file paths like `story.md`) made models reply with a plain-text
+        refusal, poisoning `_parse_json_response`. Gated on provider because
+        Ollama support is patchy and Anthropic native uses a different shape.
+        """
+        if self.provider == "openrouter":
+            return {"response_format": {"type": "json_object"}}
+        return {}
+
     def generate_caption(
         self, brief: str, network: str, system_prompt: str
     ) -> dict[str, Any]:
@@ -155,6 +167,7 @@ class AIClient:
                     ],
                 },
             ],
+            **self._openrouter_json_kwargs(),
         )
         return _sanitize_surrogates((response.choices[0].message.content or "").strip())
 
@@ -209,6 +222,7 @@ class AIClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": brief},
             ],
+            **self._openrouter_json_kwargs(),
         )
         raw = response.choices[0].message.content or ""
         return _parse_carousel_response(raw, slide_count)
@@ -254,6 +268,7 @@ class AIClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": brief},
             ],
+            **self._openrouter_json_kwargs(),
         )
 
         raw = response.choices[0].message.content or ""

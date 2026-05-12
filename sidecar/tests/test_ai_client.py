@@ -9,6 +9,7 @@ import json
 import sys
 import io
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_client import (
+    AIClient,
     _sanitize_surrogates,
     _parse_json_response,
     _parse_carousel_response,
@@ -539,3 +541,117 @@ class TestParseVisualProfile:
         except ValueError:
             raised = True
         assert raised, "must reject non-object roots"
+
+
+# ── OpenRouter JSON mode gate ────────────────────────────────────────────────
+#
+# Regression for the bug where models replied with a plain-text refusal
+# ("Je ne peux pas analyser ce fichier story.md…") when the brief mentioned
+# inaccessible resources, breaking _parse_json_response downstream.
+# `response_format={"type": "json_object"}` forces the model to emit valid
+# JSON. Gated to OpenRouter only — Ollama support is patchy and Anthropic
+# native uses a different shape.
+
+class TestOpenRouterJsonMode:
+    def _mock_client(self, content: str) -> MagicMock:
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = content
+        mock_response.usage = None
+        client = MagicMock()
+        client.chat.completions.create.return_value = mock_response
+        return client
+
+    def test_generate_openrouter_sets_response_format(self):
+        client = self._mock_client('{"caption": "ok", "hashtags": []}')
+        with patch("ai_client.OpenAI", return_value=client):
+            ai = AIClient(
+                provider="openrouter",
+                api_key="sk-test",
+                model="anthropic/claude-sonnet-4.6",
+            )
+            ai._generate_openai_compat("brief", "system", max_tokens=600)
+        call = client.chat.completions.create.call_args
+        assert call.kwargs.get("response_format") == {"type": "json_object"}
+
+    def test_generate_ollama_omits_response_format(self):
+        client = self._mock_client('{"caption": "ok", "hashtags": []}')
+        with patch("ai_client.OpenAI", return_value=client):
+            ai = AIClient(
+                provider="ollama",
+                api_key=None,
+                model="qwen2:0.5b",
+                base_url="http://localhost:11434/v1",
+            )
+            ai._generate_openai_compat("brief", "system", max_tokens=600)
+        call = client.chat.completions.create.call_args
+        assert "response_format" not in call.kwargs
+
+    def test_generate_unknown_provider_omits_response_format(self):
+        # Lock the contract: only the literal string "openrouter" triggers JSON
+        # mode. Any other provider that uses the OpenAI-compat path (a future
+        # OpenAI-direct route, an Anthropic-compat proxy, etc.) must not
+        # accidentally inherit it.
+        client = self._mock_client('{"caption": "ok", "hashtags": []}')
+        with patch("ai_client.OpenAI", return_value=client):
+            ai = AIClient(
+                provider="openai",
+                api_key="sk-test",
+                model="gpt-4o-mini",
+            )
+            ai._generate_openai_compat("brief", "system", max_tokens=600)
+        call = client.chat.completions.create.call_args
+        assert "response_format" not in call.kwargs
+
+    def test_carousel_openrouter_sets_response_format(self):
+        client = self._mock_client('[{"emoji":"💡","title":"S1","body":"B"}]')
+        with patch("ai_client.OpenAI", return_value=client):
+            ai = AIClient(
+                provider="openrouter",
+                api_key="sk-test",
+                model="anthropic/claude-sonnet-4.6",
+            )
+            ai._carousel_openai_compat("brief", 1, "system")
+        call = client.chat.completions.create.call_args
+        assert call.kwargs.get("response_format") == {"type": "json_object"}
+
+    def test_carousel_ollama_omits_response_format(self):
+        client = self._mock_client('[{"emoji":"💡","title":"S1","body":"B"}]')
+        with patch("ai_client.OpenAI", return_value=client):
+            ai = AIClient(
+                provider="ollama",
+                api_key=None,
+                model="qwen2:0.5b",
+                base_url="http://localhost:11434/v1",
+            )
+            ai._carousel_openai_compat("brief", 1, "system")
+        call = client.chat.completions.create.call_args
+        assert "response_format" not in call.kwargs
+
+    def test_visual_extract_openrouter_sets_response_format(self):
+        client = self._mock_client(
+            '{"colors":[],"typography":{},"mood":[],"layout":"x"}'
+        )
+        with patch("ai_client.OpenAI", return_value=client):
+            ai = AIClient(
+                provider="openrouter",
+                api_key="sk-test",
+                model="anthropic/claude-sonnet-4.6",
+            )
+            ai._extract_visual_openai_compat("base64data", "system")
+        call = client.chat.completions.create.call_args
+        assert call.kwargs.get("response_format") == {"type": "json_object"}
+
+    def test_synthesize_never_sets_response_format(self):
+        # ProductTruth synthesis returns plain text — JSON mode would force the
+        # model to wrap output in a JSON envelope, defeating the textarea paste.
+        client = self._mock_client("plain text product truth")
+        with patch("ai_client.OpenAI", return_value=client):
+            ai = AIClient(
+                provider="openrouter",
+                api_key="sk-test",
+                model="anthropic/claude-sonnet-4.6",
+            )
+            ai._synthesize_openai_compat("scraped content", "system")
+        call = client.chat.completions.create.call_args
+        assert "response_format" not in call.kwargs
