@@ -587,6 +587,22 @@ class TestOpenRouterJsonMode:
         call = client.chat.completions.create.call_args
         assert "response_format" not in call.kwargs
 
+    def test_generate_unknown_provider_omits_response_format(self):
+        # Lock the contract: only the literal string "openrouter" triggers JSON
+        # mode. Any other provider that uses the OpenAI-compat path (a future
+        # OpenAI-direct route, an Anthropic-compat proxy, etc.) must not
+        # accidentally inherit it.
+        client = self._mock_client('{"caption": "ok", "hashtags": []}')
+        with patch("ai_client.OpenAI", return_value=client):
+            ai = AIClient(
+                provider="openai",
+                api_key="sk-test",
+                model="gpt-4o-mini",
+            )
+            ai._generate_openai_compat("brief", "system", max_tokens=600)
+        call = client.chat.completions.create.call_args
+        assert "response_format" not in call.kwargs
+
     def test_carousel_openrouter_sets_response_format(self):
         client = self._mock_client('[{"emoji":"💡","title":"S1","body":"B"}]')
         with patch("ai_client.OpenAI", return_value=client):
