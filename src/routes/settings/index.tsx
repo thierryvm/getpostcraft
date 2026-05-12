@@ -8,6 +8,7 @@ import { AboutSection } from "@/components/settings/AboutSection";
 import { LogsPanel } from "@/components/settings/LogsPanel";
 import { BackupSection } from "@/components/settings/BackupSection";
 import { AiUsagePanel } from "@/components/settings/AiUsagePanel";
+import { SecurityCenter } from "@/components/settings/SecurityCenter";
 
 export function SettingsPage() {
   const { tab } = useSearch({ from: "/settings" });
@@ -33,6 +34,7 @@ export function SettingsPage() {
           <TabsTrigger value="publication">Publication</TabsTrigger>
           <TabsTrigger value="data">Données</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
+          <TabsTrigger value="security">Sécurité</TabsTrigger>
           <TabsTrigger value="about">À propos</TabsTrigger>
         </TabsList>
 
@@ -121,6 +123,10 @@ export function SettingsPage() {
               <LogsPanel />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="security" className="mt-4">
+          <SecurityCenter />
         </TabsContent>
 
         <TabsContent value="about" className="mt-4">
