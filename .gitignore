@@ -48,9 +48,17 @@ latest.json
 # Playwright MCP debug artifacts
 .playwright-mcp/
 
-# Claude Code local settings
-.claude/
-**/.claude/
+# Claude Code local settings (settings.local.json, scheduled_tasks.lock)
+# but track .claude/agents/*.md (versioned sub-agent definitions shared
+# across contributors — see SECURITY.md / docs/security-audits/).
+.claude/*
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/*.md
+**/.claude/*
+!**/.claude/agents/
+**/.claude/agents/*
+!**/.claude/agents/*.md
 
 # Env
 .env
