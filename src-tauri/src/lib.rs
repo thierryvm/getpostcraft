@@ -5,6 +5,7 @@ mod db;
 mod log_redact;
 mod network_rules;
 mod openrouter_pricing;
+mod scheduler;
 mod sidecar;
 mod state;
 mod token_store;
@@ -167,6 +168,14 @@ pub fn run() {
                 }
             });
 
+            // Scheduler background task (v0.4.0 PR F2). Polls SQLite every
+            // 60s for due drafts and dispatches them through the existing
+            // publish commands with the retry/backoff policy enforced by
+            // `db::scheduler`. Detached — nothing waits on it, failures
+            // are logged and never propagated to the user-visible setup
+            // path (a scheduler crash must not block app startup).
+            scheduler::spawn(app.handle().clone());
+
             // Fire-and-forget OpenRouter pricing refresh on startup. Falls
             // back silently to the static `pricing_map` if the user is
             // offline; subsequent app opens will pick up live rates the
@@ -190,6 +199,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             // AI
             commands::ai::generate_content,
