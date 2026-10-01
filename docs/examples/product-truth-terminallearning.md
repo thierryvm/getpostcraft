@@ -46,7 +46,6 @@ CE QU'IL NE FAUT PAS MENTIONNER (pas encore live) :
 - Multilingue (FR uniquement pour l'instant)
 - Badges Open Badges 3.0
 - Dashboards par rôle (étudiant/prof/formateur)
-- Ko-fi / GitHub Sponsors (en attente accord mutuelle)
 - Docker (pas dans le curriculum actuel)
 
 VOIX & STYLE :
