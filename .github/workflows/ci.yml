@@ -17,6 +17,10 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # A vulnerable production dependency stops the PR here instead of
+      # reaching main unseen (1 October 2026: seroval, critical, found only by
+      # a manual pass). Production deps, high and critical, no `|| true`.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck
       - run: npm run check:versions
       - run: npm test
