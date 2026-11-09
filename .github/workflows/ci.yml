@@ -99,4 +99,6 @@ jobs:
           # authenticate against their provider's API are reported. Fake keys
           # in test fixtures are filtered out automatically.
           extra_args: --only-verified
-          version: 3.99.8
+          # Tag plus digest: a re-pushed or hijacked `3.99.8` tag cannot swap the
+          # image (digest of ghcr.io/trufflesecurity/trufflehog:3.99.8, 2026-11-09).
+          version: 3.99.8@sha256:674b2f187620a19df77f44cf9a7d77efcc581a5662accef2f2739cbb46ba4a3a
