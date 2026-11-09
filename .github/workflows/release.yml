@@ -59,19 +59,19 @@ jobs:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch (2026-11-09)
         with:
           # universal-apple-darwin requires both targets so tauri-action can lipo them.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
 
       - run: npm ci
 
       - name: Build + sign + upload to GitHub Release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2 (pinned: this step receives the update signing key)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Ed25519 keys for the Tauri auto-updater. Never log; never echo.

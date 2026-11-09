@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Read-only token: no job here writes to the repository.
+permissions:
+  contents: read
+
 jobs:
   frontend:
     name: Frontend (typecheck + tests)
@@ -30,10 +34,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch (2026-11-09)
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
       - name: Install Tauri system deps
@@ -82,10 +86,19 @@ jobs:
         with:
           # Full history so trufflehog can walk the diff range. `0` = full clone.
           fetch-depth: 0
+          # The trufflehog container mounts this checkout: keep the token out of .git/config.
+          persist-credentials: false
+      # Pinned to a full commit SHA (tag v3.99.8), never `@main`: this job runs
+      # on pull requests, so a moving ref would let upstream code change under
+      # us. `version` pins the Docker image the action runs (default: latest)
+      # to the same release. Bump both together.
       - name: Trufflehog secret scan
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb # v3.99.8
         with:
           # `--only-verified` keeps noise low — only secrets that successfully
           # authenticate against their provider's API are reported. Fake keys
           # in test fixtures are filtered out automatically.
           extra_args: --only-verified
+          # Tag plus digest: a re-pushed or hijacked `3.99.8` tag cannot swap the
+          # image (digest of ghcr.io/trufflesecurity/trufflehog:3.99.8, 2026-11-09).
+          version: 3.99.8@sha256:674b2f187620a19df77f44cf9a7d77efcc581a5662accef2f2739cbb46ba4a3a
